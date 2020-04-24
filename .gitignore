@@ -4,3 +4,4 @@
 *.o
 tmp*
 a.out
+.vscode
