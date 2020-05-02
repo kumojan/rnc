@@ -111,6 +111,7 @@ trait TkList {
     fn mul(&mut self) -> Result<Node, ParseError>;
     fn expr(&mut self) -> Result<Node, ParseError>;
     fn primary(&mut self) -> Result<Node, ParseError>;
+    fn unary(&mut self) -> Result<Node, ParseError>;
 }
 
 use std::collections::VecDeque;
@@ -156,14 +157,7 @@ impl TkList for VecDeque<Token> {
             panic!("EOF token not found!");
         }
     }
-    fn primary(&mut self) -> Result<Node, ParseError> {
-        if self.peek('(') {
-            let node = self.expr();
-            self.expect(')').map(|_| node)?
-        } else {
-            self.expect_num().map(|val| Ok(Node::new_num(val)))?
-        }
-    }
+    // expr -> mul -> unary -> primaryの順に呼ばれる
     fn expr(&mut self) -> Result<Node, ParseError> {
         let mut node = self.mul()?;
         loop {
@@ -177,15 +171,32 @@ impl TkList for VecDeque<Token> {
         }
     }
     fn mul(&mut self) -> Result<Node, ParseError> {
-        let mut node = self.primary()?;
+        let mut node = self.unary()?;
         loop {
             if self.peek('*') {
-                node = Node::new_bin(NdMul, node, self.primary()?);
+                node = Node::new_bin(NdMul, node, self.unary()?);
             } else if self.peek('/') {
-                node = Node::new_bin(NdDiv, node, self.primary()?);
+                node = Node::new_bin(NdDiv, node, self.unary()?);
             } else {
                 return Ok(node);
             }
+        }
+    }
+    fn unary(&mut self) -> Result<Node, ParseError> {
+        if self.peek('+') {
+            self.unary()
+        } else if self.peek('-') {
+            Ok(Node::new_bin(NdSub, Node::new_num(0), self.unary()?))
+        } else {
+            self.primary()
+        }
+    }
+    fn primary(&mut self) -> Result<Node, ParseError> {
+        if self.peek('(') {
+            let node = self.expr();
+            self.expect(')').map(|_| node)?
+        } else {
+            self.expect_num().map(|val| Ok(Node::new_num(val)))?
         }
     }
 }
