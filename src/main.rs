@@ -8,18 +8,19 @@ fn main() -> Result<(), CompileError> {
     //
     match env::args().nth(1) {
         Some(code) => match compile(&code) {
-            Err(EnumError::Tokenize { pos }) => error_at(&code, pos, "uknown token".to_owned()),
+            Err(EnumError::Tokenize { pos }) => error_at(&code, pos, "uknown token"),
             Err(EnumError::Parse { pos, msg }) => {
                 error_at(&code, pos, format!("parse failed: {}", msg))
             }
             _ => Ok(()),
         },
-        None => error("input needed".to_owned()),
+        None => error("input needed"),
     }
 }
 
 fn compile(code: &String) -> Result<(), EnumError> {
     let mut token_list = tokenize(code)?;
+    // println!("{:?}", token_list);
     println!("{}", HEADER);
     token_list.expr()?.code_gen();
     println!("  pop rax");
@@ -36,9 +37,9 @@ use crate::TokenKind::*;
 /// トークン列に分けていく
 /// エラーメッセージとしては、予期せぬ記号のみ
 ///
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum TokenKind {
-    TkReserved(char),
+    TkReserved(String),
     TkNum(u32),
     TkEOF,
 }
@@ -51,7 +52,7 @@ impl Default for TokenKind {
 }
 
 /// 初期値EOF
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Token {
     kind: TokenKind,
     pos: usize,
@@ -63,9 +64,9 @@ impl Token {
             pos,
         }
     }
-    fn new_res(c: char, pos: usize) -> Self {
+    fn new_res(s: String, pos: usize) -> Self {
         Self {
-            kind: TkReserved(c),
+            kind: TkReserved(s),
             pos,
         }
     }
@@ -80,22 +81,35 @@ impl Token {
 fn tokenize(code: &String) -> Result<VecDeque<Token>, TokenizeError> {
     let mut numvec = vec![];
     let mut list: VecDeque<Token> = VecDeque::new();
-    let code = format!("{} ", code); // numvecを回収させるために、末尾に空白追加(なんか嫌だけど)
-    for (pos, c) in code.chars().enumerate() {
+    let code = &format!("{} ", code)[..]; // numvecを回収させるために、末尾に空白追加(なんか嫌だけど)
+    let mut pos = 0;
+    while (pos < code.len()) {
+        let c = code.chars().nth(pos).unwrap();
         if c.is_ascii_digit() {
             numvec.push(c.to_digit(10).unwrap());
+            pos += 1;
             continue;
         } else if !numvec.is_empty() {
-            // let tk = TkNum(numvec.iter().fold(0, |acc, x| acc * 10 + x));
-            let tk = Token::new_num(numvec.iter().fold(0, |acc, x| acc * 10 + x), pos);
+            let tk = Token::new_num(numvec.iter().fold(0, |acc, x| acc * 10 + x), pos - 1);
             list.push_back(tk);
             numvec = vec![];
         }
+        if (pos < code.len() - 1) {
+            let cc = &code[pos..pos + 2];
+            if ["==", "!=", "<=", ">="].contains(&cc) {
+                let tk = Token::new_res(cc.to_owned(), pos);
+                list.push_back(tk);
+                pos += 2;
+                continue;
+            }
+        }
         if "+-*/()".find(c).is_some() {
-            list.push_back(Token::new_res(c, pos));
+            list.push_back(Token::new_res(c.to_string(), pos));
+            pos += 1;
             continue;
         }
         if c.is_whitespace() {
+            pos += 1;
             continue;
         }
         return Err(pos)?;
@@ -108,6 +122,7 @@ trait TkList {
     fn peek(&mut self, c: char) -> bool;
     fn expect(&mut self, c: char) -> Result<(), ParseError>;
     fn expect_num(&mut self) -> Result<u32, ParseError>;
+    fn expect_eof(&mut self) -> Result<bool, ParseError>;
     fn mul(&mut self) -> Result<Node, ParseError>;
     fn expr(&mut self) -> Result<Node, ParseError>;
     fn primary(&mut self) -> Result<Node, ParseError>;
@@ -119,7 +134,7 @@ use std::collections::VecDeque;
 impl TkList for VecDeque<Token> {
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
     fn peek(&mut self, c: char) -> bool {
-        if self.len() > 0 && self[0].kind == TkReserved(c) {
+        if self.len() > 0 && self[0].kind == TkReserved(c.to_string()) {
             self.pop_front();
             return true;
         }
@@ -127,7 +142,7 @@ impl TkList for VecDeque<Token> {
     }
     fn expect(&mut self, c: char) -> Result<(), ParseError> {
         if self.len() > 0 {
-            if self[0].kind == TkReserved(c) {
+            if self[0].kind == TkReserved(c.to_string()) {
                 self.pop_front();
                 Ok(())
             } else {
@@ -157,6 +172,19 @@ impl TkList for VecDeque<Token> {
             panic!("EOF token not found!");
         }
     }
+    fn expect_eof(&mut self) -> Result<bool, ParseError> {
+        if self.len() > 0 {
+            match self[0].kind {
+                TkEOF => Ok(true),
+                _ => Err(ParseError {
+                    pos: self[0].pos,
+                    msg: "unrecognized by parser".to_owned(),
+                }),
+            }
+        } else {
+            panic!("EOF token not found!")
+        }
+    }
     // expr -> mul -> unary -> primaryの順に呼ばれる
     fn expr(&mut self) -> Result<Node, ParseError> {
         let mut node = self.mul()?;
@@ -165,7 +193,7 @@ impl TkList for VecDeque<Token> {
                 node = Node::new_bin(NdAdd, node, self.mul()?);
             } else if self.peek('-') {
                 node = Node::new_bin(NdSub, node, self.mul()?);
-            } else {
+            } else if self.expect_eof()? {
                 return Ok(node);
             }
         }
