@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::fmt;
 
 #[derive(Debug, Default)]
@@ -56,13 +57,13 @@ impl From<TokenizeError> for EnumError {
 
 #[derive(Debug)]
 pub struct CompileError;
-pub fn error_at(code: &String, pos: usize, msg: String) -> Result<(), CompileError> {
+pub fn error_at<T: Borrow<str>>(code: &String, pos: usize, msg: T) -> Result<(), CompileError> {
     eprintln!("{}", code);
-    eprintln!("{}^ {}", " ".repeat(pos), msg);
+    eprintln!("{}^ {}", " ".repeat(pos), msg.borrow());
     Err(CompileError)
 }
 
-pub fn error(msg: String) -> Result<(), CompileError> {
-    eprintln!("{}", msg);
+pub fn error<T: Borrow<str>>(msg: T) -> Result<(), CompileError> {
+    eprintln!("{}", msg.borrow());
     Err(CompileError)
 }
