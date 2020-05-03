@@ -103,7 +103,7 @@ fn tokenize(code: &String) -> Result<VecDeque<Token>, TokenizeError> {
                 continue;
             }
         }
-        if "+-*/()".find(c).is_some() {
+        if "+-*/()<>".find(c).is_some() {
             list.push_back(Token::new_res(c.to_string(), pos));
             pos += 1;
             continue;
@@ -119,12 +119,15 @@ fn tokenize(code: &String) -> Result<VecDeque<Token>, TokenizeError> {
 }
 
 trait TkList {
-    fn peek(&mut self, c: char) -> bool;
-    fn expect(&mut self, c: char) -> Result<(), ParseError>;
+    fn peek(&mut self, s: &str) -> bool;
+    fn expect(&mut self, s: &str) -> Result<(), ParseError>;
     fn expect_num(&mut self) -> Result<u32, ParseError>;
     fn expect_eof(&mut self) -> Result<bool, ParseError>;
-    fn mul(&mut self) -> Result<Node, ParseError>;
     fn expr(&mut self) -> Result<Node, ParseError>;
+    fn equality(&mut self) -> Result<Node, ParseError>;
+    fn relational(&mut self) -> Result<Node, ParseError>;
+    fn add(&mut self) -> Result<Node, ParseError>;
+    fn mul(&mut self) -> Result<Node, ParseError>;
     fn primary(&mut self) -> Result<Node, ParseError>;
     fn unary(&mut self) -> Result<Node, ParseError>;
 }
@@ -133,22 +136,22 @@ use std::collections::VecDeque;
 
 impl TkList for VecDeque<Token> {
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
-    fn peek(&mut self, c: char) -> bool {
-        if self.len() > 0 && self[0].kind == TkReserved(c.to_string()) {
+    fn peek(&mut self, s: &str) -> bool {
+        if self.len() > 0 && self[0].kind == TkReserved(s.to_owned()) {
             self.pop_front();
             return true;
         }
         false
     }
-    fn expect(&mut self, c: char) -> Result<(), ParseError> {
+    fn expect(&mut self, s: &str) -> Result<(), ParseError> {
         if self.len() > 0 {
-            if self[0].kind == TkReserved(c.to_string()) {
+            if self[0].kind == TkReserved(s.to_owned()) {
                 self.pop_front();
                 Ok(())
             } else {
                 Err(ParseError {
                     pos: self[0].pos,
-                    msg: format!("expected \'{}\'", c),
+                    msg: format!("expected \'{}\'", s),
                 })
             }
         } else {
@@ -185,15 +188,47 @@ impl TkList for VecDeque<Token> {
             panic!("EOF token not found!")
         }
     }
-    // expr -> mul -> unary -> primaryの順に呼ばれる
     fn expr(&mut self) -> Result<Node, ParseError> {
+        self.equality()
+    }
+    fn equality(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.relational()?;
+        loop {
+            if self.peek("==") {
+                node = Node::new_bin(NdEq, node, self.relational()?);
+            } else if self.peek("!=") {
+                node = Node::new_bin(NdNeq, node, self.relational()?);
+            // } else if self.expect_eof()? {
+            } else {
+                return Ok(node);
+            }
+        }
+    }
+    fn relational(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.add()?;
+        loop {
+            if self.peek("<") {
+                node = Node::new_bin(NdLt, node, self.add()?);
+            } else if self.peek("<=") {
+                node = Node::new_bin(NdLe, node, self.add()?);
+            } else if self.peek(">") {
+                node = Node::new_bin(NdLt, self.add()?, node);
+            } else if self.peek(">=") {
+                node = Node::new_bin(NdLe, self.add()?, node);
+            } else {
+                return Ok(node);
+            }
+        }
+    }
+    // expr -> mul -> unary -> primaryの順に呼ばれる
+    fn add(&mut self) -> Result<Node, ParseError> {
         let mut node = self.mul()?;
         loop {
-            if self.peek('+') {
+            if self.peek("+") {
                 node = Node::new_bin(NdAdd, node, self.mul()?);
-            } else if self.peek('-') {
+            } else if self.peek("-") {
                 node = Node::new_bin(NdSub, node, self.mul()?);
-            } else if self.expect_eof()? {
+            } else {
                 return Ok(node);
             }
         }
@@ -201,9 +236,9 @@ impl TkList for VecDeque<Token> {
     fn mul(&mut self) -> Result<Node, ParseError> {
         let mut node = self.unary()?;
         loop {
-            if self.peek('*') {
+            if self.peek("*") {
                 node = Node::new_bin(NdMul, node, self.unary()?);
-            } else if self.peek('/') {
+            } else if self.peek("/") {
                 node = Node::new_bin(NdDiv, node, self.unary()?);
             } else {
                 return Ok(node);
@@ -211,18 +246,18 @@ impl TkList for VecDeque<Token> {
         }
     }
     fn unary(&mut self) -> Result<Node, ParseError> {
-        if self.peek('+') {
+        if self.peek("+") {
             self.unary()
-        } else if self.peek('-') {
+        } else if self.peek("-") {
             Ok(Node::new_bin(NdSub, Node::new_num(0), self.unary()?))
         } else {
             self.primary()
         }
     }
     fn primary(&mut self) -> Result<Node, ParseError> {
-        if self.peek('(') {
+        if self.peek("(") {
             let node = self.expr();
-            self.expect(')').map(|_| node)?
+            self.expect(")").map(|_| node)?
         } else {
             self.expect_num().map(|val| Ok(Node::new_num(val)))?
         }
@@ -237,6 +272,10 @@ enum NodeKind {
     NdSub,
     NdMul,
     NdDiv,
+    NdEq,
+    NdNeq,
+    NdLt,
+    NdLe,
     NdNum,
 }
 use crate::NodeKind::*;
@@ -281,7 +320,11 @@ impl Node {
                 NdSub => "  sub rax, rdi",
                 NdMul => "  imul rax, rdi",
                 NdDiv => "  cqo\n  idiv rdi",
-                _ => panic!(),
+                NdEq => "  cmp rax, rdi\nsete al\nmovzb rax, al", // 最後のmovzbは、raxの上位56を削除して、下位8ビットにalを入れるということだろう。
+                NdNeq => "  cmp rax, rdi\nsetne al\nmovzb rax, al",
+                NdLt => "  cmp rax, rdi\nsetl al\nmovzb rax, al",
+                NdLe => "  cmp rax, rdi\nsetle al\nmovzb rax, al",
+                _ => unimplemented!(),
             };
             println!("{}", code);
             println!("  push rax")
