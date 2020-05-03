@@ -6,3 +6,4 @@ tmp*
 a.out
 .vscode
 memo.txt
+assert.sh

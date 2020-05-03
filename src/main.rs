@@ -1,4 +1,5 @@
 use std::env;
+// use std::str;
 mod err;
 use crate::err::*;
 
@@ -79,30 +80,36 @@ impl Token {
 }
 
 fn tokenize(code: &String) -> Result<VecDeque<Token>, TokenizeError> {
-    let mut numvec = vec![];
     let mut list: VecDeque<Token> = VecDeque::new();
-    let code = &format!("{} ", code)[..]; // numvecを回収させるために、末尾に空白追加(なんか嫌だけど)
+    // let code = &format!("{} ", code)[..]; // numvecを回収させるために、末尾に空白追加(なんか嫌だけど)
     let mut pos = 0;
     while (pos < code.len()) {
-        let c = code.chars().nth(pos).unwrap();
-        if c.is_ascii_digit() {
-            numvec.push(c.to_digit(10).unwrap());
-            pos += 1;
+        // 数字読み取り
+        let n: String = code
+            .chars()
+            .skip(pos)
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        if n.len() > 0 {
+            pos += n.len();
+            list.push_back(Token::new_num(n.parse().unwrap(), pos));
             continue;
-        } else if !numvec.is_empty() {
-            let tk = Token::new_num(numvec.iter().fold(0, |acc, x| acc * 10 + x), pos - 1);
-            list.push_back(tk);
-            numvec = vec![];
         }
+        // 2文字読み取り
         if (pos < code.len() - 1) {
-            let cc = &code[pos..pos + 2];
-            if ["==", "!=", "<=", ">="].contains(&cc) {
-                let tk = Token::new_res(cc.to_owned(), pos);
+            // let cc = &code[pos..pos + 2];
+            // let cc = &code.chars().skip(pos).take(2).collect::<String>()[..];  // こっちの方が安全?
+            let x = &code.as_bytes()[pos..pos + 2]; // バイトでみた方が効率よさそう。
+            if [b"==", b"!=", b"<=", b">="].iter().any(|b| b == &x) {
+                let s = String::from_utf8(x.to_vec()).unwrap(); // "==", "!=", "<=", ">=" のどれかなので大丈夫
+                let tk = Token::new_res(s, pos);
                 list.push_back(tk);
                 pos += 2;
                 continue;
             }
         }
+        // 1文字読み取り
+        let c = code.chars().nth(pos).unwrap();
         if "+-*/()<>".find(c).is_some() {
             list.push_back(Token::new_res(c.to_string(), pos));
             pos += 1;
