@@ -66,7 +66,7 @@ pub fn tokenize(code: &String) -> Result<VecDeque<Token>, TokenizeError> {
     let mut list: VecDeque<Token> = VecDeque::new();
     // let code = &format!("{} ", code)[..]; // numvecを回収させるために、末尾に空白追加(なんか嫌だけど)
     let mut pos = 0;
-    while (pos < code.len()) {
+    while pos < code.len() {
         // 数字読み取り
         let n: String = code
             .chars()
@@ -79,7 +79,7 @@ pub fn tokenize(code: &String) -> Result<VecDeque<Token>, TokenizeError> {
             continue;
         }
         // 2文字読み取り
-        if (pos < code.len() - 1) {
+        if pos < code.len() - 1 {
             // let cc = &code[pos..pos + 2];
             // let cc = &code.chars().skip(pos).take(2).collect::<String>()[..];  // こっちの方が安全?
             let x = &code.as_bytes()[pos..pos + 2]; // バイトでみた方が効率よさそう。

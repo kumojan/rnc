@@ -1,4 +1,5 @@
 use crate::parse::Node;
+use crate::parse::NodeKind::*;
 
 fn gen(node: &Node) {
     if let Node::Leaf { val } = node {
@@ -30,4 +31,37 @@ pub fn code_gen(node: &Node) {
     gen(node);
     println!("  pop rax");
     println!("  ret");
+}
+
+use std::fs;
+use std::io;
+use std::io::{BufWriter, Write};
+pub fn print_graph(node: &Node) -> io::Result<()> {
+    let mut f = BufWriter::new(fs::File::create("graph.dot").unwrap());
+    f.write(
+        b"digraph {
+node [
+style = \"filled\",
+fontsize = 16,
+fillcolor = \"green\",
+];
+",
+    )?;
+    f.write(graph_gen(node, "root".to_owned()).as_bytes())?;
+    f.write(b"}\n")?;
+    Ok(())
+}
+pub fn graph_gen(node: &Node, name: String) -> String {
+    if let Node::Leaf { val } = node {
+        format!("{} [label=\"{}\"];\n", name, val)
+    } else if let Node::Bin { kind, lhs, rhs } = node {
+        let mut s = format!("{} [label=\"{:?}\"];\n", name, kind);
+        let left = format!("{}l", name);
+        let right = format!("{}r", name);
+        s = s + &graph_gen(lhs, left.clone()) + &graph_gen(rhs, right.clone());
+        s = s + &format!("{} -> {} [];\n{} -> {} [];\n", name, left, name, right);
+        s
+    } else {
+        unimplemented!();
+    }
 }

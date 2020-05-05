@@ -6,6 +6,7 @@ use std::fmt;
 ///
 /// パーサー
 ///
+#[derive(Debug)]
 pub enum NodeKind {
     NdAdd,
     NdSub,

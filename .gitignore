@@ -7,3 +7,4 @@ a.out
 .vscode
 memo.txt
 assert.sh
+*.dot

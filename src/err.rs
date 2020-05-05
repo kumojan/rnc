@@ -1,7 +1,7 @@
 use crate::parse::ParseError;
 use crate::tokenize::TokenizeError;
 use std::borrow::Borrow;
-use std::fmt;
+// use std::fmt;
 
 #[derive(Debug)]
 pub enum EnumError {
