@@ -1,40 +1,7 @@
+use crate::parse::ParseError;
+use crate::tokenize::TokenizeError;
 use std::borrow::Borrow;
 use std::fmt;
-
-#[derive(Debug, Default)]
-pub struct TokenizeError {
-    pos: usize,
-}
-// このformaterを書き換えてcodeを挿入したら、自動でメッセージ出力できそうな気がする。
-impl fmt::Display for TokenizeError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "invalid token at {}", self.pos)
-    }
-}
-impl From<usize> for TokenizeError {
-    fn from(pos: usize) -> Self {
-        Self { pos }
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct ParseError {
-    pub pos: usize,
-    pub msg: String,
-}
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "parse failed at {}", self.pos)
-    }
-}
-// impl From<usize> for ParseError {
-//     fn from(pos: usize) -> Self {
-//         Self {
-//             pos,
-//             msg: "parse failed",
-//         }
-//     }
-// }
 
 #[derive(Debug)]
 pub enum EnumError {
