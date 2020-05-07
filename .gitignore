@@ -6,5 +6,5 @@ tmp*
 a.out
 .vscode
 memo.txt
-assert.sh
+run.sh
 *.dot

@@ -1,7 +1,22 @@
 use crate::tokenize::TokenKind::*;
 use crate::tokenize::*;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fmt;
+
+///
+/// 変数リスト
+///
+pub fn local_variables(token_list: &VecDeque<Token>) -> Vec<String> {
+    let mut lbars: Vec<_> = token_list
+        .iter()
+        .flat_map(|x| match &x.kind {
+            TkIdent(s, _) => Some(s.clone()),
+            _ => None,
+        })
+        .collect();
+    lbars.dedup();
+    lbars
+}
 
 ///
 /// パーサー
@@ -31,9 +46,9 @@ impl fmt::Debug for NodeKind {
             NdNeq => write!(f, "!="),
             NdLt => write!(f, "<"),
             NdLe => write!(f, "<="),
-            NdLvar => write!(f, "local var"),
+            NdLvar => write!(f, "v"),
             NdAssign => write!(f, "="),
-            NdNum => write!(f, "number"),
+            NdNum => write!(f, "n"),
         }
     }
 }
@@ -49,7 +64,8 @@ pub enum Node {
     Leaf {
         kind: NodeKind,
         val: u32,
-        offset: char,
+        name: String,
+        offset: usize,
     },
     Bin {
         kind: NodeKind,
@@ -62,21 +78,21 @@ impl Node {
         Self::Leaf {
             kind: NdNum,
             val,
-            offset: ' ',
+            name: val.to_string(),
+            offset: 0,
         }
     }
-    fn new_lvar(c: char) -> Self {
+    fn new_lvar(s: String, offset: usize) -> Self {
         Self::Leaf {
             kind: NdLvar,
             val: 0,
-            offset: c,
+            name: s,
+            offset,
         }
     }
     pub fn if_num(&self) -> Option<u32> {
         if let Self::Leaf {
-            kind: NdNum,
-            val,
-            offset,
+            kind: NdNum, val, ..
         } = self
         {
             Some(*val)
@@ -85,28 +101,22 @@ impl Node {
         }
     }
     pub fn is_lvar(&self) -> bool {
-        if let Self::Leaf {
-            kind: NdLvar,
-            val,
-            offset,
-        } = self
-        {
+        if let Self::Leaf { kind: NdLvar, .. } = self {
             true
         } else {
             false
         }
     }
-    pub fn offset(&self) -> u32 {
-        const a_offset: u32 = b"a"[0] as u32;
+    pub fn offset(&self) -> usize {
         if let Self::Leaf {
             kind: NdLvar,
-            val,
             offset,
+            ..
         } = self
         {
-            (offset.to_string().as_bytes()[0] as u32 - a_offset + 1) * 8
+            *offset
         } else {
-            panic!();
+            0
         }
     }
     fn new_bin(kind: NodeKind, lhs: Node, rhs: Node) -> Self {
@@ -129,91 +139,17 @@ impl fmt::Display for ParseError {
     }
 }
 
-pub trait TkList {
+pub trait Parser {
     // 見るだけ、エラーなし
     fn peek(&mut self, s: &str) -> bool;
     fn peek_num(&mut self) -> Option<u32>;
-    fn peek_ident(&mut self) -> Option<char>;
+    fn peek_ident(&mut self) -> Option<String>;
     fn is_eof(&self) -> bool;
-    // peekしてエラーを出す
+    // 結果をもらい、違ったらエラーを出す
     fn expect(&mut self, s: &str) -> Result<(), ParseError>;
     fn expect_num(&mut self) -> Result<u32, ParseError>;
-    fn expect_ident(&mut self) -> Result<char, ParseError>;
-    fn expect_eof(&mut self) -> Result<bool, ParseError>;
-    fn program(&mut self) -> Result<Vec<Node>, ParseError>;
+    fn expect_ident(&mut self) -> Result<String, ParseError>;
     // コード生成
-    fn stmt(&mut self) -> Result<Node, ParseError>;
-    fn assign(&mut self) -> Result<Node, ParseError>;
-    fn expr(&mut self) -> Result<Node, ParseError>;
-    fn equality(&mut self) -> Result<Node, ParseError>;
-    fn relational(&mut self) -> Result<Node, ParseError>;
-    fn add(&mut self) -> Result<Node, ParseError>;
-    fn mul(&mut self) -> Result<Node, ParseError>;
-    fn primary(&mut self) -> Result<Node, ParseError>;
-    fn unary(&mut self) -> Result<Node, ParseError>;
-}
-
-impl TkList for VecDeque<Token> {
-    /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
-    fn peek(&mut self, s: &str) -> bool {
-        if self[0].kind == TkReserved(s.to_owned()) {
-            self.pop_front();
-            return true;
-        }
-        false
-    }
-    fn peek_num(&mut self) -> Option<u32> {
-        if let TkNum(val) = self[0].kind {
-            self.pop_front();
-            Some(val)
-        } else {
-            None
-        }
-    }
-    fn peek_ident(&mut self) -> Option<char> {
-        if let TkIdent(c) = self[0].kind {
-            self.pop_front();
-            Some(c)
-        } else {
-            None
-        }
-    }
-    fn is_eof(&self) -> bool {
-        self[0].kind == TkEOF
-    }
-    fn expect(&mut self, s: &str) -> Result<(), ParseError> {
-        if !self.peek(s) {
-            Err(ParseError {
-                pos: self[0].pos,
-                msg: format!("expected \'{}\'", s),
-            })
-        } else {
-            Ok(())
-        }
-    }
-    /// 次がTkNum(val)の場合は1つずれてOk(val),それ以外はErr
-    fn expect_num(&mut self) -> Result<u32, ParseError> {
-        self.peek_num().ok_or(ParseError {
-            pos: self[0].pos,
-            msg: "expected number".to_owned(),
-        })
-    }
-    fn expect_ident(&mut self) -> Result<char, ParseError> {
-        self.peek_ident().ok_or(ParseError {
-            pos: self[0].pos,
-            msg: "expected identifier".to_owned(),
-        })
-    }
-    fn expect_eof(&mut self) -> Result<bool, ParseError> {
-        // match self[0].kind {
-        //     TkEOF => Ok(true),
-        //     _ => Err(ParseError {
-        //         pos: self[0].pos,
-        //         msg: "unrecognized by parser".to_owned(),
-        //     }),
-        // }
-        unimplemented!();
-    }
     fn program(&mut self) -> Result<Vec<Node>, ParseError> {
         let mut code = vec![];
         while !self.is_eof() {
@@ -300,6 +236,104 @@ impl TkList for VecDeque<Token> {
             self.primary()
         }
     }
+    fn primary(&mut self) -> Result<Node, ParseError>;
+}
+
+impl Parser for VecDeque<Token> {
+    /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
+    fn peek(&mut self, s: &str) -> bool {
+        if self[0].kind == TkReserved(s.to_owned()) {
+            self.pop_front();
+            return true;
+        }
+        false
+    }
+    fn peek_num(&mut self) -> Option<u32> {
+        if let TkNum(val) = self[0].kind {
+            self.pop_front();
+            Some(val)
+        } else {
+            None
+        }
+    }
+    fn peek_ident(&mut self) -> Option<String> {
+        if let TkIdent(s, _) = self[0].kind.clone() {
+            self.pop_front();
+            Some(s)
+        } else {
+            None
+        }
+    }
+    fn is_eof(&self) -> bool {
+        self[0].kind == TkEOF
+    }
+    fn expect(&mut self, s: &str) -> Result<(), ParseError> {
+        if !self.peek(s) {
+            Err(ParseError {
+                pos: self[0].pos,
+                msg: format!("expected \'{}\'", s),
+            })
+        } else {
+            Ok(())
+        }
+    }
+    /// 次がTkNum(val)の場合は1つずれてOk(val),それ以外はErr
+    fn expect_num(&mut self) -> Result<u32, ParseError> {
+        self.peek_num().ok_or(ParseError {
+            pos: self[0].pos,
+            msg: "expected number".to_owned(),
+        })
+    }
+    fn expect_ident(&mut self) -> Result<String, ParseError> {
+        self.peek_ident().ok_or(ParseError {
+            pos: self[0].pos,
+            msg: "expected identifier".to_owned(),
+        })
+    }
+    fn primary(&mut self) -> Result<Node, ParseError> {
+        unimplemented!();
+    }
+}
+
+pub struct ParserStruct {
+    tklist: VecDeque<Token>,
+    lvars: Vec<String>,
+    pub varoffset: usize,
+}
+impl ParserStruct {
+    pub fn new(tklist: VecDeque<Token>) -> Self {
+        let lvars = local_variables(&tklist);
+        let varoffset = lvars.len() * 8;
+        Self {
+            tklist,
+            lvars,
+            varoffset,
+        }
+    }
+}
+impl Parser for ParserStruct {
+    fn peek(&mut self, s: &str) -> bool {
+        self.tklist.peek(s)
+    }
+    fn peek_num(&mut self) -> Option<u32> {
+        self.tklist.peek_num()
+    }
+    fn peek_ident(&mut self) -> Option<String> {
+        self.tklist.peek_ident()
+    }
+    fn is_eof(&self) -> bool {
+        self.tklist.is_eof()
+    }
+    // peekしてエラーを出す
+    fn expect(&mut self, s: &str) -> Result<(), ParseError> {
+        self.tklist.expect(s)
+    }
+    fn expect_num(&mut self) -> Result<u32, ParseError> {
+        self.tklist.expect_num()
+    }
+    fn expect_ident(&mut self) -> Result<String, ParseError> {
+        self.tklist.expect_ident()
+    }
     fn primary(&mut self) -> Result<Node, ParseError> {
         if self.peek("(") {
             let node = self.expr();
@@ -307,7 +341,15 @@ impl TkList for VecDeque<Token> {
         } else if let Some(val) = self.peek_num() {
             Ok(Node::new_num(val))
         } else {
-            Ok(Node::new_lvar(self.expect_ident()?))
+            let name = self.expect_ident()?;
+            let offset = self
+                .lvars
+                .iter()
+                .enumerate()
+                .flat_map(|(i, s)| if *s == name { Some((i + 1) * 8) } else { None })
+                .next()
+                .unwrap();
+            Ok(Node::new_lvar(name, offset))
         }
     }
 }

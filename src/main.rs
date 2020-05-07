@@ -25,10 +25,11 @@ fn main() -> Result<(), CompileError> {
 }
 
 fn compile(code: &String) -> Result<(), EnumError> {
-    let mut token_list = tokenize(code)?;
+    let token_list = tokenize(code)?;
+    let mut parser = ParserStruct::new(token_list);
     // println!("{:?}", token_list);
-    let nodes = token_list.program()?;
-    // print_graph(&nodes[0]);
-    code_gen(nodes);
+    let nodes = parser.program()?;
+    print_graph(&nodes);
+    code_gen(nodes, parser.varoffset);
     Ok(())
 }

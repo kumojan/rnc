@@ -12,7 +12,7 @@ use std::fmt;
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenKind {
     TkReserved(String),
-    TkIdent(char),
+    TkIdent(String, u32),
     TkNum(u32),
     TkEOF,
 }
@@ -36,9 +36,9 @@ impl Token {
             pos,
         }
     }
-    fn new_ident(c: char, pos: usize) -> Self {
+    fn new_ident(s: String, pos: usize, offset: u32) -> Self {
         Self {
-            kind: TkIdent(c),
+            kind: TkIdent(s, offset),
             pos,
         }
     }
@@ -105,9 +105,16 @@ pub fn tokenize(code: &String) -> Result<VecDeque<Token>, TokenizeError> {
             pos += 1;
             continue;
         }
-        if ('a'..='z').contains(&c) {
-            list.push_back(Token::new_ident(c, pos));
-            pos += 1;
+        // 変数名読み取り
+        let s: String = code
+            .chars()
+            .skip(pos)
+            .take_while(|c| ('a'..='z').contains(&c))
+            .collect();
+        let sl = s.len();
+        if s.len() > 0 {
+            list.push_back(Token::new_ident(s, pos, 0));
+            pos += sl;
             continue;
         }
         if c.is_whitespace() {

@@ -47,13 +47,13 @@ fn gen_lval(node: &Node) {
     println!("  sub rax, {}", node.offset());
     println!("  push rax\n");
 }
-pub fn code_gen(nodes: Vec<Node>) {
+pub fn code_gen(nodes: Vec<Node>, varoffset: usize) {
     const HEADER: &str = ".intel_syntax noprefix\n.global main\nmain:";
     // まず現在の関数のrbpをスタックにpush(戻る場所)、次に現在のrsp(スタックポインタ)の値をrbpに格納し、rspを使用する変数分ずらす
     println!("{}", HEADER);
     println!("  push rbp"); // まず現在の関数のrbpをスタックにpush(戻る場所?)
     println!("  mov rbp, rsp"); // 次にrbpに現在のrspを入れる。rspは常にスタックの1番下を指していて、rbpもそこを指すようになる
-    println!("  sub rsp, 26*8"); // rspを変数分ずらす。この時スタックは自動的にずれる。(26回pushするのと同じ?)
+    println!("  sub rsp, {}", varoffset); // rspを変数分ずらす。この時スタックは自動的にずれる。(26回pushするのと同じ?)
     for node in &nodes {
         gen(node);
         println!("  pop rax");
@@ -66,7 +66,7 @@ pub fn code_gen(nodes: Vec<Node>) {
 use std::fs;
 use std::io;
 use std::io::{BufWriter, Write};
-pub fn print_graph(node: &Node) -> io::Result<()> {
+pub fn print_graph(nodes: &Vec<Node>) -> io::Result<()> {
     let mut f = BufWriter::new(fs::File::create("graph.dot").unwrap());
     f.write(
         b"digraph {
@@ -77,15 +77,26 @@ fillcolor = \"green\",
 ];
 ",
     )?;
-    f.write(graph_gen(node, "root".to_owned()).as_bytes())?;
+    for (i, node) in nodes.iter().enumerate() {
+        f.write(graph_gen(node, format!("root{}", i)).as_bytes())?;
+    }
     f.write(b"}\n")?;
     Ok(())
 }
 pub fn graph_gen(node: &Node, name: String) -> String {
-    if let Node::Leaf { val, kind, offset } = node {
+    if let Node::Leaf {
+        kind,
+        val,
+        name: _name,
+        offset,
+    } = node
+    {
         match kind {
             NdNum => format!("{} [label=\"{:?} {}\"];\n", name, kind, val),
-            NdLvar => format!("{} [label=\"{:?} {}\"];\n", name, kind, offset),
+            NdLvar => format!(
+                "{} [label=\"{:?} {} ofs:{}\"];\n",
+                name, kind, _name, offset
+            ),
             _ => panic!(),
         }
     } else if let Node::Bin { kind, lhs, rhs } = node {
@@ -93,7 +104,7 @@ pub fn graph_gen(node: &Node, name: String) -> String {
         let left = format!("{}l", name);
         let right = format!("{}r", name);
         s = s + &graph_gen(lhs, left.clone()) + &graph_gen(rhs, right.clone());
-        s = s + &format!("{} -> {} [];\n{} -> {} [];\n", name, left, name, right);
+        s = s + &format!("{} -> {{ {} {} }};\n", name, left, right);
         s
     } else {
         unimplemented!();
