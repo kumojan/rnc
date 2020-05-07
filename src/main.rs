@@ -27,8 +27,8 @@ fn main() -> Result<(), CompileError> {
 fn compile(code: &String) -> Result<(), EnumError> {
     let mut token_list = tokenize(code)?;
     // println!("{:?}", token_list);
-    let node = token_list.expr()?;
-    print_graph(&node);
-    code_gen(&node);
+    let nodes = token_list.program()?;
+    // print_graph(&nodes[0]);
+    code_gen(nodes);
     Ok(())
 }

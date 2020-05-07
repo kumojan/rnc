@@ -2,8 +2,25 @@ use crate::parse::Node;
 use crate::parse::NodeKind::*;
 
 fn gen(node: &Node) {
-    if let Node::Leaf { val } = node {
+    if let Some(val) = node.if_num() {
         println!("  push {}", val);
+    } else if node.is_lvar() {
+        gen_lval(node);
+        println!("  pop rax");
+        println!("  mov rax, [rax]");
+        println!("  push rax");
+    } else if let Node::Bin {
+        kind: NdAssign,
+        lhs,
+        rhs,
+    } = node
+    {
+        gen_lval(lhs);
+        gen(rhs);
+        println!("  pop rdi");
+        println!("  pop rax");
+        println!("  mov [rax], rdi");
+        println!("  push rdi");
     } else if let Node::Bin { kind, lhs, rhs } = node {
         gen(lhs);
         gen(rhs);
@@ -25,11 +42,24 @@ fn gen(node: &Node) {
     }
     println!("");
 }
-pub fn code_gen(node: &Node) {
+fn gen_lval(node: &Node) {
+    println!("  mov rax, rbp");
+    println!("  sub rax, {}", node.offset());
+    println!("  push rax\n");
+}
+pub fn code_gen(nodes: Vec<Node>) {
     const HEADER: &str = ".intel_syntax noprefix\n.global main\nmain:";
+    // まず現在の関数のrbpをスタックにpush(戻る場所)、次に現在のrsp(スタックポインタ)の値をrbpに格納し、rspを使用する変数分ずらす
     println!("{}", HEADER);
-    gen(node);
-    println!("  pop rax");
+    println!("  push rbp"); // まず現在の関数のrbpをスタックにpush(戻る場所?)
+    println!("  mov rbp, rsp"); // 次にrbpに現在のrspを入れる。rspは常にスタックの1番下を指していて、rbpもそこを指すようになる
+    println!("  sub rsp, 26*8"); // rspを変数分ずらす。この時スタックは自動的にずれる。(26回pushするのと同じ?)
+    for node in &nodes {
+        gen(node);
+        println!("  pop rax");
+    }
+    println!("  mov rsp, rbp");
+    println!("  pop rbp");
     println!("  ret");
 }
 
@@ -52,8 +82,12 @@ fillcolor = \"green\",
     Ok(())
 }
 pub fn graph_gen(node: &Node, name: String) -> String {
-    if let Node::Leaf { val } = node {
-        format!("{} [label=\"{}\"];\n", name, val)
+    if let Node::Leaf { val, kind, offset } = node {
+        match kind {
+            NdNum => format!("{} [label=\"{:?} {}\"];\n", name, kind, val),
+            NdLvar => format!("{} [label=\"{:?} {}\"];\n", name, kind, offset),
+            _ => panic!(),
+        }
     } else if let Node::Bin { kind, lhs, rhs } = node {
         let mut s = format!("{} [label=\"{:?}\"];\n", name, kind);
         let left = format!("{}l", name);

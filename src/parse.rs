@@ -6,7 +6,7 @@ use std::fmt;
 ///
 /// パーサー
 ///
-#[derive(Debug)]
+// #[derive(Debug)]
 pub enum NodeKind {
     NdAdd,
     NdSub,
@@ -16,7 +16,26 @@ pub enum NodeKind {
     NdNeq,
     NdLt,
     NdLe,
+    NdLvar,
+    NdAssign,
     NdNum,
+}
+impl fmt::Debug for NodeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            NdAdd => write!(f, "+"),
+            NdSub => write!(f, "-"),
+            NdMul => write!(f, "*"),
+            NdDiv => write!(f, "/"),
+            NdEq => write!(f, "=="),
+            NdNeq => write!(f, "!="),
+            NdLt => write!(f, "<"),
+            NdLe => write!(f, "<="),
+            NdLvar => write!(f, "local var"),
+            NdAssign => write!(f, "="),
+            NdNum => write!(f, "number"),
+        }
+    }
 }
 use NodeKind::*;
 impl Default for NodeKind {
@@ -28,7 +47,9 @@ impl Default for NodeKind {
 #[allow(dead_code)]
 pub enum Node {
     Leaf {
+        kind: NodeKind,
         val: u32,
+        offset: char,
     },
     Bin {
         kind: NodeKind,
@@ -38,7 +59,55 @@ pub enum Node {
 }
 impl Node {
     fn new_num(val: u32) -> Self {
-        Self::Leaf { val }
+        Self::Leaf {
+            kind: NdNum,
+            val,
+            offset: ' ',
+        }
+    }
+    fn new_lvar(c: char) -> Self {
+        Self::Leaf {
+            kind: NdLvar,
+            val: 0,
+            offset: c,
+        }
+    }
+    pub fn if_num(&self) -> Option<u32> {
+        if let Self::Leaf {
+            kind: NdNum,
+            val,
+            offset,
+        } = self
+        {
+            Some(*val)
+        } else {
+            None
+        }
+    }
+    pub fn is_lvar(&self) -> bool {
+        if let Self::Leaf {
+            kind: NdLvar,
+            val,
+            offset,
+        } = self
+        {
+            true
+        } else {
+            false
+        }
+    }
+    pub fn offset(&self) -> u32 {
+        const a_offset: u32 = b"a"[0] as u32;
+        if let Self::Leaf {
+            kind: NdLvar,
+            val,
+            offset,
+        } = self
+        {
+            (offset.to_string().as_bytes()[0] as u32 - a_offset + 1) * 8
+        } else {
+            panic!();
+        }
     }
     fn new_bin(kind: NodeKind, lhs: Node, rhs: Node) -> Self {
         Self::Bin {
@@ -61,10 +130,20 @@ impl fmt::Display for ParseError {
 }
 
 pub trait TkList {
+    // 見るだけ、エラーなし
     fn peek(&mut self, s: &str) -> bool;
+    fn peek_num(&mut self) -> Option<u32>;
+    fn peek_ident(&mut self) -> Option<char>;
+    fn is_eof(&self) -> bool;
+    // peekしてエラーを出す
     fn expect(&mut self, s: &str) -> Result<(), ParseError>;
     fn expect_num(&mut self) -> Result<u32, ParseError>;
+    fn expect_ident(&mut self) -> Result<char, ParseError>;
     fn expect_eof(&mut self) -> Result<bool, ParseError>;
+    fn program(&mut self) -> Result<Vec<Node>, ParseError>;
+    // コード生成
+    fn stmt(&mut self) -> Result<Node, ParseError>;
+    fn assign(&mut self) -> Result<Node, ParseError>;
     fn expr(&mut self) -> Result<Node, ParseError>;
     fn equality(&mut self) -> Result<Node, ParseError>;
     fn relational(&mut self) -> Result<Node, ParseError>;
@@ -77,67 +156,86 @@ pub trait TkList {
 impl TkList for VecDeque<Token> {
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
     fn peek(&mut self, s: &str) -> bool {
-        // self.last().map_or(false, |l| {
-        //     if l.kind == TkReserved(s.to_owned()) {
-        //         self.pop_front();
-        //         true
-        //     } else {
-        //         false
-        //     }
-        // })
-        if self.len() > 0 && self[0].kind == TkReserved(s.to_owned()) {
+        if self[0].kind == TkReserved(s.to_owned()) {
             self.pop_front();
             return true;
         }
         false
     }
-    fn expect(&mut self, s: &str) -> Result<(), ParseError> {
-        if self.len() > 0 {
-            if self[0].kind == TkReserved(s.to_owned()) {
-                self.pop_front();
-                Ok(())
-            } else {
-                Err(ParseError {
-                    pos: self[0].pos,
-                    msg: format!("expected \'{}\'", s),
-                })
-            }
+    fn peek_num(&mut self) -> Option<u32> {
+        if let TkNum(val) = self[0].kind {
+            self.pop_front();
+            Some(val)
         } else {
-            panic!("EOF token not found!");
+            None
         }
     }
-    /// 次がTkNum(val)の場合は1つずれてSome(val), それ以外はずれずにNone
-    fn expect_num(&mut self) -> Result<u32, ParseError> {
-        if self.len() > 0 {
-            match self[0].kind {
-                TkNum(val) => {
-                    self.pop_front();
-                    Ok(val)
-                }
-                _ => Err(ParseError {
-                    pos: self[0].pos,
-                    msg: "expected number".to_owned(),
-                }),
-            }
+    fn peek_ident(&mut self) -> Option<char> {
+        if let TkIdent(c) = self[0].kind {
+            self.pop_front();
+            Some(c)
         } else {
-            panic!("EOF token not found!");
+            None
         }
+    }
+    fn is_eof(&self) -> bool {
+        self[0].kind == TkEOF
+    }
+    fn expect(&mut self, s: &str) -> Result<(), ParseError> {
+        if !self.peek(s) {
+            Err(ParseError {
+                pos: self[0].pos,
+                msg: format!("expected \'{}\'", s),
+            })
+        } else {
+            Ok(())
+        }
+    }
+    /// 次がTkNum(val)の場合は1つずれてOk(val),それ以外はErr
+    fn expect_num(&mut self) -> Result<u32, ParseError> {
+        self.peek_num().ok_or(ParseError {
+            pos: self[0].pos,
+            msg: "expected number".to_owned(),
+        })
+    }
+    fn expect_ident(&mut self) -> Result<char, ParseError> {
+        self.peek_ident().ok_or(ParseError {
+            pos: self[0].pos,
+            msg: "expected identifier".to_owned(),
+        })
     }
     fn expect_eof(&mut self) -> Result<bool, ParseError> {
-        if self.len() > 0 {
-            match self[0].kind {
-                TkEOF => Ok(true),
-                _ => Err(ParseError {
-                    pos: self[0].pos,
-                    msg: "unrecognized by parser".to_owned(),
-                }),
-            }
-        } else {
-            panic!("EOF token not found!")
+        // match self[0].kind {
+        //     TkEOF => Ok(true),
+        //     _ => Err(ParseError {
+        //         pos: self[0].pos,
+        //         msg: "unrecognized by parser".to_owned(),
+        //     }),
+        // }
+        unimplemented!();
+    }
+    fn program(&mut self) -> Result<Vec<Node>, ParseError> {
+        let mut code = vec![];
+        while !self.is_eof() {
+            code.push(self.stmt()?)
         }
+        Ok(code)
+    }
+    fn stmt(&mut self) -> Result<Node, ParseError> {
+        let node = self.expr()?;
+        self.expect(";")?;
+        Ok(node)
     }
     fn expr(&mut self) -> Result<Node, ParseError> {
-        self.equality()
+        self.assign()
+    }
+    fn assign(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.equality()?;
+        // "="が見えた場合は代入文にする。
+        if self.peek("=") {
+            node = Node::new_bin(NdAssign, node, self.equality()?);
+        }
+        Ok(node)
     }
     fn equality(&mut self) -> Result<Node, ParseError> {
         let mut node = self.relational()?;
@@ -146,7 +244,6 @@ impl TkList for VecDeque<Token> {
                 node = Node::new_bin(NdEq, node, self.relational()?);
             } else if self.peek("!=") {
                 node = Node::new_bin(NdNeq, node, self.relational()?);
-            // } else if self.expect_eof()? {
             } else {
                 // 現状、ちゃんとコードが完結していなくても正常終了してしまう。
                 return Ok(node);
@@ -207,8 +304,10 @@ impl TkList for VecDeque<Token> {
         if self.peek("(") {
             let node = self.expr();
             self.expect(")").map(|_| node)?
+        } else if let Some(val) = self.peek_num() {
+            Ok(Node::new_num(val))
         } else {
-            self.expect_num().map(|val| Ok(Node::new_num(val)))?
+            Ok(Node::new_lvar(self.expect_ident()?))
         }
     }
 }
