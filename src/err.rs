@@ -1,12 +1,15 @@
+use crate::codegen::CodeGenError;
 use crate::parse::ParseError;
 use crate::tokenize::TokenizeError;
 use std::borrow::Borrow;
 // use std::fmt;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum EnumError {
     Tokenize { pos: usize },
     Parse { pos: usize, msg: String },
+    CodeGen { msg: String },
 }
 impl From<ParseError> for EnumError {
     fn from(err: ParseError) -> Self {
@@ -19,6 +22,11 @@ impl From<ParseError> for EnumError {
 impl From<TokenizeError> for EnumError {
     fn from(err: TokenizeError) -> Self {
         Self::Tokenize { pos: err.pos }
+    }
+}
+impl From<CodeGenError> for EnumError {
+    fn from(err: CodeGenError) -> Self {
+        Self::CodeGen { msg: err.msg }
     }
 }
 

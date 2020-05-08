@@ -1,6 +1,6 @@
 use crate::tokenize::TokenKind::*;
 use crate::tokenize::*;
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::fmt;
 
 ///
@@ -23,6 +23,7 @@ pub fn local_variables(token_list: &VecDeque<Token>) -> Vec<String> {
 /// パーサー
 ///
 // #[derive(Debug)]
+#[derive(Clone, Copy)]
 pub enum NodeKind {
     NdAdd,
     NdSub,
@@ -62,14 +63,14 @@ impl Default for NodeKind {
     }
 }
 
-struct Node2 {
-    kind: NodeKind,
-    val: u32,
-    name: String,
-    offset: usize,
-    lhs: Option<Box<Node>>,
-    rhs: Option<Box<Node>>,
-}
+// struct Node2 {
+//     kind: NodeKind,
+//     val: u32,
+//     name: String,
+//     offset: usize,
+//     lhs: Option<Box<Node>>,
+//     rhs: Option<Box<Node>>,
+// }
 
 #[allow(dead_code)]
 pub enum Node {
@@ -89,7 +90,37 @@ pub enum Node {
         rhs: Box<Node>,
     },
 }
+impl fmt::Debug for Node {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Node::Leaf {
+                kind: NdNum, val, ..
+            } => write!(f, "Leaf Num {}", val),
+            Node::Leaf {
+                kind: NdLvar,
+                name,
+                offset,
+                ..
+            } => write!(f, "Leaf Num {} at {}", name.clone(), offset),
+            Node::Unary {
+                kind: NdReturn,
+                next,
+            } => write!(f, "Unary {:?} -> {:?}", NdReturn, next.kind()),
+            Node::Bin { kind, lhs, rhs } => {
+                write!(f, "Bin {:?} -> {:?}, {:?}", kind, lhs.kind(), rhs.kind())
+            }
+            _ => unimplemented!(),
+        }
+    }
+}
 impl Node {
+    fn kind(&self) -> NodeKind {
+        match self {
+            Node::Leaf { kind, .. } => *kind,
+            Node::Unary { kind, .. } => *kind,
+            Node::Bin { kind, .. } => *kind,
+        }
+    }
     fn new_num(val: u32) -> Self {
         Self::Leaf {
             kind: NdNum,
@@ -350,7 +381,6 @@ impl Parser {
         }
     }
     fn offset_for(&self, varname: &String) -> usize {
-        let x = Some(1).filter(|_| true);
         self.lvars
             .iter()
             .enumerate()
@@ -399,9 +429,4 @@ impl GenPrimary for Parser {
             Ok(Node::new_lvar(name, offset))
         }
     }
-}
-
-fn test() {
-    let mut p = Parser::new(VecDeque::default());
-    p.program();
 }

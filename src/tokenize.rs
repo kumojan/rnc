@@ -68,17 +68,6 @@ fn is_alnum(c: &char) -> bool {
     ('a'..='z').contains(c) || ('A'..='Z').contains(c) || ('0'..='9').contains(c) || *c == '_'
 }
 
-trait ReadToken
-where
-    Self: Sized,
-{
-    fn read_return(mut self) -> (usize, Self, Option<Token>);
-    fn read_num(mut self) -> (usize, u32, Self);
-    fn read_2(mut self) -> (usize, String, Self);
-    fn read_1(mut self) -> (usize, String, Self);
-    fn read_ident(mut self) -> (usize, String, Self);
-}
-
 ///
 /// トークン列を生成
 ///

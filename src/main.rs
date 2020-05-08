@@ -18,6 +18,7 @@ fn main() -> Result<(), CompileError> {
             Err(EnumError::Parse { pos, msg }) => {
                 error_at(&code, pos, format!("parse failed: {}", msg))
             }
+            Err(EnumError::CodeGen { msg }) => error(format!("codegen failed with node: {}", msg)),
             _ => Ok(()),
         },
         None => error("input needed"),
@@ -30,6 +31,6 @@ fn compile(code: &String) -> Result<(), EnumError> {
     let mut parser = Parser::new(token_list);
     let nodes = parser.program()?;
     print_graph(&nodes);
-    code_gen(nodes, parser.varoffset);
+    code_gen(nodes, parser.varoffset)?;
     Ok(())
 }

@@ -1,12 +1,27 @@
 use crate::parse::Node;
 use crate::parse::NodeKind::*;
 
+#[derive(Debug, Default)]
+pub struct CodeGenError {
+    pub msg: String,
+}
+impl CodeGenError {
+    fn new(node: &Node) -> Self {
+        Self {
+            msg: format!("{:?}", node),
+        }
+    }
+}
+
 fn gen_lval(node: &Node) {
+    // rbpは関数の先頭アドレス
+    // そこからoffset分引くと、目的の変数のアドレスを得る
+    // それをpush
     println!("  mov rax, rbp");
     println!("  sub rax, {}", node.offset());
     println!("  push rax\n");
 }
-fn gen(node: &Node) {
+fn gen(node: &Node) -> Result<(), CodeGenError> {
     if let Some(val) = node.if_num() {
         println!("  push {}", val);
     } else if let Node::Unary {
@@ -14,13 +29,16 @@ fn gen(node: &Node) {
         next,
     } = node
     {
-        gen(next);
+        // nextはlvarが期待されている
+        gen(next)?; // その値を取得す?る
         println!("  pop rax");
         println!("  mov rsp, rbp"); // スタックをrbpまで戻し
         println!("  pop rbp"); // 以前のrbpがそこにあるので回収し、
         println!("  ret"); // 関数を抜ける
     } else if let Node::Leaf { kind: NdLvar, .. } = node {
+        // まず変数のアドレスを取得する
         gen_lval(node);
+        // そのアドレスを参照してpush
         println!("  pop rax");
         println!("  mov rax, [rax]");
         println!("  push rax");
@@ -30,15 +48,19 @@ fn gen(node: &Node) {
         rhs,
     } = node
     {
+        // 左辺のアドレスをpush
         gen_lval(lhs);
-        gen(rhs);
+        // 右辺を処理してpush
+        gen(rhs)?;
+        // rdi->変数アドレス, rax->右辺の結果
         println!("  pop rdi");
         println!("  pop rax");
+        // 右辺に代入して、ついでにその値をpush(cの代入式は、代入した値を持つ)
         println!("  mov [rax], rdi");
         println!("  push rdi");
     } else if let Node::Bin { kind, lhs, rhs } = node {
-        gen(lhs);
-        gen(rhs);
+        gen(lhs)?;
+        gen(rhs)?;
         println!("  pop rdi");
         println!("  pop rax");
         let code = match kind {
@@ -55,11 +77,12 @@ fn gen(node: &Node) {
         println!("{}", code);
         println!("  push rax")
     } else {
-        unimplemented!();
+        CodeGenError::new(node);
     }
     println!("");
+    Ok(())
 }
-pub fn code_gen(nodes: Vec<Node>, varoffset: usize) {
+pub fn code_gen(nodes: Vec<Node>, varoffset: usize) -> Result<(), CodeGenError> {
     const HEADER: &str = ".intel_syntax noprefix\n.global main\nmain:";
     // まず現在の関数のrbpをスタックにpush(戻る場所)、次に現在のrsp(スタックポインタ)の値をrbpに格納し、rspを使用する変数分ずらす
     println!("{}", HEADER);
@@ -67,10 +90,11 @@ pub fn code_gen(nodes: Vec<Node>, varoffset: usize) {
     println!("  mov rbp, rsp"); // 次にrbpに現在のrspを入れる。rspは常にスタックの1番下を指していて、rbpもそこを指すようになる
     println!("  sub rsp, {}\n", varoffset); // rspを変数分ずらす。この時スタックは自動的にずれる。(26回pushするのと同じ?)
     for node in &nodes {
-        gen(node);
+        gen(node)?;
         println!("  pop rax");
     }
     println!("  ret");
+    Ok(())
 }
 
 use std::fs;
