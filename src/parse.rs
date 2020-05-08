@@ -10,10 +10,11 @@ pub fn local_variables(token_list: &VecDeque<Token>) -> Vec<String> {
     let mut lbars: Vec<_> = token_list
         .iter()
         .flat_map(|x| match &x.kind {
-            TkIdent(s, _) => Some(s.clone()),
+            TkIdent(s) => Some(s.clone()),
             _ => None,
         })
         .collect();
+    lbars.sort();
     lbars.dedup();
     lbars
 }
@@ -31,6 +32,7 @@ pub enum NodeKind {
     NdNeq,
     NdLt,
     NdLe,
+    NdReturn,
     NdLvar,
     NdAssign,
     NdNum,
@@ -46,9 +48,10 @@ impl fmt::Debug for NodeKind {
             NdNeq => write!(f, "!="),
             NdLt => write!(f, "<"),
             NdLe => write!(f, "<="),
-            NdLvar => write!(f, "v"),
+            NdLvar => write!(f, ""),
+            NdReturn => write!(f, "return"),
             NdAssign => write!(f, "="),
-            NdNum => write!(f, "n"),
+            NdNum => write!(f, ""),
         }
     }
 }
@@ -59,6 +62,15 @@ impl Default for NodeKind {
     }
 }
 
+struct Node2 {
+    kind: NodeKind,
+    val: u32,
+    name: String,
+    offset: usize,
+    lhs: Option<Box<Node>>,
+    rhs: Option<Box<Node>>,
+}
+
 #[allow(dead_code)]
 pub enum Node {
     Leaf {
@@ -66,6 +78,10 @@ pub enum Node {
         val: u32,
         name: String,
         offset: usize,
+    },
+    Unary {
+        kind: NodeKind,
+        next: Box<Node>,
     },
     Bin {
         kind: NodeKind,
@@ -100,23 +116,16 @@ impl Node {
             None
         }
     }
-    pub fn is_lvar(&self) -> bool {
-        if let Self::Leaf { kind: NdLvar, .. } = self {
-            true
-        } else {
-            false
-        }
-    }
     pub fn offset(&self) -> usize {
-        if let Self::Leaf {
-            kind: NdLvar,
-            offset,
-            ..
-        } = self
-        {
-            *offset
-        } else {
-            0
+        if let Self::Leaf { offset, .. } = self {
+            return *offset;
+        }
+        panic!();
+    }
+    fn new_unary(kind: NodeKind, next: Node) -> Self {
+        Self::Unary {
+            kind,
+            next: Box::new(next),
         }
     }
     fn new_bin(kind: NodeKind, lhs: Node, rhs: Node) -> Self {
@@ -139,9 +148,10 @@ impl fmt::Display for ParseError {
     }
 }
 
-pub trait Parser {
+pub trait TokenReader {
     // 見るだけ、エラーなし
     fn peek(&mut self, s: &str) -> bool;
+    fn peek_return(&mut self) -> bool;
     fn peek_num(&mut self) -> Option<u32>;
     fn peek_ident(&mut self) -> Option<String>;
     fn is_eof(&self) -> bool;
@@ -149,6 +159,26 @@ pub trait Parser {
     fn expect(&mut self, s: &str) -> Result<(), ParseError>;
     fn expect_num(&mut self) -> Result<u32, ParseError>;
     fn expect_ident(&mut self) -> Result<String, ParseError>;
+}
+pub trait CodeGen {
+    fn program(&mut self) -> Result<Vec<Node>, ParseError>;
+    fn stmt(&mut self) -> Result<Node, ParseError>;
+    fn expr(&mut self) -> Result<Node, ParseError>;
+    fn assign(&mut self) -> Result<Node, ParseError>;
+    fn equality(&mut self) -> Result<Node, ParseError>;
+    fn relational(&mut self) -> Result<Node, ParseError>;
+    fn add(&mut self) -> Result<Node, ParseError>;
+    fn mul(&mut self) -> Result<Node, ParseError>;
+    fn unary(&mut self) -> Result<Node, ParseError>;
+}
+pub trait GenPrimary {
+    fn primary(&mut self) -> Result<Node, ParseError>;
+}
+
+impl<T> CodeGen for T
+where
+    T: TokenReader + GenPrimary,
+{
     // コード生成
     fn program(&mut self) -> Result<Vec<Node>, ParseError> {
         let mut code = vec![];
@@ -157,8 +187,14 @@ pub trait Parser {
         }
         Ok(code)
     }
+    // stmt = "return" expr ";"
+    //      | expr ";"
     fn stmt(&mut self) -> Result<Node, ParseError> {
-        let node = self.expr()?;
+        let node = if self.peek_return() {
+            Node::new_unary(NdReturn, self.expr()?)
+        } else {
+            self.expr()?
+        };
         self.expect(";")?;
         Ok(node)
     }
@@ -236,13 +272,19 @@ pub trait Parser {
             self.primary()
         }
     }
-    fn primary(&mut self) -> Result<Node, ParseError>;
 }
 
-impl Parser for VecDeque<Token> {
+impl TokenReader for VecDeque<Token> {
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
     fn peek(&mut self, s: &str) -> bool {
         if self[0].kind == TkReserved(s.to_owned()) {
+            self.pop_front();
+            return true;
+        }
+        false
+    }
+    fn peek_return(&mut self) -> bool {
+        if self[0].kind == TkReturn {
             self.pop_front();
             return true;
         }
@@ -257,7 +299,7 @@ impl Parser for VecDeque<Token> {
         }
     }
     fn peek_ident(&mut self) -> Option<String> {
-        if let TkIdent(s, _) = self[0].kind.clone() {
+        if let TkIdent(s) = self[0].kind.clone() {
             self.pop_front();
             Some(s)
         } else {
@@ -290,17 +332,14 @@ impl Parser for VecDeque<Token> {
             msg: "expected identifier".to_owned(),
         })
     }
-    fn primary(&mut self) -> Result<Node, ParseError> {
-        unimplemented!();
-    }
 }
 
-pub struct ParserStruct {
+pub struct Parser {
     tklist: VecDeque<Token>,
     lvars: Vec<String>,
     pub varoffset: usize,
 }
-impl ParserStruct {
+impl Parser {
     pub fn new(tklist: VecDeque<Token>) -> Self {
         let lvars = local_variables(&tklist);
         let varoffset = lvars.len() * 8;
@@ -310,10 +349,22 @@ impl ParserStruct {
             varoffset,
         }
     }
+    fn offset_for(&self, varname: &String) -> usize {
+        let x = Some(1).filter(|_| true);
+        self.lvars
+            .iter()
+            .enumerate()
+            .flat_map(|(i, s)| Some((i + 1) * 8).filter(|_| s == varname)) // s==varnameの時以外はNoneにしてしまう。
+            .next()
+            .unwrap()
+    }
 }
-impl Parser for ParserStruct {
+impl TokenReader for Parser {
     fn peek(&mut self, s: &str) -> bool {
         self.tklist.peek(s)
+    }
+    fn peek_return(&mut self) -> bool {
+        self.tklist.peek_return()
     }
     fn peek_num(&mut self) -> Option<u32> {
         self.tklist.peek_num()
@@ -334,6 +385,8 @@ impl Parser for ParserStruct {
     fn expect_ident(&mut self) -> Result<String, ParseError> {
         self.tklist.expect_ident()
     }
+}
+impl GenPrimary for Parser {
     fn primary(&mut self) -> Result<Node, ParseError> {
         if self.peek("(") {
             let node = self.expr();
@@ -342,14 +395,13 @@ impl Parser for ParserStruct {
             Ok(Node::new_num(val))
         } else {
             let name = self.expect_ident()?;
-            let offset = self
-                .lvars
-                .iter()
-                .enumerate()
-                .flat_map(|(i, s)| if *s == name { Some((i + 1) * 8) } else { None })
-                .next()
-                .unwrap();
+            let offset = self.offset_for(&name);
             Ok(Node::new_lvar(name, offset))
         }
     }
+}
+
+fn test() {
+    let mut p = Parser::new(VecDeque::default());
+    p.program();
 }

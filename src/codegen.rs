@@ -1,10 +1,25 @@
 use crate::parse::Node;
 use crate::parse::NodeKind::*;
 
+fn gen_lval(node: &Node) {
+    println!("  mov rax, rbp");
+    println!("  sub rax, {}", node.offset());
+    println!("  push rax\n");
+}
 fn gen(node: &Node) {
     if let Some(val) = node.if_num() {
         println!("  push {}", val);
-    } else if node.is_lvar() {
+    } else if let Node::Unary {
+        kind: NdReturn,
+        next,
+    } = node
+    {
+        gen(next);
+        println!("  pop rax");
+        println!("  mov rsp, rbp"); // スタックをrbpまで戻し
+        println!("  pop rbp"); // 以前のrbpがそこにあるので回収し、
+        println!("  ret"); // 関数を抜ける
+    } else if let Node::Leaf { kind: NdLvar, .. } = node {
         gen_lval(node);
         println!("  pop rax");
         println!("  mov rax, [rax]");
@@ -39,13 +54,10 @@ fn gen(node: &Node) {
         };
         println!("{}", code);
         println!("  push rax")
+    } else {
+        unimplemented!();
     }
     println!("");
-}
-fn gen_lval(node: &Node) {
-    println!("  mov rax, rbp");
-    println!("  sub rax, {}", node.offset());
-    println!("  push rax\n");
 }
 pub fn code_gen(nodes: Vec<Node>, varoffset: usize) {
     const HEADER: &str = ".intel_syntax noprefix\n.global main\nmain:";
@@ -53,13 +65,11 @@ pub fn code_gen(nodes: Vec<Node>, varoffset: usize) {
     println!("{}", HEADER);
     println!("  push rbp"); // まず現在の関数のrbpをスタックにpush(戻る場所?)
     println!("  mov rbp, rsp"); // 次にrbpに現在のrspを入れる。rspは常にスタックの1番下を指していて、rbpもそこを指すようになる
-    println!("  sub rsp, {}", varoffset); // rspを変数分ずらす。この時スタックは自動的にずれる。(26回pushするのと同じ?)
+    println!("  sub rsp, {}\n", varoffset); // rspを変数分ずらす。この時スタックは自動的にずれる。(26回pushするのと同じ?)
     for node in &nodes {
         gen(node);
         println!("  pop rax");
     }
-    println!("  mov rsp, rbp");
-    println!("  pop rbp");
     println!("  ret");
 }
 
@@ -106,6 +116,15 @@ pub fn graph_gen(node: &Node, name: String) -> String {
         s = s + &graph_gen(lhs, left.clone()) + &graph_gen(rhs, right.clone());
         s = s + &format!("{} -> {{ {} {} }};\n", name, left, right);
         s
+    } else if let Node::Unary {
+        kind: NdReturn,
+        next,
+    } = node
+    {
+        let mut s = format!("{} [label=\"return\"];\n", name);
+        let nextname = name.clone() + &"n";
+        s.push_str(&graph_gen(next, nextname.clone()));
+        s + &format!("{} -> {}", name, nextname)
     } else {
         unimplemented!();
     }

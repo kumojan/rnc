@@ -26,8 +26,8 @@ fn main() -> Result<(), CompileError> {
 
 fn compile(code: &String) -> Result<(), EnumError> {
     let token_list = tokenize(code)?;
-    let mut parser = ParserStruct::new(token_list);
     // println!("{:?}", token_list);
+    let mut parser = Parser::new(token_list);
     let nodes = parser.program()?;
     print_graph(&nodes);
     code_gen(nodes, parser.varoffset);

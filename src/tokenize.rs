@@ -12,8 +12,9 @@ use std::fmt;
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenKind {
     TkReserved(String),
-    TkIdent(String, u32),
+    TkIdent(String),
     TkNum(u32),
+    TkReturn,
     TkEOF,
 }
 
@@ -36,14 +37,11 @@ impl Token {
             pos,
         }
     }
-    fn new_ident(s: String, pos: usize, offset: u32) -> Self {
+    fn new_ident(s: String, pos: usize) -> Self {
         Self {
-            kind: TkIdent(s, offset),
+            kind: TkIdent(s),
             pos,
         }
-    }
-    fn eof(pos: usize) -> Self {
-        Self { kind: TkEOF, pos }
     }
 }
 
@@ -66,6 +64,21 @@ impl From<usize> for TokenizeError {
     }
 }
 
+fn is_alnum(c: &char) -> bool {
+    ('a'..='z').contains(c) || ('A'..='Z').contains(c) || ('0'..='9').contains(c) || *c == '_'
+}
+
+trait ReadToken
+where
+    Self: Sized,
+{
+    fn read_return(mut self) -> (usize, Self, Option<Token>);
+    fn read_num(mut self) -> (usize, u32, Self);
+    fn read_2(mut self) -> (usize, String, Self);
+    fn read_1(mut self) -> (usize, String, Self);
+    fn read_ident(mut self) -> (usize, String, Self);
+}
+
 ///
 /// トークン列を生成
 ///
@@ -74,21 +87,20 @@ pub fn tokenize(code: &String) -> Result<VecDeque<Token>, TokenizeError> {
     // let code = &format!("{} ", code)[..]; // numvecを回収させるために、末尾に空白追加(なんか嫌だけど)
     let mut pos = 0;
     while pos < code.len() {
-        // 数字読み取り
-        let n: String = code
-            .chars()
-            .skip(pos)
-            .take_while(|c| c.is_ascii_digit())
-            .collect();
-        if n.len() > 0 {
-            pos += n.len();
-            list.push_back(Token::new_num(n.parse().unwrap(), pos));
-            continue;
+        // return読み取り
+        if pos + 6 < code.len() {
+            let b = &code.as_bytes()[pos..pos + 6];
+            if b"return" == b && !is_alnum(&code.chars().nth(pos + 6).unwrap()) {
+                list.push_back(Token {
+                    kind: TkReturn,
+                    pos,
+                });
+                pos += 6;
+                continue;
+            }
         }
         // 2文字読み取り
         if pos < code.len() - 1 {
-            // let cc = &code[pos..pos + 2];
-            // let cc = &code.chars().skip(pos).take(2).collect::<String>()[..];  // こっちの方が安全?
             let x = &code.as_bytes()[pos..pos + 2]; // バイトでみた方が効率よさそう。
             if [b"==", b"!=", b"<=", b">="].iter().any(|b| b == &x) {
                 let s = String::from_utf8(x.to_vec()).unwrap(); // "==", "!=", "<=", ">=" のどれかなので大丈夫
@@ -105,15 +117,23 @@ pub fn tokenize(code: &String) -> Result<VecDeque<Token>, TokenizeError> {
             pos += 1;
             continue;
         }
-        // 変数名読み取り
-        let s: String = code
+
+        // 数字読み取り
+        let n: String = code
             .chars()
             .skip(pos)
-            .take_while(|c| ('a'..='z').contains(&c))
+            .take_while(|c| c.is_ascii_digit())
             .collect();
+        if n.len() > 0 {
+            pos += n.len();
+            list.push_back(Token::new_num(n.parse().unwrap(), pos));
+            continue;
+        }
+        // 変数名読み取り
+        let s: String = code.chars().skip(pos).take_while(is_alnum).collect();
         let sl = s.len();
         if s.len() > 0 {
-            list.push_back(Token::new_ident(s, pos, 0));
+            list.push_back(Token::new_ident(s, pos));
             pos += sl;
             continue;
         }
@@ -123,7 +143,10 @@ pub fn tokenize(code: &String) -> Result<VecDeque<Token>, TokenizeError> {
         }
         return Err(pos)?;
     }
-    list.push_back(Token::eof(code.len()));
+    list.push_back(Token {
+        kind: TkEOF,
+        pos: code.len(),
+    });
     // list.reverse();
     Ok(list)
 }
