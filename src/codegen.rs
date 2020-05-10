@@ -24,25 +24,6 @@ fn gen_lval(node: &Node) {
     println!("  sub rax, {}", node.offset());
     println!("  push rax\n");
 }
-fn gen_then(node: &Node) {
-    if let Node::Bin {
-        kind: NdElse,
-        lhs,
-        rhs,
-    } = node
-    {
-        // trueの場合
-        gen(lhs);
-        println!("  jmp .L1\n");
-        println!(".L0:");
-        // falseの場合
-        gen(rhs); // こっちはjmp不要(次の行の.L1にそのまますすむ)
-        println!(".L1:");
-    } else {
-        gen(node);
-        println!(".L0");
-    }
-}
 fn gen(node: &Node) -> Result<(), CodeGenError> {
     if let Some(val) = node.if_num() {
         println!("  push {}", val);
@@ -80,12 +61,7 @@ fn gen(node: &Node) -> Result<(), CodeGenError> {
         // 右辺に代入して、ついでにその値をpush(cの代入式は、代入した値を持つ)
         println!("  mov [rax], rdi");
         println!("  push rdi");
-    } else if let Node::Bin {
-        kind: NdIf,
-        lhs: condi,
-        rhs,
-    } = node
-    {
+    } else if let Node::If { condi, _if, _else } = node {
         // 左辺を計算して結果をpush
         gen(condi);
         // condi結果取り出し
@@ -93,7 +69,18 @@ fn gen(node: &Node) -> Result<(), CodeGenError> {
         println!("  cmp rax, 0");
         // 結果がfalseならjump, trueならそのまま
         println!("  je .L0");
-        gen_then(rhs);
+        if let Some(n) = _else {
+            // trueの場合
+            gen(_if);
+            println!("  jmp .L1\n");
+            println!(".L0:");
+            // falseの場合
+            gen(n); // こっちはjmp不要(次の行の.L1にそのまますすむ)
+            println!(".L1:");
+        } else {
+            gen(_if);
+            println!(".L0");
+        }
     } else if let Node::Bin { kind, lhs, rhs } = node {
         gen(lhs)?;
         gen(rhs)?;
@@ -148,44 +135,59 @@ fillcolor = \"green\",
 ",
     )?;
     for (i, node) in nodes.iter().enumerate() {
-        f.write(graph_gen(node, format!("root{}", i)).as_bytes())?;
+        f.write(graph_gen(node, None, i).as_bytes());
     }
     f.write(b"}\n")?;
     Ok(())
 }
-pub fn graph_gen(node: &Node, name: String) -> String {
+pub fn graph_gen(node: &Node, parent: Option<&String>, number: usize) -> String {
+    // 親が指定されているとき、そこから自分への辺を引く
+    let mut s = String::new();
+    let nodename = if let Some(pname) = parent {
+        format!("{}{}", pname, number)
+    } else {
+        format!("{}", number)
+    };
+    if let Some(pname) = parent {
+        s += &format!("{} -> {}\n", pname, nodename);
+    }
     if let Node::Leaf {
         kind,
         val,
-        name: _name,
+        name,
         offset,
     } = node
     {
         match kind {
-            NdNum => format!("{} [label=\"{:?} {}\"];\n", name, kind, val),
-            NdLvar => format!(
-                "{} [label=\"{:?} {} ofs:{}\"];\n",
-                name, kind, _name, offset
-            ),
+            NdNum => s += &format!("{} [label=\"{:?} {}\"];\n", nodename, kind, val),
+            NdLvar => {
+                s += &format!(
+                    "{} [label=\"{:?} {} ofs:{}\"];\n",
+                    nodename, kind, name, offset
+                )
+            }
             _ => panic!(),
         }
     } else if let Node::Bin { kind, lhs, rhs } = node {
-        let mut s = format!("{} [label=\"{:?}\"];\n", name, kind);
-        let left = format!("{}l", name);
-        let right = format!("{}r", name);
-        s = s + &graph_gen(lhs, left.clone()) + &graph_gen(rhs, right.clone());
-        s = s + &format!("{} -> {{ {} {} }};\n", name, left, right);
-        s
+        s += &format!("{} [label=\"{:?}\"];\n", nodename, kind);
+        s += &graph_gen(lhs, Some(&nodename), 0);
+        s += &graph_gen(rhs, Some(&nodename), 1);
     } else if let Node::Unary {
         kind: NdReturn,
         next,
     } = node
     {
-        let mut s = format!("{} [label=\"return\"];\n", name);
-        let nextname = name.clone() + &"n";
-        s.push_str(&graph_gen(next, nextname.clone()));
-        s + &format!("{} -> {};\n", name, nextname)
+        s += &format!("{} [label=\"return\"];\n", nodename);
+        s += &graph_gen(next, Some(&nodename), 0);
+    } else if let Node::If { condi, _if, _else } = node {
+        s += &format!("{} [label=\"if\"];\n", nodename);
+        s += &graph_gen(condi, Some(&nodename), 0);
+        s += &graph_gen(_if, Some(&nodename), 1);
+        if let Some(n) = _else {
+            s += &graph_gen(n, Some(&nodename), 2);
+        }
     } else {
         unimplemented!();
     }
+    s
 }

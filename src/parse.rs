@@ -25,7 +25,6 @@ pub fn local_variables(token_list: &VecDeque<Token>) -> Vec<String> {
 // #[derive(Debug)]
 #[derive(Clone, Copy)]
 pub enum NodeKind {
-    NdNone,
     NdAdd,
     NdSub,
     NdMul,
@@ -44,7 +43,6 @@ pub enum NodeKind {
 impl fmt::Debug for NodeKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            NdNone => write!(f, "empty!"),
             NdAdd => write!(f, "+"),
             NdSub => write!(f, "-"),
             NdMul => write!(f, "*"),
@@ -95,6 +93,11 @@ pub enum Node {
         lhs: Box<Node>,
         rhs: Box<Node>,
     },
+    If {
+        condi: Box<Node>,
+        _if: Box<Node>,
+        _else: Option<Box<Node>>,
+    },
 }
 impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -125,14 +128,7 @@ impl Node {
             Node::Leaf { kind, .. } => *kind,
             Node::Unary { kind, .. } => *kind,
             Node::Bin { kind, .. } => *kind,
-        }
-    }
-    fn new_none() -> Self {
-        Self::Leaf {
-            kind: NdNone,
-            val: 0,
-            name: "".to_owned(),
-            offset: 0,
+            Node::If { .. } => NdIf,
         }
     }
     fn new_num(val: u32) -> Self {
@@ -149,6 +145,13 @@ impl Node {
             val: 0,
             name: s,
             offset,
+        }
+    }
+    fn new_if(condi: Node, _if: Node, _else: Option<Node>) -> Self {
+        Self::If {
+            condi: Box::new(condi),
+            _if: Box::new(_if),
+            _else: _else.map(Box::new),
         }
     }
     pub fn if_num(&self) -> Option<u32> {
@@ -250,11 +253,13 @@ where
             self.expect("(")?;
             let condi = self.expr()?;
             self.expect(")")?;
-            let mut then = self.stmt()?; // <- if trueのやつ
-            if self.peek("else") {
-                then = Node::new_bin(NdElse, then, self.stmt()?)
-            }
-            return Ok(Node::new_bin(NdIf, condi, then));
+            let _if = self.stmt()?; // <- if trueのやつ
+            let _else = if self.peek("else") {
+                Some(self.stmt()?)
+            } else {
+                None
+            };
+            return Ok(Node::new_if(condi, _if, _else));
         } else {
             self.expr()?
         };
