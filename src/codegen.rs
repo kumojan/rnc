@@ -17,9 +17,31 @@ fn gen_lval(node: &Node) {
     // rbpは関数の先頭アドレス
     // そこからoffset分引くと、目的の変数のアドレスを得る
     // それをpush
+    // 要するに、gen(node)が結果の値をpushするのに対し、
+    // gen_lvalは結果のアドレスをpushする
+    // 結果が変数でないときは、どうなるん?(node.offsetがバグる)
     println!("  mov rax, rbp");
     println!("  sub rax, {}", node.offset());
     println!("  push rax\n");
+}
+fn gen_then(node: &Node) {
+    if let Node::Bin {
+        kind: NdElse,
+        lhs,
+        rhs,
+    } = node
+    {
+        // trueの場合
+        gen(lhs);
+        println!("  jmp .L1\n");
+        println!(".L0:");
+        // falseの場合
+        gen(rhs); // こっちはjmp不要(次の行の.L1にそのまますすむ)
+        println!(".L1:");
+    } else {
+        gen(node);
+        println!(".L0");
+    }
 }
 fn gen(node: &Node) -> Result<(), CodeGenError> {
     if let Some(val) = node.if_num() {
@@ -58,6 +80,20 @@ fn gen(node: &Node) -> Result<(), CodeGenError> {
         // 右辺に代入して、ついでにその値をpush(cの代入式は、代入した値を持つ)
         println!("  mov [rax], rdi");
         println!("  push rdi");
+    } else if let Node::Bin {
+        kind: NdIf,
+        lhs: condi,
+        rhs,
+    } = node
+    {
+        // 左辺を計算して結果をpush
+        gen(condi);
+        // condi結果取り出し
+        println!("  pop rax");
+        println!("  cmp rax, 0");
+        // 結果がfalseならjump, trueならそのまま
+        println!("  je .L0");
+        gen_then(rhs);
     } else if let Node::Bin { kind, lhs, rhs } = node {
         gen(lhs)?;
         gen(rhs)?;
@@ -148,7 +184,7 @@ pub fn graph_gen(node: &Node, name: String) -> String {
         let mut s = format!("{} [label=\"return\"];\n", name);
         let nextname = name.clone() + &"n";
         s.push_str(&graph_gen(next, nextname.clone()));
-        s + &format!("{} -> {}", name, nextname)
+        s + &format!("{} -> {};\n", name, nextname)
     } else {
         unimplemented!();
     }

@@ -55,4 +55,6 @@ assert 3 '1; 2; return 3;'
 
 assert 3 'foo=3; return foo;'
 assert 8 'foo123=3; bar=5; return foo123+bar;'
+assert 42 "a=42; if (a==42) return a; else a = a+1; return a;"
+assert 42 "a=41; if (a==42) return a; else a = a+1; return a;"
 echo OK

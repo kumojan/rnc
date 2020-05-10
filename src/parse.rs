@@ -25,6 +25,7 @@ pub fn local_variables(token_list: &VecDeque<Token>) -> Vec<String> {
 // #[derive(Debug)]
 #[derive(Clone, Copy)]
 pub enum NodeKind {
+    NdNone,
     NdAdd,
     NdSub,
     NdMul,
@@ -37,10 +38,13 @@ pub enum NodeKind {
     NdLvar,
     NdAssign,
     NdNum,
+    NdIf,
+    NdElse,
 }
 impl fmt::Debug for NodeKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
+            NdNone => write!(f, "empty!"),
             NdAdd => write!(f, "+"),
             NdSub => write!(f, "-"),
             NdMul => write!(f, "*"),
@@ -53,6 +57,8 @@ impl fmt::Debug for NodeKind {
             NdReturn => write!(f, "return"),
             NdAssign => write!(f, "="),
             NdNum => write!(f, ""),
+            NdIf => write!(f, "if"),
+            NdElse => write!(f, "else"),
         }
     }
 }
@@ -114,11 +120,19 @@ impl fmt::Debug for Node {
     }
 }
 impl Node {
-    fn kind(&self) -> NodeKind {
+    pub fn kind(&self) -> NodeKind {
         match self {
             Node::Leaf { kind, .. } => *kind,
             Node::Unary { kind, .. } => *kind,
             Node::Bin { kind, .. } => *kind,
+        }
+    }
+    fn new_none() -> Self {
+        Self::Leaf {
+            kind: NdNone,
+            val: 0,
+            name: "".to_owned(),
+            offset: 0,
         }
     }
     fn new_num(val: u32) -> Self {
@@ -191,6 +205,17 @@ pub trait TokenReader {
     fn expect_num(&mut self) -> Result<u32, ParseError>;
     fn expect_ident(&mut self) -> Result<String, ParseError>;
 }
+///
+/// program = stmt*
+/// stmt = expr ";" | "return" expr ";" | "if" "(" expr ")" stmt ( "else" stmt )?
+/// expr = assign
+/// assign = equality ("=" assign)?
+/// equality = relational (("==" | "!=") relational)*
+/// relational = add (("<" | "<=" | ">" | ">=") add)*
+/// add = mul (("+" | "-") mul)*
+/// mul = primary (("*" | "/") primary)*
+/// primary = num | ident | "(" expr ")"
+///
 pub trait CodeGen {
     fn program(&mut self) -> Result<Vec<Node>, ParseError>;
     fn stmt(&mut self) -> Result<Node, ParseError>;
@@ -218,11 +243,18 @@ where
         }
         Ok(code)
     }
-    // stmt = "return" expr ";"
-    //      | expr ";"
     fn stmt(&mut self) -> Result<Node, ParseError> {
         let node = if self.peek_return() {
             Node::new_unary(NdReturn, self.expr()?)
+        } else if self.peek("if") {
+            self.expect("(")?;
+            let condi = self.expr()?;
+            self.expect(")")?;
+            let mut then = self.stmt()?; // <- if trueのやつ
+            if self.peek("else") {
+                then = Node::new_bin(NdElse, then, self.stmt()?)
+            }
+            return Ok(Node::new_bin(NdIf, condi, then));
         } else {
             self.expr()?
         };

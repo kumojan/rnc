@@ -18,7 +18,6 @@ pub enum TokenKind {
     TkEOF,
 }
 
-/// 初期値EOF
 #[derive(Debug)]
 pub struct Token {
     pub kind: TokenKind,
@@ -72,22 +71,12 @@ fn is_alnum(c: &char) -> bool {
 /// トークン列を生成
 ///
 pub fn tokenize(code: &String) -> Result<VecDeque<Token>, TokenizeError> {
+    const two_char_tokens: [&'static [u8; 2]; 1] = [b"if"];
+    const three_char_tokens: [&'static [u8; 3]; 1] = [b"for"];
     let mut list: VecDeque<Token> = VecDeque::new();
-    // let code = &format!("{} ", code)[..]; // numvecを回収させるために、末尾に空白追加(なんか嫌だけど)
     let mut pos = 0;
     while pos < code.len() {
-        // return読み取り
-        if pos + 6 < code.len() {
-            let b = &code.as_bytes()[pos..pos + 6];
-            if b"return" == b && !is_alnum(&code.chars().nth(pos + 6).unwrap()) {
-                list.push_back(Token {
-                    kind: TkReturn,
-                    pos,
-                });
-                pos += 6;
-                continue;
-            }
-        }
+        // 記号読み取り
         // 2文字読み取り
         if pos < code.len() - 1 {
             let x = &code.as_bytes()[pos..pos + 2]; // バイトでみた方が効率よさそう。
@@ -105,6 +94,56 @@ pub fn tokenize(code: &String) -> Result<VecDeque<Token>, TokenizeError> {
             list.push_back(Token::new_res(c.to_string(), pos));
             pos += 1;
             continue;
+        }
+
+        // 文字列読み取り
+        // return読み取り
+        if pos + 6 < code.len() {
+            let b = &code.as_bytes()[pos..pos + 6];
+            if b"return" == b && !is_alnum(&code.chars().nth(pos + 6).unwrap()) {
+                list.push_back(Token {
+                    kind: TkReturn,
+                    pos,
+                });
+                pos += 6;
+                continue;
+            }
+        }
+        // else読み取り
+        if pos + 4 < code.len() {
+            let b = &code.as_bytes()[pos..pos + 4];
+            if b"else" == b && !is_alnum(&code.chars().nth(pos + 4).unwrap()) {
+                list.push_back(Token {
+                    kind: TkReserved(String::from_utf8(b.to_vec()).unwrap()),
+                    pos,
+                });
+                pos += 4;
+                continue;
+            }
+        }
+        // for読み取り
+        if pos + 3 < code.len() {
+            let b = &code.as_bytes()[pos..pos + 3];
+            if b"for" == b && !is_alnum(&code.chars().nth(pos + 3).unwrap()) {
+                list.push_back(Token {
+                    kind: TkReserved(String::from_utf8(b.to_vec()).unwrap()),
+                    pos,
+                });
+                pos += 3;
+                continue;
+            }
+        }
+        // if読み取り
+        if pos + 2 < code.len() {
+            let b = &code.as_bytes()[pos..pos + 2];
+            if b"if" == b && !is_alnum(&code.chars().nth(pos + 2).unwrap()) {
+                list.push_back(Token {
+                    kind: TkReserved(String::from_utf8(b.to_vec()).unwrap()),
+                    pos,
+                });
+                pos += 2;
+                continue;
+            }
         }
 
         // 数字読み取り
@@ -136,6 +175,5 @@ pub fn tokenize(code: &String) -> Result<VecDeque<Token>, TokenizeError> {
         kind: TkEOF,
         pos: code.len(),
     });
-    // list.reverse();
     Ok(list)
 }
