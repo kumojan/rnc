@@ -38,7 +38,6 @@ pub enum NodeKind {
     NdAssign,
     NdNum,
     NdIf,
-    NdElse,
 }
 impl fmt::Debug for NodeKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -56,7 +55,6 @@ impl fmt::Debug for NodeKind {
             NdAssign => write!(f, "="),
             NdNum => write!(f, ""),
             NdIf => write!(f, "if"),
-            NdElse => write!(f, "else"),
         }
     }
 }
@@ -95,8 +93,8 @@ pub enum Node {
     },
     If {
         condi: Box<Node>,
-        _if: Box<Node>,
-        _else: Option<Box<Node>>,
+        then_: Box<Node>,
+        else_: Option<Box<Node>>,
     },
 }
 impl fmt::Debug for Node {
@@ -147,11 +145,11 @@ impl Node {
             offset,
         }
     }
-    fn new_if(condi: Node, _if: Node, _else: Option<Node>) -> Self {
+    fn new_if(condi: Node, then_: Node, else_: Option<Node>) -> Self {
         Self::If {
             condi: Box::new(condi),
-            _if: Box::new(_if),
-            _else: _else.map(Box::new),
+            then_: Box::new(then_),
+            else_: else_.map(Box::new),
         }
     }
     pub fn if_num(&self) -> Option<u32> {
@@ -247,7 +245,7 @@ where
         Ok(code)
     }
     fn stmt(&mut self) -> Result<Node, ParseError> {
-        let node = if self.peek_return() {
+        let node = if self.peek("return") {
             Node::new_unary(NdReturn, self.expr()?)
         } else if self.peek("if") {
             self.expect("(")?;
@@ -345,7 +343,16 @@ where
 impl TokenReader for VecDeque<Token> {
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
     fn peek(&mut self, s: &str) -> bool {
-        if self[0].kind == TkReserved(s.to_owned()) {
+        // match self[0].kind {
+        //     TkPunct(s.to_owned()) => {self.pop_front(); true },
+        //     TkResWord(s.to_owned()) => {self.pop_front(); true },
+        //     _ => false
+        // }
+        if self[0].kind == TkPunct(s.to_owned()) {
+            self.pop_front();
+            return true;
+        }
+        if self[0].kind == TkResWord(s.to_owned()) {
             self.pop_front();
             return true;
         }

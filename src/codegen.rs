@@ -61,24 +61,29 @@ fn gen(node: &Node) -> Result<(), CodeGenError> {
         // 右辺に代入して、ついでにその値をpush(cの代入式は、代入した値を持つ)
         println!("  mov [rax], rdi");
         println!("  push rdi");
-    } else if let Node::If { condi, _if, _else } = node {
+    } else if let Node::If {
+        condi,
+        then_,
+        else_,
+    } = node
+    {
         // 左辺を計算して結果をpush
-        gen(condi);
+        gen(condi)?;
         // condi結果取り出し
         println!("  pop rax");
         println!("  cmp rax, 0");
         // 結果がfalseならjump, trueならそのまま
         println!("  je .L0");
-        if let Some(n) = _else {
+        if let Some(n) = else_ {
             // trueの場合
-            gen(_if);
+            gen(then_)?;
             println!("  jmp .L1\n");
             println!(".L0:");
             // falseの場合
-            gen(n); // こっちはjmp不要(次の行の.L1にそのまますすむ)
+            gen(n)?; // こっちはjmp不要(次の行の.L1にそのまますすむ)
             println!(".L1:");
         } else {
-            gen(_if);
+            gen(then_)?;
             println!(".L0");
         }
     } else if let Node::Bin { kind, lhs, rhs } = node {
@@ -135,7 +140,7 @@ fillcolor = \"green\",
 ",
     )?;
     for (i, node) in nodes.iter().enumerate() {
-        f.write(graph_gen(node, None, i).as_bytes());
+        f.write(graph_gen(node, None, i).as_bytes())?;
     }
     f.write(b"}\n")?;
     Ok(())
@@ -179,11 +184,16 @@ pub fn graph_gen(node: &Node, parent: Option<&String>, number: usize) -> String 
     {
         s += &format!("{} [label=\"return\"];\n", nodename);
         s += &graph_gen(next, Some(&nodename), 0);
-    } else if let Node::If { condi, _if, _else } = node {
+    } else if let Node::If {
+        condi,
+        then_,
+        else_,
+    } = node
+    {
         s += &format!("{} [label=\"if\"];\n", nodename);
         s += &graph_gen(condi, Some(&nodename), 0);
-        s += &graph_gen(_if, Some(&nodename), 1);
-        if let Some(n) = _else {
+        s += &graph_gen(then_, Some(&nodename), 1);
+        if let Some(n) = else_ {
             s += &graph_gen(n, Some(&nodename), 2);
         }
     } else {
