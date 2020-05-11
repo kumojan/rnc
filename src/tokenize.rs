@@ -97,7 +97,8 @@ impl Lexer {
         (match l {
             2 => ["if"].contains(&&s[..]),
             3 => ["for"].contains(&&s[..]),
-            4 => ["else", "while"].contains(&&s[..]),
+            4 => ["else"].contains(&&s[..]),
+            5 => ["while"].contains(&&s[..]),
             6 => ["return"].contains(&&s[..]),
             _ => unimplemented!(),
         }) && !is_alnum(&self.peek_char(l))
@@ -162,7 +163,7 @@ impl Lexer {
         None
     }
     fn read_word(&mut self) -> Option<String> {
-        for l in &[2, 3, 4, 6] {
+        for l in &[2, 3, 4, 5, 6] {
             if self.pos + l < self.code.len() {
                 let s = self.peek_str(*l);
                 if self.check_res_word(&s, *l) {

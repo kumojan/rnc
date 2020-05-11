@@ -33,11 +33,6 @@ pub enum NodeKind {
     NdNeq,
     NdLt,
     NdLe,
-    NdReturn,
-    NdLvar,
-    NdAssign,
-    NdNum,
-    NdIf,
 }
 impl fmt::Debug for NodeKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -50,20 +45,10 @@ impl fmt::Debug for NodeKind {
             NdNeq => write!(f, "!="),
             NdLt => write!(f, "<"),
             NdLe => write!(f, "<="),
-            NdLvar => write!(f, ""),
-            NdReturn => write!(f, "return"),
-            NdAssign => write!(f, "="),
-            NdNum => write!(f, ""),
-            NdIf => write!(f, "if"),
         }
     }
 }
 use NodeKind::*;
-impl Default for NodeKind {
-    fn default() -> Self {
-        Self::NdNum
-    }
-}
 
 // struct Node2 {
 //     kind: NodeKind,
@@ -101,6 +86,16 @@ pub enum Node {
         then_: Box<Node>,
         else_: Option<Box<Node>>,
     },
+    While {
+        condi: Box<Node>,
+        then_: Box<Node>,
+    },
+    For {
+        start: Option<Box<Node>>,
+        condi: Option<Box<Node>>,
+        end: Option<Box<Node>>,
+        loop_: Box<Node>,
+    },
 }
 impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -108,25 +103,16 @@ impl fmt::Debug for Node {
             Node::Num { val } => write!(f, "Num {}", val),
             Node::Lvar { name, offset } => write!(f, "Val {} at {}", name.clone(), offset),
             Node::Return { returns } => write!(f, "return"),
-            Node::Bin { kind, lhs, rhs } => {
-                write!(f, "Bin {:?} -> {:?}, {:?}", kind, lhs.kind(), rhs.kind())
-            }
+            Node::Bin { kind, .. } => write!(f, "Bin {:?}", kind),
             Node::Assign { .. } => write!(f, "assign"),
+            Node::If { .. } => write!(f, "If"),
+            Node::While { .. } => write!(f, "while"),
+            Node::For { .. } => write!(f, "for"),
             _ => unimplemented!(),
         }
     }
 }
 impl Node {
-    pub fn kind(&self) -> NodeKind {
-        match self {
-            Node::Num { val } => NdNum,
-            Node::Lvar { .. } => NdEq,
-            Node::Bin { kind, .. } => *kind,
-            Node::Return { .. } => NdReturn,
-            Node::Assign { .. } => NdAssign,
-            Node::If { .. } => NdIf,
-        }
-    }
     fn new_num(val: u32) -> Self {
         Self::Num { val }
     }
@@ -159,6 +145,20 @@ impl Node {
             rhs: Box::new(rhs),
         }
     }
+    fn new_while(condi: Node, then_: Node) -> Self {
+        Self::While {
+            condi: Box::new(condi),
+            then_: Box::new(then_),
+        }
+    }
+    fn new_for(start: Option<Node>, condi: Option<Node>, end: Option<Node>, loop_: Node) -> Self {
+        Self::For {
+            start: start.map(Box::new),
+            condi: condi.map(Box::new),
+            end: end.map(Box::new),
+            loop_: Box::new(loop_),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -175,9 +175,11 @@ impl fmt::Display for ParseError {
 pub trait TokenReader {
     // 見るだけ、エラーなし
     fn peek(&mut self, s: &str) -> bool;
-    fn peek_return(&mut self) -> bool;
-    fn peek_num(&mut self) -> Option<u32>;
-    fn peek_ident(&mut self) -> Option<String>;
+    // 見て、存在したら消費してtrue、存在しなければfalse
+    fn consume(&mut self, s: &str) -> bool;
+    fn consume_return(&mut self) -> bool;
+    fn consume_num(&mut self) -> Option<u32>;
+    fn consume_ident(&mut self) -> Option<String>;
     fn is_eof(&self) -> bool;
     // 結果をもらい、違ったらエラーを出す
     fn expect(&mut self, s: &str) -> Result<(), ParseError>;
@@ -186,7 +188,11 @@ pub trait TokenReader {
 }
 ///
 /// program = stmt*
-/// stmt = expr ";" | "return" expr ";" | "if" "(" expr ")" stmt ( "else" stmt )?
+/// stmt = expr ";"
+///     | "return" expr ";"
+///     | "if" "(" expr ")" stmt ( "else" stmt )?
+///     | "while" "(" expr ")" stmt
+///     | "for" "(" expr? ";" expr? ";" expr? ")" stmt
 /// expr = assign
 /// assign = equality ("=" assign)?
 /// equality = relational (("==" | "!=") relational)*
@@ -223,19 +229,50 @@ where
         Ok(code)
     }
     fn stmt(&mut self) -> Result<Node, ParseError> {
-        let node = if self.peek("return") {
+        let node = if self.consume("return") {
             Node::new_return(self.expr()?)
-        } else if self.peek("if") {
+        } else if self.consume("if") {
             self.expect("(")?;
             let condi = self.expr()?;
             self.expect(")")?;
-            let _if = self.stmt()?; // <- if trueのやつ
-            let _else = if self.peek("else") {
+            let then_ = self.stmt()?; // <- if trueのやつ
+            let else_ = if self.consume("else") {
                 Some(self.stmt()?)
             } else {
                 None
             };
-            return Ok(Node::new_if(condi, _if, _else));
+            return Ok(Node::new_if(condi, then_, else_)); // 最後のセミコロンは不要なのでreturnする
+        } else if self.consume("while") {
+            self.expect("(")?;
+            let condi = self.expr()?;
+            self.expect(")")?;
+            let then_ = self.stmt()?;
+            return Ok(Node::new_while(condi, then_)); // 最後のセミコロンは不要なのでreturnする
+        } else if self.consume("for") {
+            self.expect("(");
+            let start = if self.consume(";") {
+                None
+            } else {
+                let n = Some(self.expr()?);
+                self.expect(";");
+                n
+            };
+            let condi = if self.consume(";") {
+                None
+            } else {
+                let n = Some(self.expr()?);
+                self.expect(";");
+                n
+            };
+            let end = if self.consume(")") {
+                None
+            } else {
+                let n = Some(self.expr()?);
+                self.expect(")");
+                n
+            };
+            let loop_ = self.stmt()?;
+            return Ok(Node::new_for(start, condi, end, loop_));
         } else {
             self.expr()?
         };
@@ -248,13 +285,13 @@ where
     fn assign(&mut self) -> Result<Node, ParseError> {
         let mut node = self.equality()?;
         // "="が見えた場合は代入文にする。
-        if self.peek("=") {
+        if self.consume("=") {
             if let Node::Lvar { name, offset } = &node {
                 node = Node::new_assign(*offset, name.clone(), self.equality()?);
             } else {
                 Err(ParseError {
                     pos: 0,
-                    msg: format!("this have to be a variable: {:?}", node.kind()),
+                    msg: format!("this have to be a variable: {:?}", node),
                 })?
             }
         }
@@ -263,9 +300,9 @@ where
     fn equality(&mut self) -> Result<Node, ParseError> {
         let mut node = self.relational()?;
         loop {
-            if self.peek("==") {
+            if self.consume("==") {
                 node = Node::new_bin(NdEq, node, self.relational()?);
-            } else if self.peek("!=") {
+            } else if self.consume("!=") {
                 node = Node::new_bin(NdNeq, node, self.relational()?);
             } else {
                 // 現状、ちゃんとコードが完結していなくても正常終了してしまう。
@@ -276,13 +313,13 @@ where
     fn relational(&mut self) -> Result<Node, ParseError> {
         let mut node = self.add()?;
         loop {
-            if self.peek("<") {
+            if self.consume("<") {
                 node = Node::new_bin(NdLt, node, self.add()?);
-            } else if self.peek("<=") {
+            } else if self.consume("<=") {
                 node = Node::new_bin(NdLe, node, self.add()?);
-            } else if self.peek(">") {
+            } else if self.consume(">") {
                 node = Node::new_bin(NdLt, self.add()?, node);
-            } else if self.peek(">=") {
+            } else if self.consume(">=") {
                 node = Node::new_bin(NdLe, self.add()?, node);
             } else {
                 return Ok(node);
@@ -293,9 +330,9 @@ where
     fn add(&mut self) -> Result<Node, ParseError> {
         let mut node = self.mul()?;
         loop {
-            if self.peek("+") {
+            if self.consume("+") {
                 node = Node::new_bin(NdAdd, node, self.mul()?);
-            } else if self.peek("-") {
+            } else if self.consume("-") {
                 node = Node::new_bin(NdSub, node, self.mul()?);
             } else {
                 return Ok(node);
@@ -305,9 +342,9 @@ where
     fn mul(&mut self) -> Result<Node, ParseError> {
         let mut node = self.unary()?;
         loop {
-            if self.peek("*") {
+            if self.consume("*") {
                 node = Node::new_bin(NdMul, node, self.unary()?);
-            } else if self.peek("/") {
+            } else if self.consume("/") {
                 node = Node::new_bin(NdDiv, node, self.unary()?);
             } else {
                 return Ok(node);
@@ -315,9 +352,9 @@ where
         }
     }
     fn unary(&mut self) -> Result<Node, ParseError> {
-        if self.peek("+") {
+        if self.consume("+") {
             self.unary()
-        } else if self.peek("-") {
+        } else if self.consume("-") {
             Ok(Node::new_bin(NdSub, Node::new_num(0), self.unary()?))
         } else {
             self.primary()
@@ -326,8 +363,17 @@ where
 }
 
 impl TokenReader for VecDeque<Token> {
-    /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
     fn peek(&mut self, s: &str) -> bool {
+        if self[0].kind == TkPunct(s.to_owned()) {
+            return true;
+        }
+        if self[0].kind == TkResWord(s.to_owned()) {
+            return true;
+        }
+        false
+    }
+    /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
+    fn consume(&mut self, s: &str) -> bool {
         if self[0].kind == TkPunct(s.to_owned()) {
             self.pop_front();
             return true;
@@ -338,14 +384,14 @@ impl TokenReader for VecDeque<Token> {
         }
         false
     }
-    fn peek_return(&mut self) -> bool {
+    fn consume_return(&mut self) -> bool {
         if self[0].kind == TkReturn {
             self.pop_front();
             return true;
         }
         false
     }
-    fn peek_num(&mut self) -> Option<u32> {
+    fn consume_num(&mut self) -> Option<u32> {
         if let TkNum(val) = self[0].kind {
             self.pop_front();
             Some(val)
@@ -353,7 +399,7 @@ impl TokenReader for VecDeque<Token> {
             None
         }
     }
-    fn peek_ident(&mut self) -> Option<String> {
+    fn consume_ident(&mut self) -> Option<String> {
         if let TkIdent(s) = self[0].kind.clone() {
             self.pop_front();
             Some(s)
@@ -365,7 +411,7 @@ impl TokenReader for VecDeque<Token> {
         self[0].kind == TkEOF
     }
     fn expect(&mut self, s: &str) -> Result<(), ParseError> {
-        if !self.peek(s) {
+        if !self.consume(s) {
             Err(ParseError {
                 pos: self[0].pos,
                 msg: format!("expected \'{}\'", s),
@@ -376,13 +422,13 @@ impl TokenReader for VecDeque<Token> {
     }
     /// 次がTkNum(val)の場合は1つずれてOk(val),それ以外はErr
     fn expect_num(&mut self) -> Result<u32, ParseError> {
-        self.peek_num().ok_or(ParseError {
+        self.consume_num().ok_or(ParseError {
             pos: self[0].pos,
             msg: "expected number".to_owned(),
         })
     }
     fn expect_ident(&mut self) -> Result<String, ParseError> {
-        self.peek_ident().ok_or(ParseError {
+        self.consume_ident().ok_or(ParseError {
             pos: self[0].pos,
             msg: "expected identifier".to_owned(),
         })
@@ -417,19 +463,22 @@ impl TokenReader for Parser {
     fn peek(&mut self, s: &str) -> bool {
         self.tklist.peek(s)
     }
-    fn peek_return(&mut self) -> bool {
-        self.tklist.peek_return()
+    fn consume(&mut self, s: &str) -> bool {
+        self.tklist.consume(s)
     }
-    fn peek_num(&mut self) -> Option<u32> {
-        self.tklist.peek_num()
+    fn consume_return(&mut self) -> bool {
+        self.tklist.consume_return()
     }
-    fn peek_ident(&mut self) -> Option<String> {
-        self.tklist.peek_ident()
+    fn consume_num(&mut self) -> Option<u32> {
+        self.tklist.consume_num()
+    }
+    fn consume_ident(&mut self) -> Option<String> {
+        self.tklist.consume_ident()
     }
     fn is_eof(&self) -> bool {
         self.tklist.is_eof()
     }
-    // peekしてエラーを出す
+    // consumeしてエラーを出す
     fn expect(&mut self, s: &str) -> Result<(), ParseError> {
         self.tklist.expect(s)
     }
@@ -442,10 +491,10 @@ impl TokenReader for Parser {
 }
 impl GenPrimary for Parser {
     fn primary(&mut self) -> Result<Node, ParseError> {
-        if self.peek("(") {
+        if self.consume("(") {
             let node = self.expr();
             self.expect(")").map(|_| node)?
-        } else if let Some(val) = self.peek_num() {
+        } else if let Some(val) = self.consume_num() {
             Ok(Node::new_num(val))
         } else {
             let name = self.expect_ident()?;

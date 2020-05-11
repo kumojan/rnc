@@ -57,4 +57,9 @@ assert 3 'foo=3; return foo;'
 assert 8 'foo123=3; bar=5; return foo123+bar;'
 assert 42 "a=42; if (a==42) return a; else a = a+1; return a;"
 assert 42 "a=41; if (a==42) return a; else a = a+1; return a;"
+
+assert 55 "a=0;b=0;while(b<10) a = a+(b = b+1); return a;"
+assert 45 "a = 0;for(i=0; i<10; i = i+1) a = a + i; return a;"
+assert 55 "a = 0;i=0;for(;i<10;) a = a + (i=i+1); return a;"
+assert 42 "for(;;) return 42;"
 echo OK
