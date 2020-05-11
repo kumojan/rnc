@@ -76,15 +76,20 @@ impl Default for NodeKind {
 
 #[allow(dead_code)]
 pub enum Node {
-    Leaf {
-        kind: NodeKind,
+    Num {
         val: u32,
+    },
+    Lvar {
         name: String,
         offset: usize,
     },
-    Unary {
-        kind: NodeKind,
-        next: Box<Node>,
+    Return {
+        returns: Box<Node>,
+    },
+    Assign {
+        name: String,
+        offset: usize,
+        rhs: Box<Node>,
     },
     Bin {
         kind: NodeKind,
@@ -100,22 +105,13 @@ pub enum Node {
 impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Node::Leaf {
-                kind: NdNum, val, ..
-            } => write!(f, "Leaf Num {}", val),
-            Node::Leaf {
-                kind: NdLvar,
-                name,
-                offset,
-                ..
-            } => write!(f, "Leaf Num {} at {}", name.clone(), offset),
-            Node::Unary {
-                kind: NdReturn,
-                next,
-            } => write!(f, "Unary {:?} -> {:?}", NdReturn, next.kind()),
+            Node::Num { val } => write!(f, "Num {}", val),
+            Node::Lvar { name, offset } => write!(f, "Val {} at {}", name.clone(), offset),
+            Node::Return { returns } => write!(f, "return"),
             Node::Bin { kind, lhs, rhs } => {
                 write!(f, "Bin {:?} -> {:?}, {:?}", kind, lhs.kind(), rhs.kind())
             }
+            Node::Assign { .. } => write!(f, "assign"),
             _ => unimplemented!(),
         }
     }
@@ -123,27 +119,19 @@ impl fmt::Debug for Node {
 impl Node {
     pub fn kind(&self) -> NodeKind {
         match self {
-            Node::Leaf { kind, .. } => *kind,
-            Node::Unary { kind, .. } => *kind,
+            Node::Num { val } => NdNum,
+            Node::Lvar { .. } => NdEq,
             Node::Bin { kind, .. } => *kind,
+            Node::Return { .. } => NdReturn,
+            Node::Assign { .. } => NdAssign,
             Node::If { .. } => NdIf,
         }
     }
     fn new_num(val: u32) -> Self {
-        Self::Leaf {
-            kind: NdNum,
-            val,
-            name: val.to_string(),
-            offset: 0,
-        }
+        Self::Num { val }
     }
     fn new_lvar(s: String, offset: usize) -> Self {
-        Self::Leaf {
-            kind: NdLvar,
-            val: 0,
-            name: s,
-            offset,
-        }
+        Self::Lvar { name: s, offset }
     }
     fn new_if(condi: Node, then_: Node, else_: Option<Node>) -> Self {
         Self::If {
@@ -152,26 +140,16 @@ impl Node {
             else_: else_.map(Box::new),
         }
     }
-    pub fn if_num(&self) -> Option<u32> {
-        if let Self::Leaf {
-            kind: NdNum, val, ..
-        } = self
-        {
-            Some(*val)
-        } else {
-            None
+    fn new_return(returns: Node) -> Self {
+        Self::Return {
+            returns: Box::new(returns),
         }
     }
-    pub fn offset(&self) -> usize {
-        if let Self::Leaf { offset, .. } = self {
-            return *offset;
-        }
-        panic!();
-    }
-    fn new_unary(kind: NodeKind, next: Node) -> Self {
-        Self::Unary {
-            kind,
-            next: Box::new(next),
+    fn new_assign(offset: usize, name: String, rhs: Node) -> Self {
+        Self::Assign {
+            offset,
+            name,
+            rhs: Box::new(rhs),
         }
     }
     fn new_bin(kind: NodeKind, lhs: Node, rhs: Node) -> Self {
@@ -246,7 +224,7 @@ where
     }
     fn stmt(&mut self) -> Result<Node, ParseError> {
         let node = if self.peek("return") {
-            Node::new_unary(NdReturn, self.expr()?)
+            Node::new_return(self.expr()?)
         } else if self.peek("if") {
             self.expect("(")?;
             let condi = self.expr()?;
@@ -271,7 +249,14 @@ where
         let mut node = self.equality()?;
         // "="が見えた場合は代入文にする。
         if self.peek("=") {
-            node = Node::new_bin(NdAssign, node, self.equality()?);
+            if let Node::Lvar { name, offset } = &node {
+                node = Node::new_assign(*offset, name.clone(), self.equality()?);
+            } else {
+                Err(ParseError {
+                    pos: 0,
+                    msg: format!("this have to be a variable: {:?}", node.kind()),
+                })?
+            }
         }
         Ok(node)
     }
@@ -343,11 +328,6 @@ where
 impl TokenReader for VecDeque<Token> {
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
     fn peek(&mut self, s: &str) -> bool {
-        // match self[0].kind {
-        //     TkPunct(s.to_owned()) => {self.pop_front(); true },
-        //     TkResWord(s.to_owned()) => {self.pop_front(); true },
-        //     _ => false
-        // }
         if self[0].kind == TkPunct(s.to_owned()) {
             self.pop_front();
             return true;
