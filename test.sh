@@ -62,4 +62,5 @@ assert 55 "a=0;b=0;while(b<10) a = a+(b = b+1); return a;"
 assert 45 "a = 0;for(i=0; i<10; i = i+1) a = a + i; return a;"
 assert 55 "a = 0;i=0;for(;i<10;) a = a + (i=i+1); return a;"
 assert 42 "for(;;) return 42;"
+assert 89 "a=1;b=1;for(i=0;i<10;i=i+1) {c=b;b=a+b;a=c;} return a;"
 echo OK

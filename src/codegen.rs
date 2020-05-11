@@ -125,6 +125,12 @@ impl CodeGenerator {
                 println!("  mov [rax], rdi");
                 println!("  push rdi");
             }
+            Node::Block { stmts } => {
+                for stmt in stmts {
+                    self.gen(stmt);
+                    println!("  pop rax");
+                }
+            }
             Node::Bin { kind, lhs, rhs } => {
                 self.gen(lhs)?;
                 self.gen(rhs)?;
@@ -249,6 +255,12 @@ pub fn graph_gen(node: &Node, parent: Option<&String>, number: usize) -> String 
                 s += &graph_gen(n, Some(&nodename), 2);
             }
             s += &graph_gen(loop_, Some(&nodename), 3);
+        }
+        Node::Block { stmts } => {
+            s += &format!("{} [label=\"block\"];\n", nodename);
+            for (i, stmt) in stmts.iter().enumerate() {
+                s += &graph_gen(stmt, Some(&nodename), i);
+            }
         }
         _ => {
             unimplemented!();

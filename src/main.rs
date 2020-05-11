@@ -23,7 +23,6 @@ fn main() -> Result<(), CompileError> {
         Err(f) => panic!(f.to_string()),
     };
     // Result型を返すことで、, エラー終了時に終了ステータス1となる。
-    //
     match env::args().last() {
         Some(code) => match compile(&code, matches.opt_present("t"), matches.opt_present("g")) {
             Err(EnumError::Tokenize { pos }) => error_at(&code, pos, "uknown token"),

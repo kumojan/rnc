@@ -96,6 +96,9 @@ pub enum Node {
         end: Option<Box<Node>>,
         loop_: Box<Node>,
     },
+    Block {
+        stmts: Vec<Box<Node>>,
+    },
 }
 impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -108,6 +111,7 @@ impl fmt::Debug for Node {
             Node::If { .. } => write!(f, "If"),
             Node::While { .. } => write!(f, "while"),
             Node::For { .. } => write!(f, "for"),
+            Node::Block { stmts } => stmts.iter().map(|s| write!(f, "{:?} ", s)).collect(),
             _ => unimplemented!(),
         }
     }
@@ -190,6 +194,7 @@ pub trait TokenReader {
 /// program = stmt*
 /// stmt = expr ";"
 ///     | "return" expr ";"
+///     | "{" stmt* "}"
 ///     | "if" "(" expr ")" stmt ( "else" stmt )?
 ///     | "while" "(" expr ")" stmt
 ///     | "for" "(" expr? ";" expr? ";" expr? ")" stmt
@@ -229,8 +234,13 @@ where
         Ok(code)
     }
     fn stmt(&mut self) -> Result<Node, ParseError> {
-        let node = if self.consume("return") {
-            Node::new_return(self.expr()?)
+        let node = if self.consume("{") {
+            let mut stmts = vec![];
+            while let Ok(stmt) = self.stmt() {
+                stmts.push(Box::new(stmt));
+            }
+            self.expect("}");
+            Node::Block { stmts }
         } else if self.consume("if") {
             self.expect("(")?;
             let condi = self.expr()?;
@@ -241,13 +251,13 @@ where
             } else {
                 None
             };
-            return Ok(Node::new_if(condi, then_, else_)); // 最後のセミコロンは不要なのでreturnする
+            Node::new_if(condi, then_, else_) // 最後のセミコロンは不要なのでreturnする
         } else if self.consume("while") {
             self.expect("(")?;
             let condi = self.expr()?;
             self.expect(")")?;
             let then_ = self.stmt()?;
-            return Ok(Node::new_while(condi, then_)); // 最後のセミコロンは不要なのでreturnする
+            Node::new_while(condi, then_) // 最後のセミコロンは不要なのでreturnする
         } else if self.consume("for") {
             self.expect("(");
             let start = if self.consume(";") {
@@ -272,11 +282,16 @@ where
                 n
             };
             let loop_ = self.stmt()?;
-            return Ok(Node::new_for(start, condi, end, loop_));
+            Node::new_for(start, condi, end, loop_)
+        } else if self.consume("return") {
+            let n = Node::new_return(self.expr()?);
+            self.expect(";")?;
+            n
         } else {
-            self.expr()?
+            let n = self.expr()?;
+            self.expect(";")?;
+            n
         };
-        self.expect(";")?;
         Ok(node)
     }
     fn expr(&mut self) -> Result<Node, ParseError> {
