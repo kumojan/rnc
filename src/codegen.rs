@@ -15,7 +15,7 @@ impl CodeGenError {
 #[derive(Default)]
 struct CodeGenerator {
     if_count: usize,
-    while_count: usize,
+    loop_count: usize,
     // for_count: usize,
 }
 fn gen_lval(offset: &usize) {
@@ -30,6 +30,20 @@ fn gen_lval(offset: &usize) {
     println!("  sub rax, {}", offset);
     println!("  push rax\n");
 }
+fn load() {
+    // アドレスを取り出し、値を取得してpushし直す
+    println!("  pop rax");
+    println!("  mov rax, [rax]");
+    println!("  push rax");
+}
+fn store() {
+    // 下から 値 | アドレス と並んでいるときに、
+    // 値をそのアドレスに格納し、その値をpush
+    println!("  pop rdi");
+    println!("  pop rax");
+    println!("  mov [rax], rdi");
+    println!("  push rdi");
+}
 impl CodeGenerator {
     fn gen(&mut self, node: &Node) -> Result<(), CodeGenError> {
         match node {
@@ -37,20 +51,13 @@ impl CodeGenerator {
                 println!("  push {}", val);
             }
             Node::Lvar { offset, .. } => {
-                // まず変数のアドレスを取得する
-                gen_lval(offset);
-                // そのアドレスを参照して値をpush
-                println!("  pop rax");
-                println!("  mov rax, [rax]");
-                println!("  push rax");
+                gen_lval(offset); // まず変数のアドレスを取得する
+                load(); // そのアドレスを参照して値をpush
             }
             Node::Return { returns } => {
-                // nextはlvarが期待されている
-                self.gen(returns)?; // その値を取得す?る
-                println!("  pop rax");
-                println!("  mov rsp, rbp"); // スタックをrbpまで戻し
-                println!("  pop rbp"); // 以前のrbpがそこにあるので回収し、
-                println!("  ret"); // 関数を抜ける
+                self.gen(returns)?; // その値を取得し
+                println!("  pop rax"); // raxに移す
+                println!("  jmp .L.return");
             }
             Node::If {
                 condi,
@@ -79,15 +86,15 @@ impl CodeGenerator {
                 self.if_count += 1;
             }
             Node::While { condi, then_ } => {
-                println!(".BEGIN{}:", self.while_count);
+                println!(".BEGIN{}:", self.loop_count);
                 self.gen(condi)?;
                 println!("  pop rax");
                 println!("  cmp rax, 0");
-                println!("  je .END{}", self.while_count);
+                println!("  je .END{}", self.loop_count);
                 self.gen(then_)?;
-                println!("  jmp .BEGIN{}", self.while_count);
-                println!(".END{}:", self.while_count);
-                self.while_count += 1;
+                println!("  jmp .BEGIN{}", self.loop_count);
+                println!(".END{}:", self.loop_count);
+                self.loop_count += 1;
             }
             Node::For {
                 start,
@@ -98,7 +105,7 @@ impl CodeGenerator {
                 if let Some(start) = start {
                     self.gen(start)?;
                 }
-                println!(".BEGIN{}:", self.while_count);
+                println!(".BEGIN{}:", self.loop_count);
                 if let Some(condi) = condi {
                     self.gen(condi)?;
                 } else {
@@ -106,30 +113,29 @@ impl CodeGenerator {
                 }
                 println!("  pop rax");
                 println!("  cmp rax, 0");
-                println!("  je .END{}", self.while_count);
+                println!("  je .END{}", self.loop_count);
                 self.gen(loop_)?;
                 if let Some(end) = end {
                     self.gen(end)?;
                 }
-                println!("  jmp .BEGIN{}", self.while_count);
-                println!(".END{}:", self.while_count);
-                self.while_count += 1;
+                println!("  jmp .BEGIN{}", self.loop_count);
+                println!(".END{}:", self.loop_count);
+                self.loop_count += 1;
             }
             Node::Assign { offset, rhs, .. } => {
                 gen_lval(offset);
                 self.gen(rhs)?;
-                // rdi->変数アドレス, rax->右辺の結果
-                println!("  pop rdi");
-                println!("  pop rax");
-                // 右辺に代入して、ついでにその値をpush(cの代入式は、代入した値を持つ)
-                println!("  mov [rax], rdi");
-                println!("  push rdi");
+                store();
             }
             Node::Block { stmts } => {
                 for stmt in stmts {
                     self.gen(stmt);
                     println!("  pop rax");
                 }
+            }
+            Node::Func { name } => {
+                println!("  call {}", name);
+                println!("  push rax");
             }
             Node::Bin { kind, lhs, rhs } => {
                 self.gen(lhs)?;
@@ -168,6 +174,9 @@ pub fn code_gen(nodes: Vec<Node>, varoffset: usize) -> Result<(), CodeGenError> 
         cg.gen(node)?;
         println!("  pop rax\n");
     }
+    println!(".L.return:");
+    println!("  mov rsp, rbp");
+    println!("  pop rbp");
     println!("  ret");
     Ok(())
 }

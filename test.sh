@@ -1,10 +1,19 @@
 #!/bin/bash
+
+# <<EOFとやると、その次の行からEOFまでがcatに投入される。
+CMD="cat <<EOF | gcc -xc -c -o tmp2.o -
+int ret3() { return 3; }
+int ret5() { return 5; }
+EOF"
+docker run --rm --mount type=bind,src=$PWD/bind,dst=/home/user --workdir /home/user compilerbook /bin/bash -c "$CMD"
+
 assert() {
   expected="$1"
   input="$2"
 
   ./target/debug/rnc "$input" > bind/tmp.s
-  docker run --rm --mount type=bind,src=$PWD/bind,dst=/home/user --workdir /home/user compilerbook /bin/bash -c "cc -o tmp tmp.s; ./tmp"
+  CMD="gcc -static -o tmp tmp.s tmp2.o; ./tmp"
+  docker run --rm --mount type=bind,src=$PWD/bind,dst=/home/user --workdir /home/user compilerbook /bin/bash -c "$CMD"
   actual="$?"
 
   if [ "$actual" = "$expected" ]; then
@@ -63,4 +72,7 @@ assert 45 "a = 0;for(i=0; i<10; i = i+1) a = a + i; return a;"
 assert 55 "a = 0;i=0;for(;i<10;) a = a + (i=i+1); return a;"
 assert 42 "for(;;) return 42;"
 assert 89 "a=1;b=1;for(i=0;i<10;i=i+1) {c=b;b=a+b;a=c;} return a;"
+
+assert 3 'return ret3();'
+assert 5 'return ret5();'
 echo OK

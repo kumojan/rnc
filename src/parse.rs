@@ -99,6 +99,9 @@ pub enum Node {
     Block {
         stmts: Vec<Box<Node>>,
     },
+    Func {
+        name: String,
+    },
 }
 impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -204,7 +207,7 @@ pub trait TokenReader {
 /// relational = add (("<" | "<=" | ">" | ">=") add)*
 /// add = mul (("+" | "-") mul)*
 /// mul = primary (("*" | "/") primary)*
-/// primary = num | ident | "(" expr ")"
+/// primary = num | ident ("(" ")")? | "(" expr ")"
 ///
 pub trait CodeGen {
     fn program(&mut self) -> Result<Vec<Node>, ParseError>;
@@ -379,25 +382,20 @@ where
 
 impl TokenReader for VecDeque<Token> {
     fn peek(&mut self, s: &str) -> bool {
-        if self[0].kind == TkPunct(s.to_owned()) {
-            return true;
+        match &self[0].kind {
+            TkPunct(_s) | TkResWord(_s) if _s == s => true,
+            _ => false,
         }
-        if self[0].kind == TkResWord(s.to_owned()) {
-            return true;
-        }
-        false
     }
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
     fn consume(&mut self, s: &str) -> bool {
-        if self[0].kind == TkPunct(s.to_owned()) {
-            self.pop_front();
-            return true;
+        match &self[0].kind {
+            TkPunct(_s) | TkResWord(_s) if _s == s => {
+                self.pop_front();
+                true
+            }
+            _ => false,
         }
-        if self[0].kind == TkResWord(s.to_owned()) {
-            self.pop_front();
-            return true;
-        }
-        false
     }
     fn consume_return(&mut self) -> bool {
         if self[0].kind == TkReturn {
@@ -514,7 +512,12 @@ impl GenPrimary for Parser {
         } else {
             let name = self.expect_ident()?;
             let offset = self.offset_for(&name);
-            Ok(Node::new_lvar(name, offset))
+            if self.consume("(") {
+                self.expect(")");
+                Ok(Node::Func { name })
+            } else {
+                Ok(Node::new_lvar(name, offset))
+            }
         }
     }
 }
