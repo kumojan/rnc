@@ -39,13 +39,15 @@ fn main() -> Result<(), CompileError> {
 fn compile(code: &String, print_tklist: bool, print_graph_: bool) -> Result<(), EnumError> {
     let token_list = Lexer::new(code).tokenize()?;
     if print_tklist {
-        println!("{:?}", token_list);
+        for tk in &token_list {
+            println!("{:?}", tk);
+        }
     }
     let mut parser = Parser::new(token_list);
-    let nodes = parser.program()?;
+    let functions = parser.program()?;
     if print_graph_ {
-        print_graph(&nodes);
+        print_graph(&functions);
     }
-    code_gen(nodes, parser.varoffset)?;
+    code_gen(functions)?;
     Ok(())
 }

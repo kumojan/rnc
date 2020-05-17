@@ -19,9 +19,16 @@ pub fn local_variables(token_list: &VecDeque<Token>) -> Vec<String> {
     lbars
 }
 
-///
-/// パーサー
-///
+pub struct Var {
+    name: String,
+    offset: usize,
+}
+
+pub enum Type {
+    TyInt,
+    TyPtr,
+}
+
 // #[derive(Debug)]
 #[derive(Clone, Copy)]
 pub enum NodeKind {
@@ -68,8 +75,17 @@ pub enum Node {
         name: String,
         offset: usize,
     },
+    ExprStmt {
+        expr: Box<Node>,
+    },
     Return {
         returns: Box<Node>,
+    },
+    Addr {
+        node: Box<Node>,
+    },
+    Deref {
+        node: Box<Node>,
     },
     Assign {
         name: String,
@@ -97,10 +113,11 @@ pub enum Node {
         loop_: Box<Node>,
     },
     Block {
-        stmts: Vec<Box<Node>>,
+        stmts: Box<Vec<Node>>,
     },
-    Func {
+    FunCall {
         name: String,
+        args: Box<Vec<Node>>,
     },
 }
 impl fmt::Debug for Node {
@@ -108,14 +125,17 @@ impl fmt::Debug for Node {
         match self {
             Node::Num { val } => write!(f, "Num {}", val),
             Node::Lvar { name, offset } => write!(f, "Val {} at {}", name.clone(), offset),
-            Node::Return { returns } => write!(f, "return"),
+            Node::Return { .. } => write!(f, "return"),
+            Node::ExprStmt { .. } => write!(f, "expr stmt"),
             Node::Bin { kind, .. } => write!(f, "Bin {:?}", kind),
             Node::Assign { .. } => write!(f, "assign"),
             Node::If { .. } => write!(f, "If"),
             Node::While { .. } => write!(f, "while"),
             Node::For { .. } => write!(f, "for"),
             Node::Block { stmts } => stmts.iter().map(|s| write!(f, "{:?} ", s)).collect(),
-            _ => unimplemented!(),
+            Node::FunCall { name, .. } => write!(f, "function {}", name),
+            Node::Addr { .. } => write!(f, "address"),
+            Node::Deref { .. } => write!(f, "deref"),
         }
     }
 }
@@ -136,6 +156,20 @@ impl Node {
     fn new_return(returns: Node) -> Self {
         Self::Return {
             returns: Box::new(returns),
+        }
+    }
+    fn new_unary(node: Node, t: &str) -> Self {
+        match t {
+            "return" => Self::Return {
+                returns: Box::new(node),
+            },
+            "addr" => Self::Addr {
+                node: Box::new(node),
+            },
+            "deref" => Self::Deref {
+                node: Box::new(node),
+            },
+            _ => unimplemented!(),
         }
     }
     fn new_assign(offset: usize, name: String, rhs: Node) -> Self {
@@ -168,6 +202,25 @@ impl Node {
     }
 }
 
+#[derive(Default)]
+pub struct Function {
+    pub name: String,
+    pub body: Vec<Node>,
+    pub params: Vec<Var>,
+    pub locals: Vec<Var>,
+    pub stack_size: usize,
+}
+impl Function {
+    fn new(name: String, body: Vec<Node>, stack_size: usize) -> Self {
+        Self {
+            name,
+            body,
+            stack_size,
+            ..Self::default()
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct ParseError {
     pub pos: usize,
@@ -180,6 +233,8 @@ impl fmt::Display for ParseError {
 }
 
 pub trait TokenReader {
+    fn shift(&mut self) -> &mut Self;
+    fn head_str(&self) -> Option<String>;
     // 見るだけ、エラーなし
     fn peek(&mut self, s: &str) -> bool;
     // 見て、存在したら消費してtrue、存在しなければfalse
@@ -194,9 +249,11 @@ pub trait TokenReader {
     fn expect_ident(&mut self) -> Result<String, ParseError>;
 }
 ///
-/// program = stmt*
-/// stmt = expr ";"
-///     | "return" expr ";"
+/// program = function*
+/// function = ident "(" ")" "{" stmt* "}"
+/// stmt_vec = (stmt)*
+/// stmt = expr ";"  // expression statement (値を残さない)
+///     | "return" expr ";"  
 ///     | "{" stmt* "}"
 ///     | "if" "(" expr ")" stmt ( "else" stmt )?
 ///     | "while" "(" expr ")" stmt
@@ -210,7 +267,9 @@ pub trait TokenReader {
 /// primary = num | ident ("(" ")")? | "(" expr ")"
 ///
 pub trait CodeGen {
-    fn program(&mut self) -> Result<Vec<Node>, ParseError>;
+    fn program(&mut self) -> Result<Vec<Function>, ParseError>;
+    fn function(&mut self) -> Result<Function, ParseError>;
+    fn compound_stmt(&mut self) -> Result<Vec<Node>, ParseError>;
     fn stmt(&mut self) -> Result<Node, ParseError>;
     fn expr(&mut self) -> Result<Node, ParseError>;
     fn assign(&mut self) -> Result<Node, ParseError>;
@@ -219,168 +278,20 @@ pub trait CodeGen {
     fn add(&mut self) -> Result<Node, ParseError>;
     fn mul(&mut self) -> Result<Node, ParseError>;
     fn unary(&mut self) -> Result<Node, ParseError>;
-}
-pub trait GenPrimary {
     fn primary(&mut self) -> Result<Node, ParseError>;
 }
 
-impl<T> CodeGen for T
-where
-    T: TokenReader + GenPrimary,
-{
-    // コード生成
-    fn program(&mut self) -> Result<Vec<Node>, ParseError> {
-        let mut code = vec![];
-        while !self.is_eof() {
-            code.push(self.stmt()?)
-        }
-        Ok(code)
-    }
-    fn stmt(&mut self) -> Result<Node, ParseError> {
-        let node = if self.consume("{") {
-            let mut stmts = vec![];
-            while let Ok(stmt) = self.stmt() {
-                stmts.push(Box::new(stmt));
-            }
-            self.expect("}");
-            Node::Block { stmts }
-        } else if self.consume("if") {
-            self.expect("(")?;
-            let condi = self.expr()?;
-            self.expect(")")?;
-            let then_ = self.stmt()?; // <- if trueのやつ
-            let else_ = if self.consume("else") {
-                Some(self.stmt()?)
-            } else {
-                None
-            };
-            Node::new_if(condi, then_, else_) // 最後のセミコロンは不要なのでreturnする
-        } else if self.consume("while") {
-            self.expect("(")?;
-            let condi = self.expr()?;
-            self.expect(")")?;
-            let then_ = self.stmt()?;
-            Node::new_while(condi, then_) // 最後のセミコロンは不要なのでreturnする
-        } else if self.consume("for") {
-            self.expect("(");
-            let start = if self.consume(";") {
-                None
-            } else {
-                let n = Some(self.expr()?);
-                self.expect(";");
-                n
-            };
-            let condi = if self.consume(";") {
-                None
-            } else {
-                let n = Some(self.expr()?);
-                self.expect(";");
-                n
-            };
-            let end = if self.consume(")") {
-                None
-            } else {
-                let n = Some(self.expr()?);
-                self.expect(")");
-                n
-            };
-            let loop_ = self.stmt()?;
-            Node::new_for(start, condi, end, loop_)
-        } else if self.consume("return") {
-            let n = Node::new_return(self.expr()?);
-            self.expect(";")?;
-            n
-        } else {
-            let n = self.expr()?;
-            self.expect(";")?;
-            n
-        };
-        Ok(node)
-    }
-    fn expr(&mut self) -> Result<Node, ParseError> {
-        self.assign()
-    }
-    fn assign(&mut self) -> Result<Node, ParseError> {
-        let mut node = self.equality()?;
-        // "="が見えた場合は代入文にする。
-        if self.consume("=") {
-            if let Node::Lvar { name, offset } = &node {
-                node = Node::new_assign(*offset, name.clone(), self.equality()?);
-            } else {
-                Err(ParseError {
-                    pos: 0,
-                    msg: format!("this have to be a variable: {:?}", node),
-                })?
-            }
-        }
-        Ok(node)
-    }
-    fn equality(&mut self) -> Result<Node, ParseError> {
-        let mut node = self.relational()?;
-        loop {
-            if self.consume("==") {
-                node = Node::new_bin(NdEq, node, self.relational()?);
-            } else if self.consume("!=") {
-                node = Node::new_bin(NdNeq, node, self.relational()?);
-            } else {
-                // 現状、ちゃんとコードが完結していなくても正常終了してしまう。
-                return Ok(node);
-            }
-        }
-    }
-    fn relational(&mut self) -> Result<Node, ParseError> {
-        let mut node = self.add()?;
-        loop {
-            if self.consume("<") {
-                node = Node::new_bin(NdLt, node, self.add()?);
-            } else if self.consume("<=") {
-                node = Node::new_bin(NdLe, node, self.add()?);
-            } else if self.consume(">") {
-                node = Node::new_bin(NdLt, self.add()?, node);
-            } else if self.consume(">=") {
-                node = Node::new_bin(NdLe, self.add()?, node);
-            } else {
-                return Ok(node);
-            }
-        }
-    }
-    // expr -> mul -> unary -> primaryの順に呼ばれる
-    fn add(&mut self) -> Result<Node, ParseError> {
-        let mut node = self.mul()?;
-        loop {
-            if self.consume("+") {
-                node = Node::new_bin(NdAdd, node, self.mul()?);
-            } else if self.consume("-") {
-                node = Node::new_bin(NdSub, node, self.mul()?);
-            } else {
-                return Ok(node);
-            }
-        }
-    }
-    fn mul(&mut self) -> Result<Node, ParseError> {
-        let mut node = self.unary()?;
-        loop {
-            if self.consume("*") {
-                node = Node::new_bin(NdMul, node, self.unary()?);
-            } else if self.consume("/") {
-                node = Node::new_bin(NdDiv, node, self.unary()?);
-            } else {
-                return Ok(node);
-            }
-        }
-    }
-    fn unary(&mut self) -> Result<Node, ParseError> {
-        if self.consume("+") {
-            self.unary()
-        } else if self.consume("-") {
-            Ok(Node::new_bin(NdSub, Node::new_num(0), self.unary()?))
-        } else {
-            self.primary()
-        }
-    }
-}
-
 impl TokenReader for VecDeque<Token> {
+    fn shift(&mut self) -> &mut Self {
+        self.pop_front();
+        self
+    }
+    fn head_str(&self) -> Option<String> {
+        match self[0].kind.clone() {
+            TkPunct(s) => Some(s),
+            _ => None,
+        }
+    }
     fn peek(&mut self, s: &str) -> bool {
         match &self[0].kind {
             TkPunct(_s) | TkResWord(_s) if _s == s => true,
@@ -455,24 +366,37 @@ pub struct Parser {
 }
 impl Parser {
     pub fn new(tklist: VecDeque<Token>) -> Self {
-        let lvars = local_variables(&tklist);
-        let varoffset = lvars.len() * 8;
+        // let lvars = local_variables(&tklist);
+        // let varoffset = lvars.len() * 8;
         Self {
             tklist,
-            lvars,
-            varoffset,
+            lvars: Vec::new(),
+            varoffset: 0,
         }
     }
-    fn offset_for(&self, varname: &String) -> usize {
-        self.lvars
+    fn find_var(&mut self, varname: &String) -> usize {
+        let offset = self
+            .lvars
             .iter()
             .enumerate()
             .flat_map(|(i, s)| Some((i + 1) * 8).filter(|_| s == varname)) // s==varnameの時以外はNoneにしてしまう。
-            .next()
-            .unwrap()
+            .next();
+        if let Some(offset) = offset {
+            return offset;
+        } else {
+            self.lvars.push(varname.clone());
+            return self.lvars.len() * 8;
+        }
     }
 }
 impl TokenReader for Parser {
+    fn shift(&mut self) -> &mut Self {
+        self.tklist.shift();
+        self
+    }
+    fn head_str(&self) -> Option<String> {
+        self.tklist.head_str()
+    }
     fn peek(&mut self, s: &str) -> bool {
         self.tklist.peek(s)
     }
@@ -491,7 +415,6 @@ impl TokenReader for Parser {
     fn is_eof(&self) -> bool {
         self.tklist.is_eof()
     }
-    // consumeしてエラーを出す
     fn expect(&mut self, s: &str) -> Result<(), ParseError> {
         self.tklist.expect(s)
     }
@@ -502,7 +425,165 @@ impl TokenReader for Parser {
         self.tklist.expect_ident()
     }
 }
-impl GenPrimary for Parser {
+
+impl CodeGen for Parser {
+    // コード生成
+    fn program(&mut self) -> Result<Vec<Function>, ParseError> {
+        let mut code = vec![];
+        while !self.is_eof() {
+            code.push(self.function()?)
+        }
+        Ok(code)
+    }
+    fn function(&mut self) -> Result<Function, ParseError> {
+        match self.consume_ident() {
+            Some(name) => {
+                self.expect("(")?;
+                self.expect(")")?;
+                let stmts = self.compound_stmt()?;
+                let stack_size = self.lvars.len() * 8;
+                self.lvars.clear();
+                Ok(Function::new(name, stmts, stack_size))
+            }
+            _ => Err(ParseError {
+                pos: 0,
+                msg: "evrything has to be inside a function!".to_owned(),
+            }),
+        }
+    }
+    fn compound_stmt(&mut self) -> Result<Vec<Node>, ParseError> {
+        self.expect("{")?;
+        let mut stmts = vec![];
+        while let Ok(stmt) = self.stmt() {
+            stmts.push(stmt);
+        }
+        self.expect("}")?;
+        Ok(stmts)
+    }
+    fn stmt(&mut self) -> Result<Node, ParseError> {
+        let read_until = |self_: &mut Self, s: &str| {
+            Ok({
+                let n = self_.expr()?;
+                self_.expect(s)?;
+                n
+            })
+        };
+        let node = if self.peek("{") {
+            Node::Block {
+                stmts: Box::new(self.compound_stmt()?),
+            }
+        } else if self.consume("if") {
+            self.expect("(")?;
+            let condi = read_until(self, ")")?;
+            let then_ = self.stmt()?; // <- if trueのやつ
+            let else_ = if self.consume("else") {
+                Some(self.stmt()?)
+            } else {
+                None
+            };
+            Node::new_if(condi, then_, else_)
+        } else if self.consume("while") {
+            self.expect("(")?;
+            Node::new_while(read_until(self, ")")?, self.stmt()?)
+        } else if self.consume("for") {
+            self.expect("(")?;
+            let mut maybe_null_expr = |s: &str| {
+                Ok(if self.consume(s) {
+                    None
+                } else {
+                    let n = Some(self.expr()?);
+                    self.expect(s)?;
+                    n
+                })
+            };
+            let start = maybe_null_expr(";")?;
+            let condi = maybe_null_expr(";")?;
+            let end = maybe_null_expr(")")?;
+            let loop_ = self.stmt()?;
+            Node::new_for(start, condi, end, loop_)
+        } else if self.consume("return") {
+            Node::new_return(read_until(self, ";")?)
+        } else {
+            Node::ExprStmt {
+                expr: Box::new(read_until(self, ";")?),
+            }
+        };
+        Ok(node)
+    }
+    fn expr(&mut self) -> Result<Node, ParseError> {
+        self.assign()
+    }
+    fn assign(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.equality()?;
+        // "="が見えた場合は代入文にする。
+        if self.consume("=") {
+            if let Node::Lvar { name, offset } = &node {
+                node = Node::new_assign(*offset, name.clone(), self.equality()?);
+            } else {
+                // 代入文の左辺が変数でないとき
+                Err(ParseError {
+                    pos: 0,
+                    msg: format!("this have to be a variable: {:?}", node),
+                })?
+            }
+        }
+        Ok(node)
+    }
+    fn equality(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.relational()?;
+        loop {
+            match self.head_str().as_deref() {
+                Some("==") => node = Node::new_bin(NdEq, node, self.shift().relational()?),
+                Some("!=") => node = Node::new_bin(NdNeq, node, self.shift().relational()?),
+                _ => return Ok(node),
+            }
+        }
+    }
+    fn relational(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.add()?;
+        loop {
+            match self.head_str().as_deref() {
+                Some("<") => node = Node::new_bin(NdLt, node, self.shift().add()?),
+                Some("<=") => node = Node::new_bin(NdLe, node, self.shift().add()?),
+                Some(">") => node = Node::new_bin(NdLt, self.shift().add()?, node),
+                Some(">=") => node = Node::new_bin(NdLe, self.shift().add()?, node),
+                _ => return Ok(node),
+            }
+        }
+    }
+    fn add(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.mul()?;
+        loop {
+            match self.head_str().as_deref() {
+                Some("+") => node = Node::new_bin(NdAdd, node, self.shift().mul()?),
+                Some("-") => node = Node::new_bin(NdSub, node, self.shift().mul()?),
+                _ => return Ok(node),
+            }
+        }
+    }
+    fn mul(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.unary()?;
+        loop {
+            match self.head_str().as_deref() {
+                Some("*") => node = Node::new_bin(NdMul, node, self.shift().unary()?),
+                Some("/") => node = Node::new_bin(NdDiv, node, self.shift().unary()?),
+                _ => return Ok(node),
+            }
+        }
+    }
+    fn unary(&mut self) -> Result<Node, ParseError> {
+        match self.head_str().as_deref() {
+            Some("+") => self.shift().unary(),
+            Some("-") => Ok(Node::new_bin(
+                NdSub,
+                Node::new_num(0),
+                self.shift().unary()?,
+            )),
+            Some("&") => Ok(Node::new_unary(self.shift().primary()?, "addr")),
+            Some("*") => Ok(Node::new_unary(self.shift().primary()?, "deref")),
+            _ => self.primary(),
+        }
+    }
     fn primary(&mut self) -> Result<Node, ParseError> {
         if self.consume("(") {
             let node = self.expr();
@@ -511,11 +592,23 @@ impl GenPrimary for Parser {
             Ok(Node::new_num(val))
         } else {
             let name = self.expect_ident()?;
-            let offset = self.offset_for(&name);
+            // 関数呼び出し
             if self.consume("(") {
-                self.expect(")");
-                Ok(Node::Func { name })
+                let mut args = Vec::new();
+                while !self.consume(")") {
+                    args.push(self.expr()?);
+                    if !self.consume(",") {
+                        self.expect(")")?;
+                        break;
+                    }
+                }
+                Ok(Node::FunCall {
+                    name,
+                    args: Box::new(args),
+                })
             } else {
+                // ただの変数
+                let offset = self.find_var(&name); // 探して、存在しなければpushした上でoffsetを返す。
                 Ok(Node::new_lvar(name, offset))
             }
         }
