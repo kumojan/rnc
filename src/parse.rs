@@ -88,8 +88,7 @@ pub enum Node {
         node: Box<Node>,
     },
     Assign {
-        name: String,
-        offset: usize,
+        lvar: Box<Node>,
         rhs: Box<Node>,
     },
     Bin {
@@ -172,10 +171,9 @@ impl Node {
             _ => unimplemented!(),
         }
     }
-    fn new_assign(offset: usize, name: String, rhs: Node) -> Self {
+    fn new_assign(lvar: Node, rhs: Node) -> Self {
         Self::Assign {
-            offset,
-            name,
+            lvar: Box::new(lvar),
             rhs: Box::new(rhs),
         }
     }
@@ -517,15 +515,7 @@ impl CodeGen for Parser {
         let mut node = self.equality()?;
         // "="が見えた場合は代入文にする。
         if self.consume("=") {
-            if let Node::Lvar { name, offset } = &node {
-                node = Node::new_assign(*offset, name.clone(), self.equality()?);
-            } else {
-                // 代入文の左辺が変数でないとき
-                Err(ParseError {
-                    pos: 0,
-                    msg: format!("this have to be a variable: {:?}", node),
-                })?
-            }
+            node = Node::new_assign(node, self.equality()?);
         }
         Ok(node)
     }
@@ -579,8 +569,8 @@ impl CodeGen for Parser {
                 Node::new_num(0),
                 self.shift().unary()?,
             )),
-            Some("&") => Ok(Node::new_unary(self.shift().primary()?, "addr")),
-            Some("*") => Ok(Node::new_unary(self.shift().primary()?, "deref")),
+            Some("&") => Ok(Node::new_unary(self.shift().unary()?, "addr")),
+            Some("*") => Ok(Node::new_unary(self.shift().unary()?, "deref")),
             _ => self.primary(),
         }
     }

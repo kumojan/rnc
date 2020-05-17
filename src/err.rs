@@ -35,12 +35,10 @@ pub struct CompileError;
 pub fn error_at<T: Borrow<str>>(code: &String, pos: usize, msg: T) -> Result<(), CompileError> {
     eprintln!("{}", code);
     eprintln!("{}^ {}", " ".repeat(pos), msg.borrow());
-    panic!();
     Err(CompileError)
 }
 
 pub fn error<T: Borrow<str>>(msg: T) -> Result<(), CompileError> {
     eprintln!("{}", msg.borrow());
-    panic!();
     Err(CompileError)
 }

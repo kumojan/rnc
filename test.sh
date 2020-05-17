@@ -102,4 +102,8 @@ assert 63 'main() { return add6(1,2,4,8,16,32); }'
 assert 192 'main() { return sumcheck(1,2,4,8,16,32); }'
 
 assert 3 'main() { return ret32(); } ret32() { return 3; }'
+
+
+assert 3 'main() { x=3; *&x=4; return x; }'
+assert 3 'main() { x=3; *&x=4; return *&x; }'
 echo OK

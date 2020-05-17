@@ -65,8 +65,19 @@ impl CodeGenerator {
                 self.gen(expr)?;
                 println!("  pop rax"); // 最後に評価した値を捨てる
             }
-            Node::Addr { node } => {}
-            Node::Deref { node } => {}
+            Node::Addr { node } => {
+                if let Node::Lvar { offset, .. } = &**node {
+                    gen_addr(offset);
+                } else {
+                    return Err(CodeGenError {
+                        msg: "invalid address expression!".to_owned(),
+                    });
+                }
+            }
+            Node::Deref { node } => {
+                self.gen(node)?;
+                load();
+            }
             Node::If {
                 condi,
                 then_,
@@ -128,9 +139,21 @@ impl CodeGenerator {
                 println!(".L.end.{}:", self.label_count);
                 self.label_count += 1;
             }
-            Node::Assign { offset, rhs, .. } => {
+            Node::Assign { lvar, rhs, .. } => {
                 println!("  #assign");
-                gen_addr(offset);
+                match &**lvar {
+                    Node::Lvar { offset, .. } => {
+                        gen_addr(offset);
+                    }
+                    Node::Deref { node } => {
+                        self.gen(node)?;
+                    }
+                    _ => {
+                        return Err(CodeGenError {
+                            msg: format!("lhs of assignment must be var or deref!"),
+                        });
+                    }
+                }
                 self.gen(rhs)?;
                 store();
             }
@@ -264,9 +287,10 @@ pub fn graph_gen(node: &Node, parent: Option<&String>, number: usize) -> String 
             s += &graph_gen(lhs, Some(&nodename), 0);
             s += &graph_gen(rhs, Some(&nodename), 1);
         }
-        Node::Assign { name, rhs, .. } => {
-            s += &format!("{} [label=\"assign {}\"];\n", nodename, name);
-            s += &graph_gen(rhs, Some(&nodename), 0);
+        Node::Assign { lvar, rhs } => {
+            s += &format!("{} [label=\"assign\"];\n", nodename);
+            s += &graph_gen(lvar, Some(&nodename), 0);
+            s += &graph_gen(rhs, Some(&nodename), 1);
         }
         Node::Return { returns } => {
             s += &format!("{} [label=\"return\"];\n", nodename);
