@@ -279,7 +279,7 @@ pub fn graph_gen(node: &Node, parent: Option<&String>, number: usize) -> String 
     }
     match node {
         Node::Num { val } => s += &format!("{} [label=\"num {}\"];\n", nodename, val),
-        Node::Lvar { name, offset } => {
+        Node::Lvar { name, offset, .. } => {
             s += &format!("{} [label=\"var {} ofs:{}\"];\n", nodename, name, offset)
         }
         Node::Bin { kind, lhs, rhs } => {

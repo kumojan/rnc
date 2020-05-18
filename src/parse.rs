@@ -2,7 +2,7 @@ use crate::tokenize::TokenKind::*;
 use crate::tokenize::*;
 use std::collections::VecDeque;
 use std::fmt;
-
+use std::rc::Rc;
 ///
 /// 変数リスト
 ///
@@ -19,14 +19,24 @@ pub fn local_variables(token_list: &VecDeque<Token>) -> Vec<String> {
     lbars
 }
 
+// TODO: 変数宣言の実装
 pub struct Var {
     name: String,
     offset: usize,
 }
 
+// TODO: 型の実装
 pub enum Type {
     TyInt,
-    TyPtr,
+    TyPtr(Rc<Type>),
+}
+impl Type {
+    fn is_ptr(&self) -> bool {
+        match self {
+            Type::TyPtr { .. } => true,
+            _ => false,
+        }
+    }
 }
 
 // #[derive(Debug)]
@@ -57,29 +67,16 @@ impl fmt::Debug for NodeKind {
 }
 use NodeKind::*;
 
-// struct Node2 {
-//     kind: NodeKind,
-//     val: u32,
-//     name: String,
-//     offset: usize,
-//     lhs: Option<Box<Node>>,
-//     rhs: Option<Box<Node>>,
-// }
-
 #[allow(dead_code)]
 pub enum Node {
+    // 式(expression)
     Num {
         val: u32,
     },
     Lvar {
+        ty: Rc<Type>,
         name: String,
         offset: usize,
-    },
-    ExprStmt {
-        expr: Box<Node>,
-    },
-    Return {
-        returns: Box<Node>,
     },
     Addr {
         node: Box<Node>,
@@ -96,6 +93,20 @@ pub enum Node {
         lhs: Box<Node>,
         rhs: Box<Node>,
     },
+    FunCall {
+        name: String,
+        args: Box<Vec<Node>>,
+    },
+    // 文(statement)
+    ExprStmt {
+        expr: Box<Node>,
+    },
+    Return {
+        returns: Box<Node>,
+    },
+    Block {
+        stmts: Box<Vec<Node>>,
+    },
     If {
         condi: Box<Node>,
         then_: Box<Node>,
@@ -111,19 +122,12 @@ pub enum Node {
         end: Option<Box<Node>>,
         loop_: Box<Node>,
     },
-    Block {
-        stmts: Box<Vec<Node>>,
-    },
-    FunCall {
-        name: String,
-        args: Box<Vec<Node>>,
-    },
 }
 impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Node::Num { val } => write!(f, "Num {}", val),
-            Node::Lvar { name, offset } => write!(f, "Val {} at {}", name.clone(), offset),
+            Node::Lvar { name, offset, .. } => write!(f, "Val {} at {}", name.clone(), offset),
             Node::Return { .. } => write!(f, "return"),
             Node::ExprStmt { .. } => write!(f, "expr stmt"),
             Node::Bin { kind, .. } => write!(f, "Bin {:?}", kind),
@@ -139,11 +143,35 @@ impl fmt::Debug for Node {
     }
 }
 impl Node {
+    pub fn get_type(&self) -> Rc<Type> {
+        match self {
+            Self::Num { .. } => Rc::new(Type::TyInt),
+            Self::Lvar { ty, .. } => ty.clone(),
+            Self::Addr { node } => Rc::new(Type::TyPtr(node.get_type())),
+            Self::Deref { node } => match &*node.get_type() {
+                Type::TyInt => unimplemented!(),
+                Type::TyPtr(ty) => ty.clone(),
+            },
+            Self::Assign { lvar, .. } => lvar.get_type(),
+            Self::Bin { kind, lhs, rhs } => match kind {
+                NodeKind::NdSub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => {
+                    Rc::new(Type::TyInt)
+                } // ポインタ同士の引き算はint
+                _ => lhs.get_type(),
+            },
+            Self::FunCall { .. } => Rc::new(Type::TyInt),
+            _ => unimplemented!(),
+        }
+    }
     fn new_num(val: u32) -> Self {
         Self::Num { val }
     }
     fn new_lvar(s: String, offset: usize) -> Self {
-        Self::Lvar { name: s, offset }
+        Self::Lvar {
+            name: s,
+            offset,
+            ty: Rc::new(Type::TyInt),
+        }
     }
     fn new_if(condi: Node, then_: Node, else_: Option<Node>) -> Self {
         Self::If {
@@ -182,6 +210,37 @@ impl Node {
             kind,
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
+        }
+    }
+    fn new_add(lhs: Node, rhs: Node) -> Self {
+        match (lhs.get_type().is_ptr(), rhs.get_type().is_ptr()) {
+            // 値+ポインタ => ポインタ+値と見なす
+            (false, true) => Self::new_add(rhs, lhs),
+            // ポインタ + 値 は値だけずれたポインタを返す(型はlhsなのでポインタになる)
+            (true, false) => {
+                Self::new_bin(NdSub, lhs, Self::new_bin(NdMul, Node::Num { val: 8 }, rhs))
+            }
+            // 値 + 値
+            (false, false) => Self::new_bin(NdAdd, lhs, rhs),
+            (true, true) => unimplemented!(), // ポインタ同士の足し算は意味をなさない
+        }
+    }
+    fn new_sub(lhs: Node, rhs: Node) -> Self {
+        match (lhs.get_type().is_ptr(), rhs.get_type().is_ptr()) {
+            // ポインタ - 値
+            (true, false) => {
+                Self::new_bin(NdAdd, lhs, Self::new_bin(NdMul, Node::Num { val: 8 }, rhs))
+            }
+            // ポインタ - ポインタ (ずれを返す int)
+            // 現状ではスタックはマイナス方向に伸びるので、-8で割る
+            // マイナスする代わりにlhs, rhsを入れ替えた
+            (true, true) => {
+                Node::new_bin(NdDiv, Node::new_bin(NdSub, rhs, lhs), Node::Num { val: 8 })
+            }
+            // 値 - 値
+            (false, false) => Self::new_bin(NdSub, lhs, rhs),
+            // 値 - ポインタは意味をなさない(変なポインタになる)
+            (false, true) => unimplemented!(),
         }
     }
     fn new_while(condi: Node, then_: Node) -> Self {
@@ -545,8 +604,8 @@ impl CodeGen for Parser {
         let mut node = self.mul()?;
         loop {
             match self.head_str().as_deref() {
-                Some("+") => node = Node::new_bin(NdAdd, node, self.shift().mul()?),
-                Some("-") => node = Node::new_bin(NdSub, node, self.shift().mul()?),
+                Some("+") => node = Node::new_add(node, self.shift().mul()?),
+                Some("-") => node = Node::new_sub(node, self.shift().mul()?),
                 _ => return Ok(node),
             }
         }
