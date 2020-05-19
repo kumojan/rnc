@@ -20,7 +20,7 @@ struct CodeGenerator {
     label_count: usize,
     func_name: String,
 }
-fn gen_addr(offset: &usize) {
+fn gen_addr(offset: usize) {
     // println!("gen lval {:?}", &node);
     // rbpは関数の先頭アドレス
     // そこからoffset分引くと、目的の変数のアドレスを得る
@@ -52,8 +52,8 @@ impl CodeGenerator {
             Node::Num { val, .. } => {
                 println!("  push {}", val);
             }
-            Node::Lvar { offset, .. } => {
-                gen_addr(offset); // まず変数のアドレスを取得する
+            Node::Lvar { var } => {
+                gen_addr(var.offset); // まず変数のアドレスを取得する
                 load(); // そのアドレスを参照して値をpush
             }
             Node::Return { returns } => {
@@ -66,8 +66,8 @@ impl CodeGenerator {
                 println!("  pop rax"); // 最後に評価した値を捨てる
             }
             Node::Addr { node } => {
-                if let Node::Lvar { offset, .. } = &**node {
-                    gen_addr(offset);
+                if let Node::Lvar { var } = &**node {
+                    gen_addr(var.offset);
                 } else {
                     return Err(CodeGenError {
                         msg: "invalid address expression!".to_owned(),
@@ -142,8 +142,8 @@ impl CodeGenerator {
             Node::Assign { lvar, rhs, .. } => {
                 println!("  #assign");
                 match &**lvar {
-                    Node::Lvar { offset, .. } => {
-                        gen_addr(offset);
+                    Node::Lvar { var } => {
+                        gen_addr(var.offset);
                     }
                     Node::Deref { node } => {
                         self.gen(node)?;
@@ -279,9 +279,7 @@ pub fn graph_gen(node: &Node, parent: Option<&String>, number: usize) -> String 
     }
     match node {
         Node::Num { val } => s += &format!("{} [label=\"num {}\"];\n", nodename, val),
-        Node::Lvar { name, offset, .. } => {
-            s += &format!("{} [label=\"var {} ofs:{}\"];\n", nodename, name, offset)
-        }
+        Node::Lvar { var } => s += &format!("{} [label=\"{:?}\"];\n", nodename, var),
         Node::Bin { kind, lhs, rhs } => {
             s += &format!("{} [label=\"{:?}\"];\n", nodename, kind);
             s += &graph_gen(lhs, Some(&nodename), 0);

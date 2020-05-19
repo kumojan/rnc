@@ -2,32 +2,24 @@ use crate::tokenize::TokenKind::*;
 use crate::tokenize::*;
 use std::collections::VecDeque;
 use std::fmt;
-///
-/// 変数リスト
-///
-pub fn local_variables(token_list: &VecDeque<Token>) -> Vec<String> {
-    let mut lbars: Vec<_> = token_list
-        .iter()
-        .flat_map(|x| match &x.kind {
-            TkIdent(s) => Some(s.clone()),
-            _ => None,
-        })
-        .collect();
-    lbars.sort();
-    lbars.dedup();
-    lbars
-}
-
-// TODO: 変数宣言の実装
-pub struct Var {
-    name: String,
-    offset: usize,
-}
+use std::rc::Rc;
 
 // TODO: 型の実装
 #[derive(Clone, Copy)]
 pub enum TypeKind {
     TyInt,
+}
+impl TypeKind {
+    fn ty(self) -> Type {
+        Type { ty: self, depth: 0 }
+    }
+}
+impl fmt::Debug for TypeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeKind::TyInt => write!(f, "int"),
+        }
+    }
 }
 #[derive(Clone, Copy)]
 pub struct Type {
@@ -55,6 +47,25 @@ impl Type {
             d.depth -= 1;
             d
         }
+    }
+}
+impl fmt::Debug for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}{:?}", "*".repeat(self.depth as usize), self.ty,)
+    }
+}
+pub struct Var {
+    name: String,
+    ty: Type,
+    pub offset: usize,
+}
+
+impl Var {
+    fn new(name: String, ty: Type) {}
+}
+impl fmt::Debug for Var {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?} {}", self.ty, self.name)
     }
 }
 
@@ -93,9 +104,7 @@ pub enum Node {
         val: u32,
     },
     Lvar {
-        ty: Type,
-        name: String,
-        offset: usize,
+        var: Rc<Var>,
     },
     Addr {
         node: Box<Node>,
@@ -146,7 +155,7 @@ impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Node::Num { val } => write!(f, "Num {}", val),
-            Node::Lvar { name, offset, .. } => write!(f, "Val {} at {}", name.clone(), offset),
+            Node::Lvar { var } => write!(f, "{:?}", var),
             Node::Return { .. } => write!(f, "return"),
             Node::ExprStmt { .. } => write!(f, "expr stmt"),
             Node::Bin { kind, .. } => write!(f, "Bin {:?}", kind),
@@ -165,7 +174,7 @@ impl Node {
     pub fn get_type(&self) -> Type {
         match self {
             Self::Num { .. } => Type::new(TypeKind::TyInt),
-            Self::Lvar { ty, .. } => *ty,
+            Self::Lvar { var } => var.ty,
             Self::Addr { node } => node.get_type().to_ptr(),
             Self::Deref { node } => node.get_type().deref(),
             Self::Assign { lvar, .. } => lvar.get_type(),
@@ -182,12 +191,8 @@ impl Node {
     fn new_num(val: u32) -> Self {
         Self::Num { val }
     }
-    fn new_lvar(s: String, offset: usize) -> Self {
-        Self::Lvar {
-            name: s,
-            offset,
-            ty: Type::new(TypeKind::TyInt),
-        }
+    fn new_lvar(var: Rc<Var>) -> Self {
+        Self::Lvar { var }
     }
     fn new_if(condi: Node, then_: Node, else_: Option<Node>) -> Self {
         Self::If {
@@ -434,31 +439,28 @@ impl TokenReader for VecDeque<Token> {
 
 pub struct Parser {
     tklist: VecDeque<Token>,
-    lvars: Vec<String>,
-    pub varoffset: usize,
+    lvars: Vec<Rc<Var>>,
 }
 impl Parser {
     pub fn new(tklist: VecDeque<Token>) -> Self {
         // let lvars = local_variables(&tklist);
-        // let varoffset = lvars.len() * 8;
         Self {
             tklist,
             lvars: Vec::new(),
-            varoffset: 0,
         }
     }
-    fn find_var(&mut self, varname: &String) -> usize {
-        let offset = self
-            .lvars
-            .iter()
-            .enumerate()
-            .flat_map(|(i, s)| Some((i + 1) * 8).filter(|_| s == varname)) // s==varnameの時以外はNoneにしてしまう。
-            .next();
-        if let Some(offset) = offset {
-            return offset;
+    fn find_var(&mut self, name: &String, ty: Type) -> Rc<Var> {
+        if let Some(v) = self.lvars.iter().find(|v| v.name == *name) {
+            return v.clone();
         } else {
-            self.lvars.push(varname.clone());
-            return self.lvars.len() * 8;
+            let offset = self.lvars.len() * 8;
+            let var = Rc::new(Var {
+                name: name.clone(),
+                ty,
+                offset,
+            });
+            self.lvars.push(var.clone());
+            return var;
         }
     }
 }
@@ -673,8 +675,7 @@ impl CodeGen for Parser {
                 })
             } else {
                 // ただの変数
-                let offset = self.find_var(&name); // 探して、存在しなければpushした上でoffsetを返す。
-                Ok(Node::new_lvar(name, offset))
+                Ok(Node::new_lvar(self.find_var(&name, TypeKind::TyInt.ty())))
             }
         }
     }
