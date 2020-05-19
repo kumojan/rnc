@@ -60,9 +60,9 @@ pub struct Var {
     pub offset: usize,
 }
 
-impl Var {
-    fn new(name: String, ty: Type) {}
-}
+// impl Var {
+//     fn new(name: String, ty: Type) {}
+// }
 impl fmt::Debug for Var {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?} {}", self.ty, self.name)
@@ -453,7 +453,7 @@ impl Parser {
         if let Some(v) = self.lvars.iter().find(|v| v.name == *name) {
             return v.clone();
         } else {
-            let offset = self.lvars.len() * 8;
+            let offset = (self.lvars.len() + 1) * 8;
             let var = Rc::new(Var {
                 name: name.clone(),
                 ty,
@@ -592,7 +592,7 @@ impl CodeGen for Parser {
         let mut node = self.equality()?;
         // "="が見えた場合は代入文にする。
         if self.consume("=") {
-            node = Node::new_assign(node, self.equality()?);
+            node = Node::new_assign(node, self.assign()?);
         }
         Ok(node)
     }

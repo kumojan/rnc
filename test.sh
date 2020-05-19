@@ -100,8 +100,11 @@ assert 2 'main() { return sub(5, 3); }'
 assert 21 'main() { return add6(1,2,3,4,5,6); }'
 assert 63 'main() { return add6(1,2,4,8,16,32); }'
 assert 192 'main() { return sumcheck(1,2,4,8,16,32); }'
+assert 5 'main() { a = x = 1; return a + x; }'
+
 
 assert 3 'main() { return ret32(); } ret32() { return 3; }'
+assert 5 'main() { a = x = 1; return x + ret32(); } ret32() { a = b = 2; return a+b; }'
 
 assert 3 'main() { x=3; y=&x; z=&y; return **z; }'
 assert 5 'main() { x=3; y=5; return *(&x+1); }'
