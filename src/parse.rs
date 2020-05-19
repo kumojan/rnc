@@ -506,8 +506,12 @@ impl CodeGen for Parser {
         if let Some(ty) = self.typespec() {
             let mut stmts = vec![];
             loop {
+                let mut depth = 0;
+                while self.consume("*") {
+                    depth += 1;
+                }
                 let name = self.expect_ident()?;
-                let lvar = Node::new_lvar(self.add_var(&name, ty.kind()).unwrap());
+                let lvar = Node::new_lvar(self.add_var(&name, ty.to_ptr(depth)).unwrap());
                 if self.consume("=") {
                     stmts.push(Node::new_assign(lvar, self.expr()?));
                 }

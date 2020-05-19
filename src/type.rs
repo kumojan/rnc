@@ -7,11 +7,11 @@ pub enum TypeKind {
     TyInt,
 }
 impl TypeKind {
-    pub fn kind(self) -> Type {
-        Type {
-            kind: self,
-            depth: 0,
-        }
+    pub fn to_type(self) -> Type {
+        self.to_ptr(0)
+    }
+    pub fn to_ptr(self, depth: u8) -> Type {
+        Type { kind: self, depth }
     }
 }
 impl fmt::Debug for TypeKind {
