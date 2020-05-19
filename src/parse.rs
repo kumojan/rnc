@@ -2,7 +2,6 @@ use crate::tokenize::TokenKind::*;
 use crate::tokenize::*;
 use std::collections::VecDeque;
 use std::fmt;
-use std::rc::Rc;
 ///
 /// 変数リスト
 ///
@@ -26,15 +25,35 @@ pub struct Var {
 }
 
 // TODO: 型の実装
-pub enum Type {
+#[derive(Clone, Copy)]
+pub enum TypeKind {
     TyInt,
-    TyPtr(Rc<Type>),
+}
+#[derive(Clone, Copy)]
+pub struct Type {
+    ty: TypeKind,
+    depth: u8, // ポインタなら1, ポインタのポインタなら2, ...
 }
 impl Type {
+    fn new(ty: TypeKind) -> Self {
+        Self { ty, depth: 0 }
+    }
     fn is_ptr(&self) -> bool {
-        match self {
-            Type::TyPtr { .. } => true,
-            _ => false,
+        self.depth > 0
+    }
+    fn to_ptr(&self) -> Self {
+        Self {
+            ty: self.ty,
+            depth: self.depth + 1,
+        }
+    }
+    fn deref(&self) -> Self {
+        let mut d = self.clone();
+        if d.depth == 0 {
+            unimplemented!();
+        } else {
+            d.depth -= 1;
+            d
         }
     }
 }
@@ -74,7 +93,7 @@ pub enum Node {
         val: u32,
     },
     Lvar {
-        ty: Rc<Type>,
+        ty: Type,
         name: String,
         offset: usize,
     },
@@ -143,23 +162,20 @@ impl fmt::Debug for Node {
     }
 }
 impl Node {
-    pub fn get_type(&self) -> Rc<Type> {
+    pub fn get_type(&self) -> Type {
         match self {
-            Self::Num { .. } => Rc::new(Type::TyInt),
-            Self::Lvar { ty, .. } => ty.clone(),
-            Self::Addr { node } => Rc::new(Type::TyPtr(node.get_type())),
-            Self::Deref { node } => match &*node.get_type() {
-                Type::TyInt => unimplemented!(),
-                Type::TyPtr(ty) => ty.clone(),
-            },
+            Self::Num { .. } => Type::new(TypeKind::TyInt),
+            Self::Lvar { ty, .. } => *ty,
+            Self::Addr { node } => node.get_type().to_ptr(),
+            Self::Deref { node } => node.get_type().deref(),
             Self::Assign { lvar, .. } => lvar.get_type(),
             Self::Bin { kind, lhs, rhs } => match kind {
                 NodeKind::NdSub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => {
-                    Rc::new(Type::TyInt)
+                    Type::new(TypeKind::TyInt)
                 } // ポインタ同士の引き算はint
                 _ => lhs.get_type(),
             },
-            Self::FunCall { .. } => Rc::new(Type::TyInt),
+            Self::FunCall { .. } => Type::new(TypeKind::TyInt), // 関数の戻り値は全部int
             _ => unimplemented!(),
         }
     }
@@ -170,7 +186,7 @@ impl Node {
         Self::Lvar {
             name: s,
             offset,
-            ty: Rc::new(Type::TyInt),
+            ty: Type::new(TypeKind::TyInt),
         }
     }
     fn new_if(condi: Node, then_: Node, else_: Option<Node>) -> Self {
@@ -214,19 +230,21 @@ impl Node {
     }
     fn new_add(lhs: Node, rhs: Node) -> Self {
         match (lhs.get_type().is_ptr(), rhs.get_type().is_ptr()) {
+            // 値 + 値
+            (false, false) => Self::new_bin(NdAdd, lhs, rhs),
             // 値+ポインタ => ポインタ+値と見なす
             (false, true) => Self::new_add(rhs, lhs),
             // ポインタ + 値 は値だけずれたポインタを返す(型はlhsなのでポインタになる)
             (true, false) => {
                 Self::new_bin(NdSub, lhs, Self::new_bin(NdMul, Node::Num { val: 8 }, rhs))
             }
-            // 値 + 値
-            (false, false) => Self::new_bin(NdAdd, lhs, rhs),
             (true, true) => unimplemented!(), // ポインタ同士の足し算は意味をなさない
         }
     }
     fn new_sub(lhs: Node, rhs: Node) -> Self {
         match (lhs.get_type().is_ptr(), rhs.get_type().is_ptr()) {
+            // 値 - 値
+            (false, false) => Self::new_bin(NdSub, lhs, rhs),
             // ポインタ - 値
             (true, false) => {
                 Self::new_bin(NdAdd, lhs, Self::new_bin(NdMul, Node::Num { val: 8 }, rhs))
@@ -237,9 +255,7 @@ impl Node {
             (true, true) => {
                 Node::new_bin(NdDiv, Node::new_bin(NdSub, rhs, lhs), Node::Num { val: 8 })
             }
-            // 値 - 値
-            (false, false) => Self::new_bin(NdSub, lhs, rhs),
-            // 値 - ポインタは意味をなさない(変なポインタになる)
+            // 値 - ポインタは意味をなさない
             (false, true) => unimplemented!(),
         }
     }
