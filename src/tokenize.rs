@@ -11,8 +11,7 @@ use std::fmt;
 ///
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenKind {
-    TkPunct(String),
-    TkResWord(String),
+    TkReserved(String),
     TkIdent(String),
     TkNum(u32),
     TkReturn,
@@ -39,13 +38,13 @@ impl Token {
     }
     fn new_punct(s: String, pos: usize) -> Self {
         Self {
-            kind: TkPunct(s),
+            kind: TkReserved(s),
             pos,
         }
     }
     fn new_res_word(s: String, pos: usize) -> Self {
         Self {
-            kind: TkResWord(s),
+            kind: TkReserved(s),
             pos,
         }
     }
@@ -87,14 +86,15 @@ impl Lexer {
         }
     }
     fn check_res_word(&self, s: &String, l: usize) -> bool {
-        (match l {
-            2 => ["if"].contains(&&s[..]),
-            3 => ["for"].contains(&&s[..]),
-            4 => ["else"].contains(&&s[..]),
-            5 => ["while"].contains(&&s[..]),
-            6 => ["return"].contains(&&s[..]),
-            _ => unimplemented!(),
-        }) && !is_alnum(&self.peek_char(l))
+        !is_alnum(&self.peek_char(l))
+            && match l {
+                2 => ["if"].contains(&&s[..]),
+                3 => ["for", "int"].contains(&&s[..]),
+                4 => ["else"].contains(&&s[..]),
+                5 => ["while"].contains(&&s[..]),
+                6 => ["return"].contains(&&s[..]),
+                _ => unimplemented!(),
+            }
     }
     fn is_at_end(&self) -> bool {
         self.pos >= self.code.len()

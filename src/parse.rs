@@ -1,59 +1,9 @@
-use crate::tokenize::TokenKind::*;
+use crate::r#type::*;
 use crate::tokenize::*;
 use std::collections::VecDeque;
 use std::fmt;
 use std::rc::Rc;
 
-// TODO: 型の実装
-#[derive(Clone, Copy)]
-pub enum TypeKind {
-    TyInt,
-}
-impl TypeKind {
-    fn ty(self) -> Type {
-        Type { ty: self, depth: 0 }
-    }
-}
-impl fmt::Debug for TypeKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TypeKind::TyInt => write!(f, "int"),
-        }
-    }
-}
-#[derive(Clone, Copy)]
-pub struct Type {
-    ty: TypeKind,
-    depth: u8, // ポインタなら1, ポインタのポインタなら2, ...
-}
-impl Type {
-    fn new(ty: TypeKind) -> Self {
-        Self { ty, depth: 0 }
-    }
-    fn is_ptr(&self) -> bool {
-        self.depth > 0
-    }
-    fn to_ptr(&self) -> Self {
-        Self {
-            ty: self.ty,
-            depth: self.depth + 1,
-        }
-    }
-    fn deref(&self) -> Self {
-        let mut d = self.clone();
-        if d.depth == 0 {
-            unimplemented!();
-        } else {
-            d.depth -= 1;
-            d
-        }
-    }
-}
-impl fmt::Debug for Type {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{:?}", "*".repeat(self.depth as usize), self.ty,)
-    }
-}
 pub struct Var {
     name: String,
     ty: Type,
@@ -176,7 +126,13 @@ impl Node {
             Self::Num { .. } => Type::new(TypeKind::TyInt),
             Self::Lvar { var } => var.ty,
             Self::Addr { node } => node.get_type().to_ptr(),
-            Self::Deref { node } => node.get_type().deref(),
+            Self::Deref { node } => {
+                if node.get_type().is_ptr() {
+                    node.get_type().deref()
+                } else {
+                    panic!("invalid dereference!")
+                }
+            }
             Self::Assign { lvar, .. } => lvar.get_type(),
             Self::Bin { kind, lhs, rhs } => match kind {
                 NodeKind::NdSub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => {
@@ -325,14 +281,17 @@ pub trait TokenReader {
     fn expect(&mut self, s: &str) -> Result<(), ParseError>;
     fn expect_num(&mut self) -> Result<u32, ParseError>;
     fn expect_ident(&mut self) -> Result<String, ParseError>;
+    // 型を取得する
+    fn typespec(&mut self) -> Option<TypeKind>;
 }
 ///
 /// program = function*
-/// function = ident "(" ")" "{" stmt* "}"
-/// stmt_vec = (stmt)*
+/// function = ident "(" ")" "{" compound_stmt "}"
+/// compound_stmt = (declaration | stmt)*
+/// declaration = typespec (declarator ("=" expr)? ("," declarator ("=" expr)?)*)? ";"
 /// stmt = expr ";"  // expression statement (値を残さない)
 ///     | "return" expr ";"  
-///     | "{" stmt* "}"
+///     | "{" compound_stmt "}"
 ///     | "if" "(" expr ")" stmt ( "else" stmt )?
 ///     | "while" "(" expr ")" stmt
 ///     | "for" "(" expr? ";" expr? ";" expr? ")" stmt
@@ -347,6 +306,7 @@ pub trait TokenReader {
 pub trait CodeGen {
     fn program(&mut self) -> Result<Vec<Function>, ParseError>;
     fn function(&mut self) -> Result<Function, ParseError>;
+    fn decleration(&mut self) -> Result<Vec<Node>, ParseError>;
     fn compound_stmt(&mut self) -> Result<Vec<Node>, ParseError>;
     fn stmt(&mut self) -> Result<Node, ParseError>;
     fn expr(&mut self) -> Result<Node, ParseError>;
@@ -366,20 +326,20 @@ impl TokenReader for VecDeque<Token> {
     }
     fn head_str(&self) -> Option<String> {
         match self[0].kind.clone() {
-            TkPunct(s) => Some(s),
+            TokenKind::TkReserved(s) => Some(s),
             _ => None,
         }
     }
     fn peek(&mut self, s: &str) -> bool {
         match &self[0].kind {
-            TkPunct(_s) | TkResWord(_s) if _s == s => true,
+            TokenKind::TkReserved(_s) if _s == s => true,
             _ => false,
         }
     }
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
     fn consume(&mut self, s: &str) -> bool {
         match &self[0].kind {
-            TkPunct(_s) | TkResWord(_s) if _s == s => {
+            TokenKind::TkReserved(_s) if _s == s => {
                 self.pop_front();
                 true
             }
@@ -387,14 +347,14 @@ impl TokenReader for VecDeque<Token> {
         }
     }
     fn consume_return(&mut self) -> bool {
-        if self[0].kind == TkReturn {
+        if self[0].kind == TokenKind::TkReturn {
             self.pop_front();
             return true;
         }
         false
     }
     fn consume_num(&mut self) -> Option<u32> {
-        if let TkNum(val) = self[0].kind {
+        if let TokenKind::TkNum(val) = self[0].kind {
             self.pop_front();
             Some(val)
         } else {
@@ -402,7 +362,7 @@ impl TokenReader for VecDeque<Token> {
         }
     }
     fn consume_ident(&mut self) -> Option<String> {
-        if let TkIdent(s) = self[0].kind.clone() {
+        if let TokenKind::TkIdent(s) = self[0].kind.clone() {
             self.pop_front();
             Some(s)
         } else {
@@ -410,7 +370,7 @@ impl TokenReader for VecDeque<Token> {
         }
     }
     fn is_eof(&self) -> bool {
-        self[0].kind == TkEOF
+        self[0].kind == TokenKind::TkEOF
     }
     fn expect(&mut self, s: &str) -> Result<(), ParseError> {
         if !self.consume(s) {
@@ -435,11 +395,18 @@ impl TokenReader for VecDeque<Token> {
             msg: "expected identifier".to_owned(),
         })
     }
+    fn typespec(&mut self) -> Option<TypeKind> {
+        if self.consume("int") {
+            Some(TypeKind::TyInt)
+        } else {
+            None
+        }
+    }
 }
 
 pub struct Parser {
     tklist: VecDeque<Token>,
-    lvars: Vec<Rc<Var>>,
+    lvars: Vec<Rc<Var>>, // Node::Lvarと共有する。
 }
 impl Parser {
     pub fn new(tklist: VecDeque<Token>) -> Self {
@@ -449,9 +416,15 @@ impl Parser {
             lvars: Vec::new(),
         }
     }
-    fn find_var(&mut self, name: &String, ty: Type) -> Rc<Var> {
+    fn find_var(&self, name: &String) -> Option<Rc<Var>> {
+        self.lvars.iter().find(|v| v.name == *name).cloned()
+    }
+    fn add_var(&mut self, name: &String, ty: Type) -> Result<Rc<Var>, ParseError> {
         if let Some(v) = self.lvars.iter().find(|v| v.name == *name) {
-            return v.clone();
+            if v.ty.kind != ty.kind {
+                unimplemented!("type change of vars");
+            }
+            return Ok(v.clone());
         } else {
             let offset = (self.lvars.len() + 1) * 8;
             let var = Rc::new(Var {
@@ -460,7 +433,7 @@ impl Parser {
                 offset,
             });
             self.lvars.push(var.clone());
-            return var;
+            return Ok(var);
         }
     }
 }
@@ -499,6 +472,9 @@ impl TokenReader for Parser {
     fn expect_ident(&mut self) -> Result<String, ParseError> {
         self.tklist.expect_ident()
     }
+    fn typespec(&mut self) -> Option<TypeKind> {
+        self.tklist.typespec()
+    }
 }
 
 impl CodeGen for Parser {
@@ -526,14 +502,36 @@ impl CodeGen for Parser {
             }),
         }
     }
+    fn decleration(&mut self) -> Result<Vec<Node>, ParseError> {
+        if let Some(ty) = self.typespec() {
+            let mut stmts = vec![];
+            loop {
+                let name = self.expect_ident()?;
+                let lvar = Node::new_lvar(self.add_var(&name, ty.kind()).unwrap());
+                if self.consume("=") {
+                    stmts.push(Node::new_assign(lvar, self.expr()?));
+                }
+                if !self.consume(",") {
+                    self.expect(";")?; // コンマを見なかったら、セミコロンがあるはず
+                    break; // そして宣言終了
+                }
+            }
+            Ok(stmts)
+        } else {
+            Ok(vec![])
+        }
+    }
+
     fn compound_stmt(&mut self) -> Result<Vec<Node>, ParseError> {
         self.expect("{")?;
-        let mut stmts = vec![];
-        while let Ok(stmt) = self.stmt() {
-            stmts.push(stmt);
+        let mut block = vec![];
+        while !self.consume("}") {
+            match self.head_str().as_deref() {
+                Some("int") => block.extend(self.decleration()?),
+                _ => block.push(self.stmt()?), // 途中に中括弧閉じがあっても、ここで消費されるはず
+            };
         }
-        self.expect("}")?;
-        Ok(stmts)
+        Ok(block)
     }
     fn stmt(&mut self) -> Result<Node, ParseError> {
         let read_until = |self_: &mut Self, s: &str| {
@@ -675,7 +673,13 @@ impl CodeGen for Parser {
                 })
             } else {
                 // ただの変数
-                Ok(Node::new_lvar(self.find_var(&name, TypeKind::TyInt.ty())))
+                match self.find_var(&name) {
+                    Some(var) => Ok(Node::new_lvar(var)),
+                    _ => Err(ParseError {
+                        pos: 0,
+                        msg: "variable not found!".to_owned(),
+                    }),
+                }
             }
         }
     }
