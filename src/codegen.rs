@@ -1,20 +1,20 @@
 use crate::parse::{Function, Node, NodeKind};
 
-// const ARGREG: [&'static str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
-const ARGREG: [&'static str; 6] = ["r9", "r8", "rcx", "rdx", "rsi", "rdi"]; // 第6引数から順に第1引数まで
+// 関数呼び出しのレジスタ 参考 https://en.wikipedia.org/wiki/X86_calling_conventions#x86-64_calling_conventions
+const ARGREG: [&'static str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
 const ARGLEN: usize = 6;
 
 #[derive(Debug, Default)]
 pub struct CodeGenError {
     pub msg: String,
 }
-impl CodeGenError {
-    fn new(node: &Node) -> Self {
-        Self {
-            msg: format!("{:?}", node),
-        }
-    }
-}
+// impl CodeGenError {
+//     fn new(node: &Node) -> Self {
+//         Self {
+//             msg: format!("{:?}", node),
+//         }
+//     }
+// }
 #[derive(Default)]
 struct CodeGenerator {
     label_count: usize,
@@ -171,29 +171,11 @@ impl CodeGenerator {
                 for arg in &**args {
                     self.gen(arg)?;
                 }
-                for reg in &ARGREG[ARGLEN - args.len()..] {
-                    println!("  pop {}", reg);
+                for i in (0..args.len()).rev() {
+                    println!("  pop {}", ARGREG[i])
                 }
-                println!("  mov rax, rsp");
-                println!("  and rax, 15"); // rspのが16の倍数かどうか見ている
-                println!("  jnz .L.call.{}", self.label_count); // 16の倍数でないとき?
-
-                // 16の倍数なとき?
-                println!("  mov rax, 0");
                 println!("  call {}", name);
-                println!("  jmp .L.end.{}", self.label_count);
-
-                // 16の倍数でないとき?
-                println!(".L.call.{}:", self.label_count);
-                println!("  sub rsp, 8");
-                println!("  mov rax, 0");
-                println!("  call {}", name);
-                println!("  add rsp, 8");
-
-                // 合流
-                println!(".L.end.{}:", self.label_count);
-                println!("  push rax");
-                self.label_count += 1;
+                println!("  push rax"); // 関数終了時にreturnの値がraxに入っている。
             }
             Node::Bin { kind, lhs, rhs } => {
                 self.gen(lhs)?;
@@ -231,12 +213,28 @@ pub fn code_gen(program: Vec<Function>) -> Result<(), CodeGenError> {
         println!("  mov rbp, rsp"); // 次にrbpに現在のrspを入れる。rspは常にスタックの1番下を指していて、rbpもそこを指すようになる
         println!("  sub rsp, {}", func.stack_size);
 
+        println!("  mov [rbp-8], r12");
+        println!("  mov [rbp-16], r13");
+        println!("  mov [rbp-24], r14");
+        println!("  mov [rbp-32], r15");
+        // 以下レジスタに保存されていた引数がローカル変数に格納される
+        // 例えば int f(int a, int b, ...)となっていたら
+        //   mov [rbp-40], rdi
+        //   mov [rbp-48], rsi
+        // となる
+        for i in 0..func.params.len() {
+            println!("  mov [rbp-{}], {}", func.params[i].offset, ARGREG[i])
+        }
         for node in &func.body {
             cg.gen(node)?;
         }
         println!(".L.return.{}:", cg.func_name);
+        println!("  mov [rbp-8], r12");
+        println!("  mov [rbp-16], r13");
+        println!("  mov [rbp-24], r14");
+        println!("  mov [rbp-32], r15");
         println!("  mov rsp, rbp");
-        println!("  pop rbp");
+        println!("  pop rbp"); // 呼び出し時のrbpをrbpに回収
         println!("  ret");
     }
     Ok(())

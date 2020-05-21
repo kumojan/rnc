@@ -4,6 +4,8 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::rc::Rc;
 
+const FUNC_STACK_SIZE: usize = 32;
+
 pub struct Var {
     name: String,
     ty: Type,
@@ -125,7 +127,7 @@ impl Node {
         match self {
             Self::Num { .. } => Type::new(TypeKind::TyInt),
             Self::Lvar { var } => var.ty,
-            Self::Addr { node } => node.get_type().to_ptr(),
+            Self::Addr { node } => node.get_type().to_type(),
             Self::Deref { node } => {
                 if node.get_type().is_ptr() {
                     node.get_type().deref()
@@ -236,21 +238,30 @@ impl Node {
     }
 }
 
-#[derive(Default)]
 pub struct Function {
+    pub ty: Type,
     pub name: String,
     pub body: Vec<Node>,
-    pub params: Vec<Var>,
-    pub locals: Vec<Var>,
+    pub params: Vec<Rc<Var>>,
+    pub locals: Vec<Rc<Var>>,
     pub stack_size: usize,
 }
 impl Function {
-    fn new(name: String, body: Vec<Node>, stack_size: usize) -> Self {
+    fn new(
+        ty: Type,
+        name: String,
+        body: Vec<Node>,
+        stack_size: usize,
+        params: Vec<Rc<Var>>,
+        locals: Vec<Rc<Var>>,
+    ) -> Self {
         Self {
+            ty,
             name,
             body,
             stack_size,
-            ..Self::default()
+            params,
+            locals,
         }
     }
 }
@@ -288,6 +299,7 @@ pub trait TokenReader {
 /// program = function*
 /// function = ident "(" ")" "{" compound_stmt "}"
 /// compound_stmt = (declaration | stmt)*
+/// declarator = "*"* ident
 /// declaration = typespec (declarator ("=" expr)? ("," declarator ("=" expr)?)*)? ";"
 /// stmt = expr ";"  // expression statement (値を残さない)
 ///     | "return" expr ";"  
@@ -409,8 +421,16 @@ pub struct Parser {
     lvars: Vec<Rc<Var>>, // Node::Lvarと共有する。
 }
 impl Parser {
+    fn pos(&self) -> usize {
+        self.tklist[0].pos
+    }
+    fn offset(&self) -> usize {
+        self.lvars
+            .last()
+            .map(|v| v.offset)
+            .unwrap_or(FUNC_STACK_SIZE) // 非揮発性レジスタのためにまず32ビット確保する
+    }
     pub fn new(tklist: VecDeque<Token>) -> Self {
-        // let lvars = local_variables(&tklist);
         Self {
             tklist,
             lvars: Vec::new(),
@@ -426,7 +446,7 @@ impl Parser {
             }
             return Ok(v.clone());
         } else {
-            let offset = (self.lvars.len() + 1) * 8;
+            let offset = self.offset() + ty.size();
             let var = Rc::new(Var {
                 name: name.clone(),
                 ty,
@@ -475,6 +495,7 @@ impl TokenReader for Parser {
     fn typespec(&mut self) -> Option<TypeKind> {
         self.tklist.typespec()
     }
+    // fn declarator(&mut self) -> Option<
 }
 
 impl CodeGen for Parser {
@@ -487,17 +508,52 @@ impl CodeGen for Parser {
         Ok(code)
     }
     fn function(&mut self) -> Result<Function, ParseError> {
+        let return_type = match self.typespec() {
+            Some(ty) => {
+                let mut depth = 0;
+                while self.consume("*") {
+                    depth += 1;
+                }
+                ty.to_type(depth)
+            }
+            _ => {
+                return Err(ParseError {
+                    pos: self.pos(),
+                    msg: "return type for function needed!".to_owned(),
+                })
+            }
+        };
         match self.consume_ident() {
             Some(name) => {
                 self.expect("(")?;
+                // let mut args = vec![];
+                // 関数の引数
+                while let Some(ty) = self.typespec() {
+                    let mut depth = 0;
+                    while self.consume("*") {
+                        depth += 1;
+                    }
+                    let name = self.expect_ident()?;
+                    self.add_var(&name, ty.to_type(depth))?;
+                    if !self.consume(",") {
+                        break; // 宣言終了
+                    }
+                }
                 self.expect(")")?;
+                // この時点でのローカル変数が引数である
+                let params: Vec<_> = self.lvars.iter().cloned().collect();
                 let stmts = self.compound_stmt()?;
-                let stack_size = self.lvars.len() * 8;
-                self.lvars.clear();
-                Ok(Function::new(name, stmts, stack_size))
+                Ok(Function::new(
+                    return_type,
+                    name,
+                    stmts,
+                    self.offset(),
+                    params,
+                    std::mem::replace(&mut self.lvars, vec![]),
+                ))
             }
             _ => Err(ParseError {
-                pos: 0,
+                pos: self.pos(),
                 msg: "evrything has to be inside a function!".to_owned(),
             }),
         }
@@ -511,7 +567,8 @@ impl CodeGen for Parser {
                     depth += 1;
                 }
                 let name = self.expect_ident()?;
-                let lvar = Node::new_lvar(self.add_var(&name, ty.to_ptr(depth)).unwrap());
+                // 初期化がなければ、コードには現れないので捨てられる
+                let lvar = Node::new_lvar(self.add_var(&name, ty.to_type(depth)).unwrap());
                 if self.consume("=") {
                     stmts.push(Node::new_assign(lvar, self.expr()?));
                 }

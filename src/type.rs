@@ -1,16 +1,12 @@
-use crate::parse::ParseError;
+// use crate::parse::ParseError;
 use std::fmt;
 
-// TODO: 型の実装
 #[derive(Clone, Copy, PartialEq)]
 pub enum TypeKind {
     TyInt,
 }
 impl TypeKind {
-    pub fn to_type(self) -> Type {
-        self.to_ptr(0)
-    }
-    pub fn to_ptr(self, depth: u8) -> Type {
+    pub fn to_type(self, depth: u8) -> Type {
         Type { kind: self, depth }
     }
 }
@@ -33,7 +29,7 @@ impl Type {
     pub fn is_ptr(&self) -> bool {
         self.depth > 0
     }
-    pub fn to_ptr(&self) -> Self {
+    pub fn to_type(&self) -> Self {
         Self {
             kind: self.kind,
             depth: self.depth + 1,
@@ -47,6 +43,9 @@ impl Type {
             d.depth -= 1;
             d
         }
+    }
+    pub fn size(&self) -> usize {
+        8 // 型ごとにサイズを返す
     }
 }
 impl fmt::Debug for Type {
