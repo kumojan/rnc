@@ -149,7 +149,7 @@ impl Lexer {
         }
         // 1文字読み取り
         let c = self.peek_char(0);
-        if "+-*/(){}<>=;,*&".find(c).is_some() {
+        if "+-*/(){}<>=;,*&[]".find(c).is_some() {
             self.pos += 1;
             return Some(c.to_string());
         }

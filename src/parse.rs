@@ -12,9 +12,6 @@ pub struct Var {
     pub offset: usize,
 }
 
-// impl Var {
-//     fn new(name: String, ty: Type) {}
-// }
 impl fmt::Debug for Var {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?} {}", self.ty, self.name)
@@ -125,12 +122,12 @@ impl fmt::Debug for Node {
 impl Node {
     pub fn get_type(&self) -> Type {
         match self {
-            Self::Num { .. } => Type::new(TypeKind::TyInt),
-            Self::Lvar { var } => var.ty,
-            Self::Addr { node } => node.get_type().to_type(),
+            Self::Num { .. } => Type::TyInt,
+            Self::Lvar { var } => var.ty.clone(),
+            Self::Addr { node } => node.get_type().to_ptr(),
             Self::Deref { node } => {
                 if node.get_type().is_ptr() {
-                    node.get_type().deref()
+                    node.get_type().deref().unwrap()
                 } else {
                     panic!("invalid dereference!")
                 }
@@ -138,11 +135,11 @@ impl Node {
             Self::Assign { lvar, .. } => lvar.get_type(),
             Self::Bin { kind, lhs, rhs } => match kind {
                 NodeKind::NdSub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => {
-                    Type::new(TypeKind::TyInt)
+                    Type::TyInt
                 } // ポインタ同士の引き算はint
                 _ => lhs.get_type(),
             },
-            Self::FunCall { .. } => Type::new(TypeKind::TyInt), // 関数の戻り値は全部int
+            Self::FunCall { .. } => Type::TyInt, // 関数の戻り値は全部int
             _ => unimplemented!(),
         }
     }
@@ -293,14 +290,18 @@ pub trait TokenReader {
     fn expect_num(&mut self) -> Result<u32, ParseError>;
     fn expect_ident(&mut self) -> Result<String, ParseError>;
     // 型を取得する
-    fn typespec(&mut self) -> Option<TypeKind>;
+    fn typespec(&mut self) -> Result<Type, ParseError>;
+    fn ptr(&mut self, ty: Type) -> Type;
+    // raise error
+    fn raise_err(&self, msg: &str) -> ParseError;
 }
 ///
 /// program = function*
-/// function = ident "(" ")" "{" compound_stmt "}"
+/// function = funcdef = typespec ptr ident args "{" compound_stmt "}"
 /// compound_stmt = (declaration | stmt)*
-/// declarator = "*"* ident
-/// declaration = typespec (declarator ("=" expr)? ("," declarator ("=" expr)?)*)? ";"
+/// ptr = "*"*
+/// args = "(" typespec ptr ident ("," typespec ptr ident)? ")"
+/// vardef = typespec ptr ident ("=" expr)? ("," ptr ident ("=" expr)?)*
 /// stmt = expr ";"  // expression statement (値を残さない)
 ///     | "return" expr ";"  
 ///     | "{" compound_stmt "}"
@@ -407,11 +408,24 @@ impl TokenReader for VecDeque<Token> {
             msg: "expected identifier".to_owned(),
         })
     }
-    fn typespec(&mut self) -> Option<TypeKind> {
+    fn typespec(&mut self) -> Result<Type, ParseError> {
         if self.consume("int") {
-            Some(TypeKind::TyInt)
+            Ok(Type::TyInt)
         } else {
-            None
+            Err(self.raise_err("typespec expected"))
+        }
+    }
+    fn ptr(&mut self, ty: Type) -> Type {
+        let mut depth = 0;
+        while self.consume("*") {
+            depth += 1;
+        }
+        ty.to_ptr_recursive(depth)
+    }
+    fn raise_err(&self, msg: &str) -> ParseError {
+        ParseError {
+            pos: self[0].pos,
+            msg: msg.to_owned(),
         }
     }
 }
@@ -419,6 +433,7 @@ impl TokenReader for VecDeque<Token> {
 pub struct Parser {
     tklist: VecDeque<Token>,
     lvars: Vec<Rc<Var>>, // Node::Lvarと共有する。
+                         // global_functions: Vec<...>
 }
 impl Parser {
     fn pos(&self) -> usize {
@@ -441,7 +456,7 @@ impl Parser {
     }
     fn add_var(&mut self, name: &String, ty: Type) -> Result<Rc<Var>, ParseError> {
         if let Some(v) = self.lvars.iter().find(|v| v.name == *name) {
-            if v.ty.kind != ty.kind {
+            if v.ty != ty {
                 unimplemented!("type change of vars");
             }
             return Ok(v.clone());
@@ -492,10 +507,15 @@ impl TokenReader for Parser {
     fn expect_ident(&mut self) -> Result<String, ParseError> {
         self.tklist.expect_ident()
     }
-    fn typespec(&mut self) -> Option<TypeKind> {
+    fn typespec(&mut self) -> Result<Type, ParseError> {
         self.tklist.typespec()
     }
-    // fn declarator(&mut self) -> Option<
+    fn ptr(&mut self, ty: Type) -> Type {
+        self.tklist.ptr(ty)
+    }
+    fn raise_err(&self, msg: &str) -> ParseError {
+        self.tklist.raise_err(msg)
+    }
 }
 
 impl CodeGen for Parser {
@@ -508,38 +528,23 @@ impl CodeGen for Parser {
         Ok(code)
     }
     fn function(&mut self) -> Result<Function, ParseError> {
-        let return_type = match self.typespec() {
-            Some(ty) => {
-                let mut depth = 0;
-                while self.consume("*") {
-                    depth += 1;
-                }
-                ty.to_type(depth)
-            }
-            _ => {
-                return Err(ParseError {
-                    pos: self.pos(),
-                    msg: "return type for function needed!".to_owned(),
-                })
-            }
-        };
+        let ty = self.typespec()?;
+        let return_type = self.ptr(ty);
         match self.consume_ident() {
             Some(name) => {
                 self.expect("(")?;
-                // let mut args = vec![];
-                // 関数の引数
-                while let Some(ty) = self.typespec() {
-                    let mut depth = 0;
-                    while self.consume("*") {
-                        depth += 1;
-                    }
-                    let name = self.expect_ident()?;
-                    self.add_var(&name, ty.to_type(depth))?;
-                    if !self.consume(",") {
-                        break; // 宣言終了
+                if !self.consume(")") {
+                    loop {
+                        let ty = self.typespec()?;
+                        let ty = self.ptr(ty);
+                        let name = self.expect_ident()?;
+                        self.add_var(&name, ty)?;
+                        if !self.consume(",") {
+                            self.expect(")")?;
+                            break; // 宣言終了
+                        }
                     }
                 }
-                self.expect(")")?;
                 // この時点でのローカル変数が引数である
                 let params: Vec<_> = self.lvars.iter().cloned().collect();
                 let stmts = self.compound_stmt()?;
@@ -559,28 +564,22 @@ impl CodeGen for Parser {
         }
     }
     fn decleration(&mut self) -> Result<Vec<Node>, ParseError> {
-        if let Some(ty) = self.typespec() {
-            let mut stmts = vec![];
-            loop {
-                let mut depth = 0;
-                while self.consume("*") {
-                    depth += 1;
-                }
-                let name = self.expect_ident()?;
-                // 初期化がなければ、コードには現れないので捨てられる
-                let lvar = Node::new_lvar(self.add_var(&name, ty.to_type(depth)).unwrap());
-                if self.consume("=") {
-                    stmts.push(Node::new_assign(lvar, self.expr()?));
-                }
-                if !self.consume(",") {
-                    self.expect(";")?; // コンマを見なかったら、セミコロンがあるはず
-                    break; // そして宣言終了
-                }
+        let ty = self.typespec()?;
+        let mut stmts = vec![];
+        loop {
+            let _ty = self.ptr(ty.clone());
+            let name = self.expect_ident()?;
+            // 初期化がなければ、コードには現れないので捨てられる
+            let lvar = Node::new_lvar(self.add_var(&name, _ty).unwrap());
+            if self.consume("=") {
+                stmts.push(Node::new_assign(lvar, self.expr()?));
             }
-            Ok(stmts)
-        } else {
-            Ok(vec![])
+            if !self.consume(",") {
+                self.expect(";")?; // コンマを見なかったら、セミコロンがあるはず
+                break; // そして宣言終了
+            }
         }
+        Ok(stmts)
     }
 
     fn compound_stmt(&mut self) -> Result<Vec<Node>, ParseError> {
@@ -719,6 +718,7 @@ impl CodeGen for Parser {
         } else {
             let name = self.expect_ident()?;
             // 関数呼び出し
+            // TODO: 呼び出しがわで関数の型を把握すべし
             if self.consume("(") {
                 let mut args = Vec::new();
                 while !self.consume(")") {
