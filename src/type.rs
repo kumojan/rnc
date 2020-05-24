@@ -51,7 +51,7 @@ impl Type {
     }
     pub fn size(&self) -> usize {
         match self {
-            Type::TyInt => 8,
+            Type::TyInt => 4,
             Type::TyPtr(..) => 8,
             Type::TyArray { ty, len } => ty.size() * len,
             _ => unimplemented!(),

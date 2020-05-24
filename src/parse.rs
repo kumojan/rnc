@@ -298,10 +298,14 @@ pub trait TokenReader {
 ///
 /// program = function*
 /// function = funcdef = typespec ptr ident args "{" compound_stmt "}"
-/// compound_stmt = (declaration | stmt)*
+/// typespec = "int"
 /// ptr = "*"*
-/// args = "(" typespec ptr ident ("," typespec ptr ident)? ")"
-/// vardef = typespec ptr ident ("=" expr)? ("," ptr ident ("=" expr)?)*
+/// args = "(" typespec ptr ident ( "," typespec ptr ident)? ")"
+/// compound_stmt = (vardef | stmt)*
+/// vardef = typespec declarator ("," declarator)*;
+/// declarator = ptr ident ("[" num "]")? initializer?
+/// initializer = "=" (expr | array_init)
+/// array_init = "{" num ("," num)?"}"
 /// stmt = expr ";"  // expression statement (値を残さない)
 ///     | "return" expr ";"  
 ///     | "{" compound_stmt "}"
@@ -319,7 +323,8 @@ pub trait TokenReader {
 pub trait CodeGen {
     fn program(&mut self) -> Result<Vec<Function>, ParseError>;
     fn function(&mut self) -> Result<Function, ParseError>;
-    fn decleration(&mut self) -> Result<Vec<Node>, ParseError>;
+    fn vardef(&mut self) -> Result<Vec<Node>, ParseError>;
+    fn initializer(&mut self) -> Result<Option<Node>, ParseError>;
     fn compound_stmt(&mut self) -> Result<Vec<Node>, ParseError>;
     fn stmt(&mut self) -> Result<Node, ParseError>;
     fn expr(&mut self) -> Result<Node, ParseError>;
@@ -563,16 +568,24 @@ impl CodeGen for Parser {
             }),
         }
     }
-    fn decleration(&mut self) -> Result<Vec<Node>, ParseError> {
+    fn vardef(&mut self) -> Result<Vec<Node>, ParseError> {
         let ty = self.typespec()?;
         let mut stmts = vec![];
         loop {
-            let _ty = self.ptr(ty.clone());
+            let mut _ty = self.ptr(ty.clone()); // "*"を数える
             let name = self.expect_ident()?;
+            if self.consume("[") {
+                let len = self.expect_num()? as usize;
+                _ty = Type::TyArray {
+                    ty: Box::new(_ty),
+                    len,
+                };
+                self.expect("]")?;
+            }
             // 初期化がなければ、コードには現れないので捨てられる
-            let lvar = Node::new_lvar(self.add_var(&name, _ty).unwrap());
-            if self.consume("=") {
-                stmts.push(Node::new_assign(lvar, self.expr()?));
+            let lvar = self.add_var(&name, _ty).unwrap();
+            if let Some(init) = self.initializer()? {
+                stmts.push(Node::new_assign(Node::new_lvar(lvar), init));
             }
             if !self.consume(",") {
                 self.expect(";")?; // コンマを見なかったら、セミコロンがあるはず
@@ -581,13 +594,25 @@ impl CodeGen for Parser {
         }
         Ok(stmts)
     }
+    fn initializer(&mut self) -> Result<Option<Node>, ParseError> {
+        let node = if self.consume("=") {
+            if self.peek("{") {
+                unimplemented!();
+            } else {
+                Some(self.expr()?)
+            }
+        } else {
+            None
+        };
+        Ok(node)
+    }
 
     fn compound_stmt(&mut self) -> Result<Vec<Node>, ParseError> {
         self.expect("{")?;
         let mut block = vec![];
         while !self.consume("}") {
             match self.head_str().as_deref() {
-                Some("int") => block.extend(self.decleration()?),
+                Some("int") => block.extend(self.vardef()?),
                 _ => block.push(self.stmt()?), // 途中に中括弧閉じがあっても、ここで消費されるはず
             };
         }
