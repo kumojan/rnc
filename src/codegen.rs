@@ -1,8 +1,10 @@
-use crate::parse::{Function, Node, NodeKind};
+use crate::parse::{Function, Node, NodeKind, Var};
+use std::rc::Rc;
 
 // 関数呼び出しのレジスタ 参考 https://en.wikipedia.org/wiki/X86_calling_conventions#x86-64_calling_conventions
 const ARGREG: [&'static str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
 const ARGLEN: usize = 6;
+const RESERVED_REGISTER_STACK_SIZE: usize = 32;
 
 #[derive(Debug, Default)]
 pub struct CodeGenError {
@@ -19,6 +21,8 @@ pub struct CodeGenError {
 struct CodeGenerator {
     label_count: usize,
     func_name: String,
+    var_offsets: Vec<usize>,
+    func_stack_size: usize,
 }
 fn gen_addr(offset: usize) {
     // println!("gen lval {:?}", &node);
@@ -47,13 +51,33 @@ fn store() {
     println!("  push rdi");
 }
 impl CodeGenerator {
+    fn set_var_offset(&mut self, lvars: &Vec<Rc<Var>>) {
+        // lvarsもvar_offsetもvar.idもあくまで出現順である
+        let var_num = lvars.len();
+        self.var_offsets = vec![0; var_num];
+        let mut offset = RESERVED_REGISTER_STACK_SIZE;
+        for i in (0..var_num).rev() {
+            offset += lvars[i].ty.size();
+            self.var_offsets[i] = offset;
+        }
+        // println!("{:?}", lvars);
+        // println!("{:?}", self.var_offsets);
+        // 以下、スタックサイズを16の倍数に揃える
+        self.func_stack_size = *self
+            .var_offsets
+            .first()
+            .unwrap_or(&RESERVED_REGISTER_STACK_SIZE)
+            - 1;
+        self.func_stack_size -= self.func_stack_size % 16;
+        self.func_stack_size += 16;
+    }
     fn gen(&mut self, node: &Node) -> Result<(), CodeGenError> {
         match node {
             Node::Num { val, .. } => {
                 println!("  push {}", val);
             }
             Node::Lvar { var } => {
-                gen_addr(var.offset); // まず変数のアドレスを取得する
+                gen_addr(self.var_offsets[var.id]); // まず変数のアドレスを取得する
                 load(); // そのアドレスを参照して値をpush
             }
             Node::Return { returns } => {
@@ -67,7 +91,7 @@ impl CodeGenerator {
             }
             Node::Addr { node } => {
                 if let Node::Lvar { var } = &**node {
-                    gen_addr(var.offset);
+                    gen_addr(self.var_offsets[var.id]);
                 } else {
                     return Err(CodeGenError {
                         msg: "invalid address expression!".to_owned(),
@@ -143,7 +167,7 @@ impl CodeGenerator {
                 println!("  #assign");
                 match &**lvar {
                     Node::Lvar { var } => {
-                        gen_addr(var.offset);
+                        gen_addr(self.var_offsets[var.id]);
                     }
                     Node::Deref { node } => {
                         self.gen(node)?;
@@ -206,24 +230,27 @@ pub fn code_gen(program: Vec<Function>) -> Result<(), CodeGenError> {
     println!(".intel_syntax noprefix");
     for func in program {
         cg.func_name = func.name;
+        cg.set_var_offset(&func.locals);
         println!(".globl {}", cg.func_name);
         println!("{}:", cg.func_name);
 
         println!("  push rbp"); // まず現在の関数のrbpをスタックにpush(戻る場所?)
         println!("  mov rbp, rsp"); // 次にrbpに現在のrspを入れる。rspは常にスタックの1番下を指していて、rbpもそこを指すようになる
-        println!("  sub rsp, {}", func.stack_size);
+        println!("  sub rsp, {}", cg.func_stack_size);
 
         println!("  mov [rbp-8], r12");
         println!("  mov [rbp-16], r13");
         println!("  mov [rbp-24], r14");
         println!("  mov [rbp-32], r15");
         // 以下レジスタに保存されていた引数がローカル変数に格納される
-        // 例えば int f(int a, int b, ...)となっていたら
-        //   mov [rbp-40], rdi
-        //   mov [rbp-48], rsi
+        // ただし、変数のオフセットは最初に出現したものが一番下になる
+        // 例えば offsetが全体で64で、関数がint f(int a, int b, ...)となっていたら
+        //   mov [rbp-64], rdi
+        //   mov [rbp-56], rsi
         // となる
+        // lvarsもvar_offsetもvar.idもあくまで出現順である
         for i in 0..func.params.len() {
-            println!("  mov [rbp-{}], {}", func.params[i].offset, ARGREG[i])
+            println!("  mov [rbp-{}], {}", cg.var_offsets[i], ARGREG[i])
         }
         for node in &func.body {
             cg.gen(node)?;

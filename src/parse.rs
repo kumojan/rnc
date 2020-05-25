@@ -8,13 +8,13 @@ const FUNC_STACK_SIZE: usize = 32;
 
 pub struct Var {
     name: String,
-    ty: Type,
-    pub offset: usize,
+    pub ty: Type,
+    pub id: usize,
 }
 
 impl fmt::Debug for Var {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?} {}", self.ty, self.name)
+        write!(f, "{:?} {}: {}", self.ty, self.name, self.id)
     }
 }
 
@@ -181,6 +181,11 @@ impl Node {
             rhs: Box::new(rhs),
         }
     }
+    fn new_expr_stmt(expr: Node) -> Self {
+        Self::ExprStmt {
+            expr: Box::new(expr),
+        }
+    }
     fn new_bin(kind: NodeKind, lhs: Node, rhs: Node) -> Self {
         Self::Bin {
             kind,
@@ -196,7 +201,7 @@ impl Node {
             (false, true) => Self::new_add(rhs, lhs),
             // ポインタ + 値 は値だけずれたポインタを返す(型はlhsなのでポインタになる)
             (true, false) => {
-                Self::new_bin(NdSub, lhs, Self::new_bin(NdMul, Node::Num { val: 8 }, rhs))
+                Self::new_bin(NdAdd, lhs, Self::new_bin(NdMul, Node::Num { val: 8 }, rhs))
             }
             (true, true) => unimplemented!(), // ポインタ同士の足し算は意味をなさない
         }
@@ -207,13 +212,11 @@ impl Node {
             (false, false) => Self::new_bin(NdSub, lhs, rhs),
             // ポインタ - 値
             (true, false) => {
-                Self::new_bin(NdAdd, lhs, Self::new_bin(NdMul, Node::Num { val: 8 }, rhs))
+                Self::new_bin(NdSub, lhs, Self::new_bin(NdMul, Node::Num { val: 8 }, rhs))
             }
             // ポインタ - ポインタ (ずれを返す int)
-            // 現状ではスタックはマイナス方向に伸びるので、-8で割る
-            // マイナスする代わりにlhs, rhsを入れ替えた
             (true, true) => {
-                Node::new_bin(NdDiv, Node::new_bin(NdSub, rhs, lhs), Node::Num { val: 8 })
+                Node::new_bin(NdDiv, Node::new_bin(NdSub, lhs, rhs), Node::Num { val: 8 })
             }
             // 値 - ポインタは意味をなさない
             (false, true) => unimplemented!(),
@@ -241,14 +244,12 @@ pub struct Function {
     pub body: Vec<Node>,
     pub params: Vec<Rc<Var>>,
     pub locals: Vec<Rc<Var>>,
-    pub stack_size: usize,
 }
 impl Function {
     fn new(
         ty: Type,
         name: String,
         body: Vec<Node>,
-        stack_size: usize,
         params: Vec<Rc<Var>>,
         locals: Vec<Rc<Var>>,
     ) -> Self {
@@ -256,7 +257,6 @@ impl Function {
             ty,
             name,
             body,
-            stack_size,
             params,
             locals,
         }
@@ -438,17 +438,10 @@ impl TokenReader for VecDeque<Token> {
 pub struct Parser {
     tklist: VecDeque<Token>,
     lvars: Vec<Rc<Var>>, // Node::Lvarと共有する。
-                         // global_functions: Vec<...>
 }
 impl Parser {
     fn pos(&self) -> usize {
         self.tklist[0].pos
-    }
-    fn offset(&self) -> usize {
-        self.lvars
-            .last()
-            .map(|v| v.offset)
-            .unwrap_or(FUNC_STACK_SIZE) // 非揮発性レジスタのためにまず32ビット確保する
     }
     pub fn new(tklist: VecDeque<Token>) -> Self {
         Self {
@@ -466,11 +459,10 @@ impl Parser {
             }
             return Ok(v.clone());
         } else {
-            let offset = self.offset() + ty.size();
             let var = Rc::new(Var {
                 name: name.clone(),
                 ty,
-                offset,
+                id: self.lvars.len(),
             });
             self.lvars.push(var.clone());
             return Ok(var);
@@ -557,7 +549,6 @@ impl CodeGen for Parser {
                     return_type,
                     name,
                     stmts,
-                    self.offset(),
                     params,
                     std::mem::replace(&mut self.lvars, vec![]),
                 ))
@@ -585,7 +576,10 @@ impl CodeGen for Parser {
             // 初期化がなければ、コードには現れないので捨てられる
             let lvar = self.add_var(&name, _ty).unwrap();
             if let Some(init) = self.initializer()? {
-                stmts.push(Node::new_assign(Node::new_lvar(lvar), init));
+                stmts.push(Node::new_expr_stmt(Node::new_assign(
+                    Node::new_lvar(lvar),
+                    init,
+                )));
             }
             if !self.consume(",") {
                 self.expect(";")?; // コンマを見なかったら、セミコロンがあるはず
