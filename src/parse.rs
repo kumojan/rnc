@@ -150,12 +150,7 @@ impl Node {
             else_: else_.map(Box::new),
         }
     }
-    fn new_return(returns: Node) -> Self {
-        Self::Return {
-            returns: Box::new(returns),
-        }
-    }
-    fn new_unary(node: Node, t: &str) -> Self {
+    fn new_unary(t: &str, node: Node) -> Self {
         match t {
             "return" => Self::Return {
                 returns: Box::new(node),
@@ -165,6 +160,9 @@ impl Node {
             },
             "deref" => Self::Deref {
                 node: Box::new(node),
+            },
+            "expr_stmt" => Self::ExprStmt {
+                expr: Box::new(node),
             },
             _ => unimplemented!(),
         }
@@ -211,11 +209,21 @@ impl Node {
             (false, false) => Self::new_bin(NdSub, lhs, rhs),
             // ポインタ - 値
             (true, false) => {
-                Self::new_bin(NdSub, lhs, Self::new_bin(NdMul, Node::Num { val: 8 }, rhs))
+                let ty_size = lhs.get_type().get_base().unwrap().size() as u32;
+                Self::new_bin(
+                    NdSub,
+                    lhs,
+                    Self::new_bin(NdMul, rhs, Node::new_num(ty_size)),
+                )
             }
             // ポインタ - ポインタ (ずれを返す int)
             (true, true) => {
-                Node::new_bin(NdDiv, Node::new_bin(NdSub, lhs, rhs), Node::Num { val: 8 })
+                let ty_size = lhs.get_type().get_base().unwrap().size() as u32;
+                Node::new_bin(
+                    NdDiv,
+                    Node::new_bin(NdSub, lhs, rhs),
+                    Node::new_num(ty_size),
+                )
             }
             // 値 - ポインタは意味をなさない
             (false, true) => unimplemented!(),
@@ -314,7 +322,7 @@ pub trait TokenReader {
 /// unary = ("+" | "-" | "*" | "&") unary
 ///       | postfix
 /// postfix = primary ("[" expr "]")*
-/// primary = num | ident ("(" ")")? | "(" expr ")"
+/// primary = num | ident ("(" (expr ("," expr )*)? ")")? | "(" expr ")" | "sizeof" unary
 ///
 pub trait CodeGen {
     fn program(&mut self) -> Result<Vec<Function>, ParseError>;
@@ -651,7 +659,7 @@ impl CodeGen for Parser {
             let loop_ = self.stmt()?;
             Node::new_for(start, condi, end, loop_)
         } else if self.consume("return") {
-            Node::new_return(read_until(self, ";")?)
+            Node::new_unary("return", read_until(self, ";")?)
         } else {
             Node::ExprStmt {
                 expr: Box::new(read_until(self, ";")?),
@@ -664,7 +672,6 @@ impl CodeGen for Parser {
     }
     fn assign(&mut self) -> Result<Node, ParseError> {
         let mut node = self.equality()?;
-        // "="が見えた場合は代入文にする。
         if self.consume("=") {
             node = Node::new_assign(node, self.assign()?);
         }
@@ -720,8 +727,8 @@ impl CodeGen for Parser {
                 Node::new_num(0),
                 self.shift().unary()?,
             )),
-            Some("&") => Ok(Node::new_unary(self.shift().unary()?, "addr")),
-            Some("*") => Ok(Node::new_unary(self.shift().unary()?, "deref")),
+            Some("&") => Ok(Node::new_unary("addr", self.shift().unary()?)),
+            Some("*") => Ok(Node::new_unary("deref", self.shift().unary()?)),
             _ => self.postfix(),
         }
     }
@@ -729,7 +736,7 @@ impl CodeGen for Parser {
         let mut node = self.primary()?;
         // x[y] は *(x+y)に同じ
         while self.consume("[") {
-            node = Node::new_unary(Node::new_add(node, self.expr()?), "deref");
+            node = Node::new_unary("deref", Node::new_add(node, self.expr()?));
             self.expect("]")?;
         }
         Ok(node)
@@ -740,6 +747,11 @@ impl CodeGen for Parser {
             self.expect(")").map(|_| node)?
         } else if let Some(val) = self.consume_num() {
             Ok(Node::new_num(val))
+        } else if self.consume("sizeof") {
+            // このnodeは型のサイズを取得するためのみに使われ、
+            // 実際には評価されない
+            let node = self.unary()?;
+            Ok(Node::new_num(node.get_type().size() as u32))
         } else {
             let name = self.expect_ident()?;
             // 関数呼び出し
