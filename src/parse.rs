@@ -4,8 +4,6 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::rc::Rc;
 
-const FUNC_STACK_SIZE: usize = 32;
-
 pub struct Var {
     name: String,
     pub ty: Type,
@@ -52,7 +50,7 @@ pub enum Node {
     Num {
         val: u32,
     },
-    Lvar {
+    Var {
         var: Rc<Var>,
     },
     Addr {
@@ -89,10 +87,6 @@ pub enum Node {
         then_: Box<Node>,
         else_: Option<Box<Node>>,
     },
-    While {
-        condi: Box<Node>,
-        then_: Box<Node>,
-    },
     For {
         start: Option<Box<Node>>,
         condi: Option<Box<Node>>,
@@ -104,13 +98,12 @@ impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Node::Num { val } => write!(f, "Num {}", val),
-            Node::Lvar { var } => write!(f, "{:?}", var),
+            Node::Var { var } => write!(f, "{:?}", var),
             Node::Return { .. } => write!(f, "return"),
             Node::ExprStmt { .. } => write!(f, "expr stmt"),
             Node::Bin { kind, .. } => write!(f, "Bin {:?}", kind),
             Node::Assign { .. } => write!(f, "assign"),
             Node::If { .. } => write!(f, "If"),
-            Node::While { .. } => write!(f, "while"),
             Node::For { .. } => write!(f, "for"),
             Node::Block { stmts } => stmts.iter().map(|s| write!(f, "{:?} ", s)).collect(),
             Node::FunCall { name, .. } => write!(f, "function {}", name),
@@ -123,11 +116,12 @@ impl Node {
     pub fn get_type(&self) -> Type {
         match self {
             Self::Num { .. } => Type::TyInt,
-            Self::Lvar { var } => var.ty.clone(),
+            Self::Var { var } => var.ty.clone(),
             Self::Addr { node } => node.get_type().to_ptr(),
             Self::Deref { node } => {
-                if node.get_type().is_ptr() {
-                    node.get_type().deref().unwrap()
+                let _ty = node.get_type();
+                if _ty.is_ptr_like() {
+                    _ty.get_base().unwrap()
                 } else {
                     panic!("invalid dereference!")
                 }
@@ -147,7 +141,7 @@ impl Node {
         Self::Num { val }
     }
     fn new_lvar(var: Rc<Var>) -> Self {
-        Self::Lvar { var }
+        Self::Var { var }
     }
     fn new_if(condi: Node, then_: Node, else_: Option<Node>) -> Self {
         Self::If {
@@ -194,20 +188,25 @@ impl Node {
         }
     }
     fn new_add(lhs: Node, rhs: Node) -> Self {
-        match (lhs.get_type().is_ptr(), rhs.get_type().is_ptr()) {
+        match (lhs.get_type().is_ptr_like(), rhs.get_type().is_ptr_like()) {
             // 値 + 値
             (false, false) => Self::new_bin(NdAdd, lhs, rhs),
             // 値+ポインタ => ポインタ+値と見なす
             (false, true) => Self::new_add(rhs, lhs),
             // ポインタ + 値 は値だけずれたポインタを返す(型はlhsなのでポインタになる)
             (true, false) => {
-                Self::new_bin(NdAdd, lhs, Self::new_bin(NdMul, Node::Num { val: 8 }, rhs))
+                let ty_size = lhs.get_type().get_base().unwrap().size() as u32;
+                Self::new_bin(
+                    NdAdd,
+                    lhs,
+                    Self::new_bin(NdMul, Node::new_num(ty_size), rhs),
+                )
             }
             (true, true) => unimplemented!(), // ポインタ同士の足し算は意味をなさない
         }
     }
     fn new_sub(lhs: Node, rhs: Node) -> Self {
-        match (lhs.get_type().is_ptr(), rhs.get_type().is_ptr()) {
+        match (lhs.get_type().is_ptr_like(), rhs.get_type().is_ptr_like()) {
             // 値 - 値
             (false, false) => Self::new_bin(NdSub, lhs, rhs),
             // ポインタ - 値
@@ -220,12 +219,6 @@ impl Node {
             }
             // 値 - ポインタは意味をなさない
             (false, true) => unimplemented!(),
-        }
-    }
-    fn new_while(condi: Node, then_: Node) -> Self {
-        Self::While {
-            condi: Box::new(condi),
-            then_: Box::new(then_),
         }
     }
     fn new_for(start: Option<Node>, condi: Option<Node>, end: Option<Node>, loop_: Node) -> Self {
@@ -437,7 +430,7 @@ impl TokenReader for VecDeque<Token> {
 
 pub struct Parser {
     tklist: VecDeque<Token>,
-    lvars: Vec<Rc<Var>>, // Node::Lvarと共有する。
+    lvars: Vec<Rc<Var>>, // Node::Varと共有する。
 }
 impl Parser {
     fn pos(&self) -> usize {
@@ -565,13 +558,13 @@ impl CodeGen for Parser {
         loop {
             let mut _ty = self.ptr(ty.clone()); // "*"を数える
             let name = self.expect_ident()?;
-            if self.consume("[") {
-                let len = self.expect_num()? as usize;
-                _ty = Type::TyArray {
-                    ty: Box::new(_ty),
-                    len,
-                };
+            let mut array_dims = vec![];
+            while self.consume("[") {
+                array_dims.push(self.expect_num()? as usize);
                 self.expect("]")?;
+            }
+            while let Some(len) = array_dims.pop() {
+                _ty = _ty.to_array(len);
             }
             // 初期化がなければ、コードには現れないので捨てられる
             let lvar = self.add_var(&name, _ty).unwrap();
@@ -636,7 +629,7 @@ impl CodeGen for Parser {
             Node::new_if(condi, then_, else_)
         } else if self.consume("while") {
             self.expect("(")?;
-            Node::new_while(read_until(self, ")")?, self.stmt()?)
+            Node::new_for(None, Some(read_until(self, ")")?), None, self.stmt()?)
         } else if self.consume("for") {
             self.expect("(")?;
             let mut maybe_null_expr = |s: &str| {
@@ -648,9 +641,9 @@ impl CodeGen for Parser {
                     n
                 })
             };
-            let start = maybe_null_expr(";")?;
+            let start = maybe_null_expr(";")?.map(Node::new_expr_stmt);
             let condi = maybe_null_expr(";")?;
-            let end = maybe_null_expr(")")?;
+            let end = maybe_null_expr(")")?.map(Node::new_expr_stmt);
             let loop_ = self.stmt()?;
             Node::new_for(start, condi, end, loop_)
         } else if self.consume("return") {

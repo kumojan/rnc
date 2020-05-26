@@ -11,7 +11,7 @@ pub struct TypeError {
 pub enum Type {
     TyInt,
     TyPtr(Box<Type>),
-    TyArray { ty: Box<Type>, len: usize },
+    TyArray { base: Box<Type>, len: usize },
     TyFunction { arg: Box<Vec<Type>>, ret: Box<Type> },
 }
 impl fmt::Debug for Type {
@@ -19,7 +19,7 @@ impl fmt::Debug for Type {
         match self {
             Type::TyInt => write!(f, "int"),
             Type::TyPtr(ty) => write!(f, "*{:?}", ty),
-            Type::TyArray { ty, len } => write!(f, "{:?}[{}]", ty, len),
+            Type::TyArray { base, len } => write!(f, "[{}]{:?}", len, base),
             _ => write!(f, "function"),
         }
     }
@@ -31,8 +31,23 @@ impl Type {
             _ => false,
         }
     }
+    pub fn is_ptr_like(&self) -> bool {
+        self.is_ptr() || self.is_array()
+    }
+    pub fn is_array(&self) -> bool {
+        match self {
+            Type::TyArray { .. } => true,
+            _ => false,
+        }
+    }
     pub fn to_ptr(&self) -> Self {
         Type::TyPtr(Box::new(self.clone()))
+    }
+    pub fn to_array(&self, len: usize) -> Self {
+        Type::TyArray {
+            len,
+            base: Box::new(self.clone()),
+        }
     }
     pub fn to_ptr_recursive(&self, depth: u8) -> Self {
         let mut ty = self.clone();
@@ -41,9 +56,10 @@ impl Type {
         }
         ty
     }
-    pub fn deref(&self) -> Result<Self, TypeError> {
+    pub fn get_base(&self) -> Result<Self, TypeError> {
         match self {
-            Type::TyPtr(ty) => Ok(*ty.clone()),
+            Type::TyPtr(base) => Ok(*base.clone()),
+            Type::TyArray { base, .. } => Ok(*base.clone()),
             _ => Err(TypeError {
                 msg: "cannot dereference".to_owned(),
             }),
@@ -53,7 +69,7 @@ impl Type {
         match self {
             Type::TyInt => 8,
             Type::TyPtr(..) => 8,
-            Type::TyArray { ty, len } => ty.size() * len,
+            Type::TyArray { base, len } => base.size() * len,
             _ => unimplemented!(),
         }
     }

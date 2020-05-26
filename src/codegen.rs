@@ -1,4 +1,5 @@
 use crate::parse::{Function, Node, NodeKind, Var};
+use crate::r#type::Type;
 use std::rc::Rc;
 
 // 関数呼び出しのレジスタ 参考 https://en.wikipedia.org/wiki/X86_calling_conventions#x86-64_calling_conventions
@@ -36,7 +37,10 @@ fn gen_addr(offset: usize) {
     println!("  lea rax, [rbp-{}]", offset);
     println!("  push rax");
 }
-fn load() {
+fn load(ty: &Type) {
+    if ty.is_array() {
+        return;
+    }
     // アドレスを取り出し、値を取得してpushし直す
     println!("  pop rax  #load");
     println!("  mov rax, [rax]");
@@ -71,120 +75,54 @@ impl CodeGenerator {
         self.func_stack_size -= self.func_stack_size % 16;
         self.func_stack_size += 16;
     }
-    fn gen(&mut self, node: &Node) -> Result<(), CodeGenError> {
+    fn gen_expr(&mut self, node: &Node) -> Result<(), CodeGenError> {
         match node {
             Node::Num { val, .. } => {
                 println!("  push {}", val);
             }
-            Node::Lvar { var } => {
+            Node::Var { var } => {
                 gen_addr(self.var_offsets[var.id]); // まず変数のアドレスを取得する
-                load(); // そのアドレスを参照して値をpush
+                load(&var.ty); // 配列型の場合は、値を取り出さず、アドレスをそのまま使う
             }
-            Node::Return { returns } => {
-                self.gen(returns)?; // その値を取得し
-                println!("  pop rax"); // raxに移す
-                println!("  jmp .L.return.{}", self.func_name);
-            }
-            Node::ExprStmt { expr } => {
-                self.gen(expr)?;
-                println!("  pop rax"); // 最後に評価した値を捨てる
-            }
-            Node::Addr { node } => {
-                if let Node::Lvar { var } = &**node {
-                    gen_addr(self.var_offsets[var.id]);
-                } else {
+            Node::Addr { node } => match &**node {
+                Node::Var { var } => gen_addr(self.var_offsets[var.id]),
+                Node::Deref { node } => self.gen_expr(node)?, // &*はスキップする
+                _ => {
                     return Err(CodeGenError {
                         msg: "invalid address expression!".to_owned(),
-                    });
+                    })
                 }
-            }
+            },
             Node::Deref { node } => {
-                self.gen(node)?;
-                load();
-            }
-            Node::If {
-                condi,
-                then_,
-                else_,
-            } => {
-                // 左辺を計算して結果をpush
-                self.gen(condi)?;
-                // condi結果取り出し
-                println!("  pop rax");
-                println!("  cmp rax, 0");
-                // 結果がfalseならjump, trueならそのまま
-                println!("  je .L.else.{}", self.label_count);
-                if let Some(else_) = else_ {
-                    // trueの場合
-                    self.gen(then_)?;
-                    println!("  jmp .L.end.{}", self.label_count);
-                    println!(".L.else.{}:", self.label_count);
-                    // falseの場合
-                    self.gen(else_)?; // こっちはjmp不要(次の行の.L1にそのまますすむ)
-                    println!(".L.end.{}:", self.label_count);
-                } else {
-                    self.gen(then_)?;
-                    println!(".L.else.{}:", self.label_count);
-                }
-                self.label_count += 1;
-            }
-            Node::While { condi, then_ } => {
-                println!(".L.begin.{}:", self.label_count);
-                self.gen(condi)?;
-                println!("  pop rax");
-                println!("  cmp rax, 0");
-                println!("  je .L.end.{}", self.label_count);
-                self.gen(then_)?;
-                println!("  jmp .L.begin.{}", self.label_count);
-                println!(".L.end.{}:", self.label_count);
-                self.label_count += 1;
-            }
-            Node::For {
-                start,
-                condi,
-                end,
-                loop_,
-            } => {
-                if let Some(start) = start {
-                    self.gen(start)?;
-                }
-                println!(".L.begin.{}:", self.label_count);
-                if let Some(condi) = condi {
-                    self.gen(condi)?;
-                    println!("  pop rax");
-                    println!("  cmp rax, 0");
-                    println!("  je .L.end.{}", self.label_count);
-                }
-                self.gen(loop_)?;
-                if let Some(end) = end {
-                    self.gen(end)?;
-                }
-                println!("  jmp .L.begin.{}", self.label_count);
-                println!(".L.end.{}:", self.label_count);
-                self.label_count += 1;
+                // **x(2段回)だと、gen(x); load(); load();
+                // となる。つまりxの結果(xが変数ならば、その値)を取得し、
+                // それをアドレスとして値を取得、
+                // さらにそれをアドレスとして値を取得、となる
+                self.gen_expr(node)?;
+                // 元々の型(このnodeをderefした結果)がarrayなら、やはりアドレス(評価結果)をそのまま使う
+                // それ以外なら値を取得する
+                // TODO: 型エラーの処理
+                load(&node.get_type().get_base().unwrap());
             }
             Node::Assign { lvar, rhs, .. } => {
                 println!("  #assign");
                 match &**lvar {
-                    Node::Lvar { var } => {
+                    Node::Var { var } => {
                         gen_addr(self.var_offsets[var.id]);
                     }
                     Node::Deref { node } => {
-                        self.gen(node)?;
+                        self.gen_expr(node)?;
                     }
                     _ => {
                         return Err(CodeGenError {
-                            msg: format!("lhs of assignment must be var or deref!"),
+                            msg: format!(
+                                "lhs of assignment must be var or deref (of some pointer)!"
+                            ),
                         });
                     }
                 }
-                self.gen(rhs)?;
+                self.gen_expr(rhs)?;
                 store();
-            }
-            Node::Block { stmts } => {
-                for stmt in &**stmts {
-                    self.gen(stmt)?;
-                }
             }
             Node::FunCall { name, args } => {
                 if args.len() > ARGLEN {
@@ -193,7 +131,7 @@ impl CodeGenerator {
                     });
                 }
                 for arg in &**args {
-                    self.gen(arg)?;
+                    self.gen_expr(arg)?;
                 }
                 for i in (0..args.len()).rev() {
                     println!("  pop {}", ARGREG[i])
@@ -202,8 +140,8 @@ impl CodeGenerator {
                 println!("  push rax"); // 関数終了時にreturnの値がraxに入っている。
             }
             Node::Bin { kind, lhs, rhs } => {
-                self.gen(lhs)?;
-                self.gen(rhs)?;
+                self.gen_expr(lhs)?;
+                self.gen_expr(rhs)?;
                 println!("  pop rdi");
                 println!("  pop rax");
                 let code = match kind {
@@ -218,6 +156,85 @@ impl CodeGenerator {
                 };
                 println!("{}", code);
                 println!("  push rax")
+            }
+            _ => {
+                return Err(CodeGenError {
+                    msg: "invalid expression!".to_owned(),
+                })
+            }
+        }
+        Ok(())
+    }
+    fn gen_stmt(&mut self, node: &Node) -> Result<(), CodeGenError> {
+        match node {
+            Node::Return { returns } => {
+                self.gen_expr(returns)?; // その値を取得し
+                println!("  pop rax"); // raxに移す
+                println!("  jmp .L.return.{}", self.func_name);
+            }
+            Node::Block { stmts } => {
+                for stmt in &**stmts {
+                    self.gen_stmt(stmt)?;
+                }
+            }
+            Node::ExprStmt { expr } => {
+                self.gen_expr(expr)?;
+                println!("  pop rax"); // 最後に評価した値を捨てる
+            }
+            Node::If {
+                condi,
+                then_,
+                else_,
+            } => {
+                // 左辺を計算して結果をpush
+                self.gen_expr(condi)?;
+                // condi結果取り出し
+                println!("  pop rax");
+                println!("  cmp rax, 0");
+                // 結果がfalseならjump, trueならそのまま
+                println!("  je .L.else.{}", self.label_count);
+                if let Some(else_) = else_ {
+                    // trueの場合
+                    self.gen_stmt(then_)?;
+                    println!("  jmp .L.end.{}", self.label_count);
+                    println!(".L.else.{}:", self.label_count);
+                    // falseの場合
+                    self.gen_stmt(else_)?; // こっちはjmp不要(次の行の.L1にそのまますすむ)
+                    println!(".L.end.{}:", self.label_count);
+                } else {
+                    self.gen_stmt(then_)?;
+                    println!(".L.else.{}:", self.label_count);
+                }
+                self.label_count += 1;
+            }
+            Node::For {
+                start,
+                condi,
+                end,
+                loop_,
+            } => {
+                if let Some(start) = start {
+                    self.gen_stmt(start)?;
+                }
+                println!(".L.begin.{}:", self.label_count);
+                if let Some(condi) = condi {
+                    self.gen_expr(condi)?;
+                    println!("  pop rax");
+                    println!("  cmp rax, 0");
+                    println!("  je .L.end.{}", self.label_count);
+                }
+                self.gen_stmt(loop_)?;
+                if let Some(end) = end {
+                    self.gen_stmt(end)?;
+                }
+                println!("  jmp .L.begin.{}", self.label_count);
+                println!(".L.end.{}:", self.label_count);
+                self.label_count += 1;
+            }
+            _ => {
+                return Err(CodeGenError {
+                    msg: "invalid expression!".to_owned(),
+                })
             }
         }
         Ok(())
@@ -253,7 +270,7 @@ pub fn code_gen(program: Vec<Function>) -> Result<(), CodeGenError> {
             println!("  mov [rbp-{}], {}", cg.var_offsets[i], ARGREG[i])
         }
         for node in &func.body {
-            cg.gen(node)?;
+            cg.gen_stmt(node)?;
         }
         println!(".L.return.{}:", cg.func_name);
         println!("  mov [rbp-8], r12");
@@ -304,7 +321,7 @@ pub fn graph_gen(node: &Node, parent: Option<&String>, number: usize) -> String 
     }
     match node {
         Node::Num { val } => s += &format!("{} [label=\"num {}\"];\n", nodename, val),
-        Node::Lvar { var } => s += &format!("{} [label=\"{:?}\"];\n", nodename, var),
+        Node::Var { var } => s += &format!("{} [label=\"{:?}\"];\n", nodename, var),
         Node::Bin { kind, lhs, rhs } => {
             s += &format!("{} [label=\"{:?}\"];\n", nodename, kind);
             s += &graph_gen(lhs, Some(&nodename), 0);
@@ -342,11 +359,6 @@ pub fn graph_gen(node: &Node, parent: Option<&String>, number: usize) -> String 
             if let Some(n) = else_ {
                 s += &graph_gen(n, Some(&nodename), 2);
             }
-        }
-        Node::While { condi, then_ } => {
-            s += &format!("{} [label=\"while\"];\n", nodename);
-            s += &graph_gen(condi, Some(&nodename), 0);
-            s += &graph_gen(then_, Some(&nodename), 1);
         }
         Node::For {
             start,
