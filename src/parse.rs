@@ -311,6 +311,9 @@ pub trait TokenReader {
 /// relational = add (("<" | "<=" | ">" | ">=") add)*
 /// add = mul (("+" | "-") mul)*
 /// mul = primary (("*" | "/") primary)*
+/// unary = ("+" | "-" | "*" | "&") unary
+///       | postfix
+/// postfix = primary ("[" expr "]")*
 /// primary = num | ident ("(" ")")? | "(" expr ")"
 ///
 pub trait CodeGen {
@@ -327,6 +330,7 @@ pub trait CodeGen {
     fn add(&mut self) -> Result<Node, ParseError>;
     fn mul(&mut self) -> Result<Node, ParseError>;
     fn unary(&mut self) -> Result<Node, ParseError>;
+    fn postfix(&mut self) -> Result<Node, ParseError>;
     fn primary(&mut self) -> Result<Node, ParseError>;
 }
 
@@ -718,8 +722,17 @@ impl CodeGen for Parser {
             )),
             Some("&") => Ok(Node::new_unary(self.shift().unary()?, "addr")),
             Some("*") => Ok(Node::new_unary(self.shift().unary()?, "deref")),
-            _ => self.primary(),
+            _ => self.postfix(),
         }
+    }
+    fn postfix(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.primary()?;
+        // x[y] は *(x+y)に同じ
+        while self.consume("[") {
+            node = Node::new_unary(Node::new_add(node, self.expr()?), "deref");
+            self.expect("]")?;
+        }
+        Ok(node)
     }
     fn primary(&mut self) -> Result<Node, ParseError> {
         if self.consume("(") {

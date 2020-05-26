@@ -64,8 +64,6 @@ impl CodeGenerator {
             offset += lvars[i].ty.size();
             self.var_offsets[i] = offset;
         }
-        // println!("{:?}", lvars);
-        // println!("{:?}", self.var_offsets);
         // 以下、スタックサイズを16の倍数に揃える
         self.func_stack_size = *self
             .var_offsets
