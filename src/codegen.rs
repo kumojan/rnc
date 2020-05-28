@@ -308,52 +308,50 @@ fillcolor = \"green\",
     for func in program {
         for (i, node) in func.body.iter().enumerate() {
             f.write(format!("{} [label=\"func {}\"]\n", func.name, func.name).as_bytes())?;
-            f.write(graph_gen(node, Some(&func.name), i).as_bytes())?;
+            f.write(graph_gen(node, &func.name, i, None).as_bytes())?;
         }
     }
 
     f.write(b"}\n")?;
     Ok(())
 }
-pub fn graph_gen(node: &Node, parent: Option<&String>, number: usize) -> String {
+pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str>) -> String {
+    if let Node::ExprStmt { expr } = node {
+        return graph_gen(expr, &parent, number, Some("stmt"));
+    }
     // 親が指定されているとき、そこから自分への辺を引く
     let mut s = String::new();
-    let nodename = if let Some(pname) = parent {
-        format!("{}{}", pname, number)
+    let nodename = format!("{}{}", parent, number);
+    if let Some(arrow) = arrow {
+        s += &format!("{} -> {} [label=\"{}\"]\n", parent, nodename, arrow);
     } else {
-        format!("{}", number)
-    };
-    if let Some(pname) = parent {
-        s += &format!("{} -> {}\n", pname, nodename);
+        s += &format!("{} -> {}\n", parent, nodename);
     }
     match node {
         Node::Num { val } => s += &format!("{} [label=\"num {}\"];\n", nodename, val),
         Node::Var { var } => s += &format!("{} [label=\"{:?}\"];\n", nodename, var),
         Node::Bin { kind, lhs, rhs } => {
             s += &format!("{} [label=\"{:?}\"];\n", nodename, kind);
-            s += &graph_gen(lhs, Some(&nodename), 0);
-            s += &graph_gen(rhs, Some(&nodename), 1);
+            s += &graph_gen(lhs, &nodename, 0, None);
+            s += &graph_gen(rhs, &nodename, 1, None);
         }
         Node::Assign { lvar, rhs } => {
             s += &format!("{} [label=\"assign\"];\n", nodename);
-            s += &graph_gen(lvar, Some(&nodename), 0);
-            s += &graph_gen(rhs, Some(&nodename), 1);
+            s += &graph_gen(lvar, &nodename, 0, None);
+            s += &graph_gen(rhs, &nodename, 1, None);
         }
         Node::Return { returns } => {
             s += &format!("{} [label=\"return\"];\n", nodename);
-            s += &graph_gen(returns, Some(&nodename), 0);
+            s += &graph_gen(returns, &nodename, number, None);
         }
-        Node::ExprStmt { expr } => {
-            s += &format!("{} [label=\"statement\"];\n", nodename);
-            s += &graph_gen(expr, Some(&nodename), 0);
-        }
+        Node::ExprStmt { .. } => panic!(),
         Node::Addr { node } => {
             s += &format!("{} [label=\"addr\"];\n", nodename);
-            s += &graph_gen(node, Some(&nodename), 0);
+            s += &graph_gen(node, &nodename, 0, None);
         }
         Node::Deref { node } => {
             s += &format!("{} [label=\"deref\"];\n", nodename);
-            s += &graph_gen(node, Some(&nodename), 0);
+            s += &graph_gen(node, &nodename, 0, None);
         }
         Node::If {
             condi,
@@ -361,10 +359,10 @@ pub fn graph_gen(node: &Node, parent: Option<&String>, number: usize) -> String 
             else_,
         } => {
             s += &format!("{} [label=\"if\"];\n", nodename);
-            s += &graph_gen(condi, Some(&nodename), 0);
-            s += &graph_gen(then_, Some(&nodename), 1);
+            s += &graph_gen(condi, &nodename, 0, Some("condi"));
+            s += &graph_gen(then_, &nodename, 1, Some("then"));
             if let Some(n) = else_ {
-                s += &graph_gen(n, Some(&nodename), 2);
+                s += &graph_gen(n, &nodename, 2, Some("else"));
             }
         }
         Node::For {
@@ -375,26 +373,26 @@ pub fn graph_gen(node: &Node, parent: Option<&String>, number: usize) -> String 
         } => {
             s += &format!("{} [label=\"for\"];\n", nodename);
             if let Some(n) = start {
-                s += &graph_gen(n, Some(&nodename), 0);
+                s += &graph_gen(n, &nodename, 0, Some("init"));
             }
             if let Some(n) = condi {
-                s += &graph_gen(n, Some(&nodename), 1);
+                s += &graph_gen(n, &nodename, 1, Some("condi"));
             }
             if let Some(n) = end {
-                s += &graph_gen(n, Some(&nodename), 2);
+                s += &graph_gen(n, &nodename, 2, Some("end"));
             }
-            s += &graph_gen(loop_, Some(&nodename), 3);
+            s += &graph_gen(loop_, &nodename, 3, Some("loop"));
         }
         Node::Block { stmts } => {
             s += &format!("{} [label=\"block\"];\n", nodename);
             for (i, stmt) in stmts.iter().enumerate() {
-                s += &graph_gen(stmt, Some(&nodename), i);
+                s += &graph_gen(stmt, &nodename, i, None);
             }
         }
         Node::FunCall { name, args } => {
             s += &format!("{} [label=\"func call {}\"];\n", nodename, name);
             for (i, arg) in args.iter().enumerate() {
-                s += &graph_gen(arg, Some(&nodename), i);
+                s += &graph_gen(arg, &nodename, i, Some("args"));
             }
         }
     }

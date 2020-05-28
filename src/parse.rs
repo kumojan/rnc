@@ -5,14 +5,19 @@ use std::fmt;
 use std::rc::Rc;
 
 pub struct Var {
-    name: String,
+    pub name: String,
     pub ty: Type,
     pub id: usize,
+    pub is_local: bool,
 }
 
 impl fmt::Debug for Var {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?} {}: {}", self.ty, self.name, self.id)
+        if self.is_local {
+            write!(f, "{:?} {}: {}", self.ty, self.name, self.id)
+        } else {
+            write!(f, "gvar {:?} {}", self.ty, self.name)
+        }
     }
 }
 
