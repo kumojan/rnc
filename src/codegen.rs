@@ -25,18 +25,6 @@ struct CodeGenerator {
     var_offsets: Vec<usize>,
     func_stack_size: usize,
 }
-fn gen_addr(offset: usize) {
-    // println!("gen lval {:?}", &node);
-    // rbpは関数の先頭アドレス
-    // そこからoffset分引くと、目的の変数のアドレスを得る
-    // それをpush
-    // 普通movとかは
-    // 要するに、gen(node)が結果の値をpushするのに対し、
-    // gen_addrはoffsetにあるアドレスをpushする
-    // 代入する場合と値を用いる場合で、その後の扱いを変えること
-    println!("  lea rax, [rbp-{}]", offset);
-    println!("  push rax");
-}
 fn load(ty: &Type) {
     if ty.is_array() {
         return;
@@ -55,6 +43,22 @@ fn store() {
     println!("  push rdi");
 }
 impl CodeGenerator {
+    fn gen_addr(&self, v: &Rc<Var>) {
+        // println!("gen lval {:?}", &node);
+        // rbpは関数の先頭アドレス
+        // そこからoffset分引くと、目的の変数のアドレスを得る
+        // それをpush
+        // 普通movとかは
+        // 要するに、gen(node)が結果の値をpushするのに対し、
+        // gen_addrはoffsetにあるアドレスをpushする
+        // 代入する場合と値を用いる場合で、その後の扱いを変えること
+        if v.is_local {
+            println!("  lea rax, [rbp-{}]", self.var_offsets[v.id]);
+            println!("  push rax");
+        } else {
+            println!("  push offset {}", v.name);
+        }
+    }
     fn set_var_offset(&mut self, lvars: &Vec<Rc<Var>>) {
         // lvarsもvar_offsetもvar.idもあくまで出現順である
         let var_num = lvars.len();
@@ -79,11 +83,11 @@ impl CodeGenerator {
                 println!("  push {}", val);
             }
             Node::Var { var } => {
-                gen_addr(self.var_offsets[var.id]); // まず変数のアドレスを取得する
+                self.gen_addr(var); // まず変数のアドレスを取得する
                 load(&var.ty); // 配列型の場合は、値を取り出さず、アドレスをそのまま使う
             }
             Node::Addr { node } => match &**node {
-                Node::Var { var } => gen_addr(self.var_offsets[var.id]),
+                Node::Var { var } => self.gen_addr(var),
                 Node::Deref { node } => self.gen_expr(node)?, // &*はスキップする
                 _ => {
                     return Err(CodeGenError {
@@ -106,7 +110,7 @@ impl CodeGenerator {
                 println!("  #assign");
                 match &**lvar {
                     Node::Var { var } => {
-                        gen_addr(self.var_offsets[var.id]);
+                        self.gen_addr(var);
                     }
                     Node::Deref { node } => {
                         self.gen_expr(node)?;
@@ -238,11 +242,16 @@ impl CodeGenerator {
         Ok(())
     }
 }
-pub fn code_gen(program: Vec<Function>) -> Result<(), CodeGenError> {
-    // まず現在の関数のrbpをスタックにpush(戻る場所)、次に現在のrsp(スタックポインタ)の値をrbpに格納し、rspを使用する変数分ずらす
-
+pub fn code_gen(program: Vec<Function>, globals: Vec<Rc<Var>>) -> Result<(), CodeGenError> {
     let mut cg = CodeGenerator::default();
     println!(".intel_syntax noprefix");
+
+    println!(".data");
+    for v in &globals {
+        println!("{}:", v.name);
+        println!("  .zero {}", v.ty.size());
+    }
+    println!(".text");
     for func in program {
         cg.func_name = func.name;
         cg.set_var_offset(&func.locals);

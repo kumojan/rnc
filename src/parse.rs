@@ -297,14 +297,14 @@ pub trait TokenReader {
     fn raise_err(&self, msg: &str) -> ParseError;
 }
 ///
-/// program = function*
-/// function = funcdef = typespec ptr ident args "{" compound_stmt "}"
+/// program = (funcdef | global-var)*
+/// funcdef = typespec ptr ident funcargs "{" compound_stmt "}"
 /// typespec = "int"
 /// ptr = "*"*
-/// args = "(" typespec ptr ident ( "," typespec ptr ident)? ")"
+/// funcargs = "(" typespec ptr ident ( "," typespec ptr ident)? ")"
 /// compound_stmt = (vardef | stmt)*
 /// vardef = typespec declarator ("," declarator)*;
-/// declarator = ptr ident ("[" num "]")? initializer?
+/// declarator = ptr ident ("[" num "]")* initializer
 /// initializer = "=" (expr | array_init)
 /// array_init = "{" num ("," num)?"}"
 /// stmt = expr ";"  // expression statement (値を残さない)
@@ -325,8 +325,11 @@ pub trait TokenReader {
 /// primary = num | ident ("(" (expr ("," expr )*)? ")")? | "(" expr ")" | "sizeof" unary
 ///
 pub trait CodeGen {
-    fn program(&mut self) -> Result<Vec<Function>, ParseError>;
-    fn function(&mut self) -> Result<Function, ParseError>;
+    fn program(&mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>), ParseError>;
+    fn funcargs(&mut self) -> Result<(), ParseError>;
+    fn funcdef(&mut self) -> Result<Function, ParseError>;
+    fn funcdef2(&mut self) -> Result<Option<Function>, ParseError>;
+    fn type_suffix(&mut self, ty: Type) -> Result<Type, ParseError>;
     fn vardef(&mut self) -> Result<Vec<Node>, ParseError>;
     fn initializer(&mut self) -> Result<Option<Node>, ParseError>;
     fn compound_stmt(&mut self) -> Result<Vec<Node>, ParseError>;
@@ -442,7 +445,8 @@ impl TokenReader for VecDeque<Token> {
 
 pub struct Parser {
     tklist: VecDeque<Token>,
-    lvars: Vec<Rc<Var>>, // Node::Varと共有する。
+    locals: Vec<Rc<Var>>, // Node::Varと共有する。
+    globals: Vec<Rc<Var>>,
 }
 impl Parser {
     fn pos(&self) -> usize {
@@ -451,14 +455,19 @@ impl Parser {
     pub fn new(tklist: VecDeque<Token>) -> Self {
         Self {
             tklist,
-            lvars: Vec::new(),
+            locals: Vec::new(),
+            globals: Vec::new(),
         }
     }
     fn find_var(&self, name: &String) -> Option<Rc<Var>> {
-        self.lvars.iter().find(|v| v.name == *name).cloned()
+        self.locals
+            .iter()
+            .find(|v| v.name == *name)
+            .or_else(|| self.globals.iter().find(|v| v.name == *name))
+            .cloned()
     }
     fn add_var(&mut self, name: &String, ty: Type) -> Result<Rc<Var>, ParseError> {
-        if let Some(v) = self.lvars.iter().find(|v| v.name == *name) {
+        if let Some(v) = self.locals.iter().find(|v| v.name == *name) {
             if v.ty != ty {
                 unimplemented!("type change of vars");
             }
@@ -467,9 +476,27 @@ impl Parser {
             let var = Rc::new(Var {
                 name: name.clone(),
                 ty,
-                id: self.lvars.len(),
+                id: self.locals.len(),
+                is_local: true,
             });
-            self.lvars.push(var.clone());
+            self.locals.push(var.clone());
+            return Ok(var);
+        }
+    }
+    fn add_global(&mut self, name: &String, ty: Type) -> Result<Rc<Var>, ParseError> {
+        if let Some(v) = self.globals.iter().find(|v| v.name == *name) {
+            if v.ty != ty {
+                unimplemented!("type change of vars");
+            }
+            return Ok(v.clone());
+        } else {
+            let var = Rc::new(Var {
+                name: name.clone(),
+                ty,
+                id: self.globals.len(),
+                is_local: false,
+            });
+            self.globals.push(var.clone());
             return Ok(var);
         }
     }
@@ -522,40 +549,83 @@ impl TokenReader for Parser {
 
 impl CodeGen for Parser {
     // コード生成
-    fn program(&mut self) -> Result<Vec<Function>, ParseError> {
+    fn program(&mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>), ParseError> {
         let mut code = vec![];
         while !self.is_eof() {
-            code.push(self.function()?)
+            if let Some(func) = self.funcdef2()? {
+                code.push(func);
+            }
         }
-        Ok(code)
+        Ok((code, std::mem::replace(&mut self.globals, vec![])))
     }
-    fn function(&mut self) -> Result<Function, ParseError> {
+    fn funcargs(&mut self) -> Result<(), ParseError> {
+        self.expect("(")?;
+        if !self.consume(")") {
+            loop {
+                let ty = self.typespec()?;
+                let ty = self.ptr(ty);
+                let name = self.expect_ident()?;
+                self.add_var(&name, ty)?;
+                if !self.consume(",") {
+                    self.expect(")")?;
+                    break; // 宣言終了
+                }
+            }
+        }
+        Ok(())
+    }
+    fn funcdef2(&mut self) -> Result<Option<Function>, ParseError> {
+        // まず int *x まで見る
+        let ty = self.typespec()?;
+        let mut _ty = self.ptr(ty.clone());
+        let name = self.expect_ident()?;
+        // 次に関数の有無を見る
+        if self.peek("(") {
+            // 関数の宣言
+            self.funcargs()?;
+            let params: Vec<_> = self.locals.iter().cloned().collect();
+            let stmts = self.compound_stmt()?;
+            return Ok(Some(Function::new(
+                _ty,
+                name,
+                stmts,
+                params,
+                std::mem::replace(&mut self.locals, vec![]),
+            )));
+        }
+        // 関数でないとしたら、グローバル変数が続いている
+        // TODO: グローバル変数の初期化
+        _ty = self.type_suffix(_ty)?;
+        self.add_global(&name, _ty)?;
+        if !self.consume(";") {
+            loop {
+                self.expect(",")?;
+                let mut _ty = self.ptr(ty.clone());
+                let name = self.expect_ident()?;
+                _ty = self.type_suffix(_ty)?;
+                self.add_global(&name, _ty)?;
+                if self.consume(";") {
+                    break;
+                }
+            }
+        }
+        Ok(None)
+    }
+    fn funcdef(&mut self) -> Result<Function, ParseError> {
         let ty = self.typespec()?;
         let return_type = self.ptr(ty);
         match self.consume_ident() {
             Some(name) => {
-                self.expect("(")?;
-                if !self.consume(")") {
-                    loop {
-                        let ty = self.typespec()?;
-                        let ty = self.ptr(ty);
-                        let name = self.expect_ident()?;
-                        self.add_var(&name, ty)?;
-                        if !self.consume(",") {
-                            self.expect(")")?;
-                            break; // 宣言終了
-                        }
-                    }
-                }
+                self.funcargs()?;
                 // この時点でのローカル変数が引数である
-                let params: Vec<_> = self.lvars.iter().cloned().collect();
+                let params: Vec<_> = self.locals.iter().cloned().collect();
                 let stmts = self.compound_stmt()?;
                 Ok(Function::new(
                     return_type,
                     name,
                     stmts,
                     params,
-                    std::mem::replace(&mut self.lvars, vec![]),
+                    std::mem::replace(&mut self.locals, vec![]),
                 ))
             }
             _ => Err(ParseError {
@@ -563,6 +633,17 @@ impl CodeGen for Parser {
                 msg: "evrything has to be inside a function!".to_owned(),
             }),
         }
+    }
+    fn type_suffix(&mut self, mut ty: Type) -> Result<Type, ParseError> {
+        let mut array_dims = vec![];
+        while self.consume("[") {
+            array_dims.push(self.expect_num()? as usize);
+            self.expect("]")?;
+        }
+        while let Some(len) = array_dims.pop() {
+            ty = ty.to_array(len);
+        }
+        return Ok(ty);
     }
     fn vardef(&mut self) -> Result<Vec<Node>, ParseError> {
         let ty = self.typespec()?;
