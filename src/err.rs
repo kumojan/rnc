@@ -7,7 +7,7 @@ use std::borrow::Borrow;
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum EnumError {
-    Tokenize { pos: usize },
+    Tokenize { pos: usize, msg: String },
     Parse { pos: usize, msg: String },
     CodeGen { msg: String },
 }
@@ -21,7 +21,10 @@ impl From<ParseError> for EnumError {
 }
 impl From<TokenizeError> for EnumError {
     fn from(err: TokenizeError) -> Self {
-        Self::Tokenize { pos: err.pos }
+        Self::Tokenize {
+            pos: err.pos,
+            msg: err.msg,
+        }
     }
 }
 impl From<CodeGenError> for EnumError {

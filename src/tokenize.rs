@@ -23,30 +23,37 @@ pub enum TokenKind {
 pub struct Token {
     pub kind: TokenKind,
     pub pos: usize,
+    pub len: usize,
 }
 impl Token {
-    fn new_num(val: u32, pos: usize) -> Self {
+    fn new_num(val: u32, pos: usize, len: usize) -> Self {
         Self {
             kind: TkNum(val),
             pos,
+            len,
         }
     }
     fn new_ident(s: String, pos: usize) -> Self {
+        let len = s.len();
         Self {
             kind: TkIdent(s),
             pos,
+            len,
         }
     }
     fn new_reserved(s: String, pos: usize) -> Self {
+        let len = s.len();
         Self {
             kind: TkReserved(s),
             pos,
+            len,
         }
     }
-    fn new_string(s: String, pos: usize) -> Self {
+    fn new_string(s: String, pos: usize, len: usize) -> Self {
         Self {
             kind: TkString(s),
             pos,
+            len,
         }
     }
 }
@@ -56,6 +63,7 @@ impl Token {
 ///
 #[derive(Debug, Default)]
 pub struct TokenizeError {
+    pub msg: String,
     pub pos: usize,
 }
 // このformaterを書き換えてcodeを挿入したら、自動でメッセージ出力できそうな気がする。無理か...。
@@ -66,14 +74,21 @@ impl fmt::Display for TokenizeError {
 }
 impl From<usize> for TokenizeError {
     fn from(pos: usize) -> Self {
-        Self { pos }
+        Self::new("unknown token", pos)
+    }
+}
+impl TokenizeError {
+    fn new(msg: &str, pos: usize) -> Self {
+        Self {
+            msg: msg.to_owned(),
+            pos,
+        }
     }
 }
 
 fn is_alnum(c: &char) -> bool {
     ('a'..='z').contains(c) || ('A'..='Z').contains(c) || ('0'..='9').contains(c) || *c == '_'
 }
-
 pub struct Lexer {
     code: Vec<char>,
     pos: usize,
@@ -168,21 +183,74 @@ impl Lexer {
         }
         None
     }
-    fn read_string(&mut self) -> Option<String> {
+    fn read_string(&mut self) -> Result<Option<String>, TokenizeError> {
         if self.peek_char(0) == '"' {
+            let start_pos = self.pos;
             self.pos += 1;
-            let s: String = self.code[self.pos..]
-                .iter()
-                .take_while(|c| **c != '"')
-                .collect();
-            self.pos += s.len() + 1;
-            return Some(s);
+            let mut escape_next = false;
+            let mut v = Vec::new();
+            for c in &self.code[self.pos..] {
+                self.pos += 1;
+                if *c == '"' {
+                    return Ok(Some(v.iter().collect()));
+                }
+                if escape_next {
+                    v.push(match c {
+                        'a' => 7 as char,
+                        'b' => 8 as char,
+                        't' => 9 as char,
+                        'n' => 10 as char,
+                        'v' => 11 as char,
+                        'f' => 12 as char,
+                        'r' => 13 as char,
+                        'e' => 27 as char,
+                        c => *c,
+                        // _ => Err(TokenizeError::new("unknown char escape", self.pos - 1))?,
+                    });
+                    escape_next = false;
+                } else {
+                    if *c == '\\' {
+                        escape_next = true;
+                    } else {
+                        v.push(*c);
+                    }
+                }
+            }
+            Err(TokenizeError::new("unclosed string literal", start_pos))
+        // これをやりたかったが、flat_mapに入れたclosureから値(読んだ文字の数)が取り出せなかった
+        // let s = self.code[self.pos..]
+        //     .iter()
+        //     .take_while(|c| **c != '"')
+        //     .flat_map(|c| {
+        //         count += 1;
+        //         if *c == '\\' {
+        //             escape_next = false;
+        //             None
+        //         } else if escape_next {
+        //             escape_next = false;
+        //             match c {
+        //                 'a' => Some('\x07'),
+        //                 'b' => Some('\x08'),
+        //                 't' => Some('\x09'),
+        //                 'n' => Some('\x10'),
+        //                 'v' => Some('\x11'),
+        //                 'f' => Some('\x12'),
+        //                 'r' => Some('\x13'),
+        //                 _ => unimplemented!(),
+        //             }
+        //         } else {
+        //             Some(*c)
+        //         }
+        //     });
+        // self.pos += count + 1; // 閉じるときの " で +1
+        } else {
+            Ok(None)
         }
-        None
     }
     pub fn tokenize(&mut self) -> Result<VecDeque<Token>, TokenizeError> {
         let mut list: VecDeque<Token> = VecDeque::new();
         while !self.is_at_end() {
+            let current = self.pos;
             if self.read_whitespace() {
                 continue;
             } else if let Some(s) = self.read_punct() {
@@ -190,11 +258,11 @@ impl Lexer {
             } else if let Some(s) = self.read_word() {
                 list.push_back(Token::new_reserved(s, self.pos));
             } else if let Some(n) = self.read_num() {
-                list.push_back(Token::new_num(n, self.pos));
+                list.push_back(Token::new_num(n, current, self.pos - current));
             } else if let Some(s) = self.read_ident() {
                 list.push_back(Token::new_ident(s, self.pos));
-            } else if let Some(s) = self.read_string() {
-                list.push_back(Token::new_string(s, self.pos));
+            } else if let Some(s) = self.read_string()? {
+                list.push_back(Token::new_string(s, current, self.pos - current));
             } else {
                 return Err(self.pos)?;
             }
@@ -202,6 +270,7 @@ impl Lexer {
         list.push_back(Token {
             kind: TkEOF,
             pos: self.code.len(),
+            len: 0,
         });
         Ok(list)
     }

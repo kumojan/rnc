@@ -26,7 +26,7 @@ fn main() -> Result<(), CompileError> {
     // Result型を返すことで、, エラー終了時に終了ステータス1となる。
     match env::args().last() {
         Some(code) => match compile(&code, matches.opt_present("t"), matches.opt_present("g")) {
-            Err(EnumError::Tokenize { pos }) => error_at(&code, pos, "uknown token"),
+            Err(EnumError::Tokenize { pos, msg }) => error_at(&code, pos, msg),
             Err(EnumError::Parse { pos, msg }) => {
                 error_at(&code, pos, format!("parse failed: {}", msg))
             }
