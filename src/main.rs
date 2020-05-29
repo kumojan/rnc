@@ -13,6 +13,14 @@ use crate::parse::*;
 use crate::tokenize::*;
 
 fn main() -> Result<(), CompileError> {
+    // 実験
+    // for i in 0..256 {
+    //     println!(
+    //         "{} {:?}",
+    //         (i as u8 as char),
+    //         (i as u8 as char).to_string().as_bytes()
+    //     );
+    // }
     let args: Vec<String> = env::args().collect();
     let mut opts = Options::new();
     opts.optflag("t", "", "print token list");

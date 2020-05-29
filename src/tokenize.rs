@@ -115,6 +115,11 @@ impl Lexer {
     fn is_at_end(&self) -> bool {
         self.pos >= self.code.len()
     }
+    fn consume(&mut self) -> char {
+        let c = self.code[self.pos];
+        self.pos += 1;
+        c
+    }
     fn peek_char(&self, n: usize) -> char {
         self.code[self.pos + n]
     }
@@ -183,37 +188,74 @@ impl Lexer {
         }
         None
     }
+    fn read_octal(&mut self) -> Option<char> {
+        let s: String = self.code[self.pos..]
+            .iter()
+            .take(3)
+            .take_while(|c| ('0'..='7').contains(c))
+            .collect();
+        self.pos += s.len();
+        if s.len() > 0 {
+            // literalでなければ、castしてもpanicしない(上位ビット切り捨て)
+            Some(u32::from_str_radix(&s, 8).unwrap() as u8 as char)
+        } else {
+            None
+        }
+    }
+    fn read_hexadecimal(&mut self) -> Result<char, TokenizeError> {
+        let s: String = self.code[self.pos..]
+            .iter()
+            .take(2)
+            .take_while(|c| {
+                ('a'..='z').contains(c) || ('A'..='Z').contains(c) || ('0'..='7').contains(c)
+            })
+            .collect();
+        self.pos += s.len();
+        if s.len() > 0 {
+            // rustのchar, Stringは文字コード外の文字列を受け付けないので、
+            // 169 as char は ©という記号、ないし [194, 169] というバイト列になってしまう。
+            // 一方cはcharはただのu8なので、169はそのまま169になる
+            // この問題を回避するには、String LiteralをrustのStringとして保持するのをやめてVec<u8>
+            // などとして持つ必要がある。
+            // が、とりあえずこのままにしておこう。
+            Ok(u32::from_str_radix(&s, 16).unwrap() as u8 as char)
+        } else {
+            Err(TokenizeError::new("expected hex digits", self.pos))
+        }
+    }
     fn read_string(&mut self) -> Result<Option<String>, TokenizeError> {
         if self.peek_char(0) == '"' {
             let start_pos = self.pos;
             self.pos += 1;
-            let mut escape_next = false;
             let mut v = Vec::new();
-            for c in &self.code[self.pos..] {
-                self.pos += 1;
-                if *c == '"' {
-                    return Ok(Some(v.iter().collect()));
-                }
-                if escape_next {
-                    v.push(match c {
-                        'a' => 7 as char,
-                        'b' => 8 as char,
-                        't' => 9 as char,
-                        'n' => 10 as char,
-                        'v' => 11 as char,
-                        'f' => 12 as char,
-                        'r' => 13 as char,
-                        'e' => 27 as char,
-                        c => *c,
-                        // _ => Err(TokenizeError::new("unknown char escape", self.pos - 1))?,
-                    });
-                    escape_next = false;
-                } else {
-                    if *c == '\\' {
-                        escape_next = true;
-                    } else {
-                        v.push(*c);
+            while !self.is_at_end() {
+                match self.consume() {
+                    '"' => {
+                        return Ok(Some(v.iter().collect()));
                     }
+                    '\\' => {
+                        if let Some(o) = self.read_octal() {
+                            v.push(o)
+                        } else {
+                            if self.is_at_end() {
+                                break;
+                            }
+                            v.push(match self.consume() {
+                                'a' => 7 as char,
+                                'b' => 8 as char,
+                                't' => 9 as char,
+                                'n' => 10 as char,
+                                'v' => 11 as char,
+                                'f' => 12 as char,
+                                'r' => 13 as char,
+                                'e' => 27 as char,
+                                'x' => self.read_hexadecimal()?,
+                                c => c,
+                                // _ => Err(TokenizeError::new("unknown char escape", self.pos - 1))?,
+                            });
+                        }
+                    }
+                    c => v.push(c),
                 }
             }
             Err(TokenizeError::new("unclosed string literal", start_pos))
