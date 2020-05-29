@@ -282,14 +282,15 @@ impl fmt::Display for ParseError {
 
 pub trait TokenReader {
     fn shift(&mut self) -> &mut Self;
-    fn head_str(&self) -> Option<String>;
-    // 見るだけ、エラーなし
+    // 見るだけ、進まず、エラーなし
     fn peek(&mut self, s: &str) -> bool;
+    fn peek_reserved(&self) -> Option<String>;
     // 見て、存在したら消費してtrue、存在しなければfalse
     fn consume(&mut self, s: &str) -> bool;
     fn consume_return(&mut self) -> bool;
     fn consume_num(&mut self) -> Option<u32>;
     fn consume_ident(&mut self) -> Option<String>;
+    fn consume_reserved(&mut self) -> Option<String>;
     fn is_eof(&self) -> bool;
     // 結果をもらい、違ったらエラーを出す
     fn expect(&mut self, s: &str) -> Result<(), ParseError>;
@@ -332,8 +333,7 @@ pub trait TokenReader {
 pub trait CodeGen {
     fn program(&mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>), ParseError>;
     fn funcargs(&mut self) -> Result<(), ParseError>;
-    fn funcdef(&mut self) -> Result<Function, ParseError>;
-    fn funcdef2(&mut self) -> Result<Option<Function>, ParseError>;
+    fn funcdef(&mut self) -> Result<Option<Function>, ParseError>;
     fn type_suffix(&mut self, ty: Type) -> Result<Type, ParseError>;
     fn vardef(&mut self) -> Result<Vec<Node>, ParseError>;
     fn initializer(&mut self) -> Result<Option<Node>, ParseError>;
@@ -355,16 +355,16 @@ impl TokenReader for VecDeque<Token> {
         self.pop_front();
         self
     }
-    fn head_str(&self) -> Option<String> {
-        match self[0].kind.clone() {
-            TokenKind::TkReserved(s) => Some(s),
-            _ => None,
-        }
-    }
     fn peek(&mut self, s: &str) -> bool {
         match &self[0].kind {
             TokenKind::TkReserved(_s) if _s == s => true,
             _ => false,
+        }
+    }
+    fn peek_reserved(&self) -> Option<String> {
+        match self[0].kind.clone() {
+            TokenKind::TkReserved(s) => Some(s),
+            _ => None,
         }
     }
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
@@ -400,6 +400,14 @@ impl TokenReader for VecDeque<Token> {
             None
         }
     }
+    fn consume_reserved(&mut self) -> Option<String> {
+        if let TokenKind::TkReserved(s) = self[0].kind.clone() {
+            self.pop_front();
+            Some(s)
+        } else {
+            None
+        }
+    }
     fn is_eof(&self) -> bool {
         self[0].kind == TokenKind::TkEOF
     }
@@ -427,10 +435,10 @@ impl TokenReader for VecDeque<Token> {
         })
     }
     fn typespec(&mut self) -> Result<Type, ParseError> {
-        if self.consume("int") {
-            Ok(Type::TyInt)
-        } else {
-            Err(self.raise_err("typespec expected"))
+        match self.consume_reserved().as_deref() {
+            Some("int") => Ok(Type::TyInt),
+            Some("char") => Ok(Type::TyChar),
+            _ => Err(self.raise_err("expected type")),
         }
     }
     fn ptr(&mut self, ty: Type) -> Type {
@@ -454,9 +462,6 @@ pub struct Parser {
     globals: Vec<Rc<Var>>,
 }
 impl Parser {
-    fn pos(&self) -> usize {
-        self.tklist[0].pos
-    }
     pub fn new(tklist: VecDeque<Token>) -> Self {
         Self {
             tklist,
@@ -511,8 +516,8 @@ impl TokenReader for Parser {
         self.tklist.shift();
         self
     }
-    fn head_str(&self) -> Option<String> {
-        self.tklist.head_str()
+    fn peek_reserved(&self) -> Option<String> {
+        self.tklist.peek_reserved()
     }
     fn peek(&mut self, s: &str) -> bool {
         self.tklist.peek(s)
@@ -528,6 +533,9 @@ impl TokenReader for Parser {
     }
     fn consume_ident(&mut self) -> Option<String> {
         self.tklist.consume_ident()
+    }
+    fn consume_reserved(&mut self) -> Option<String> {
+        self.tklist.consume_reserved()
     }
     fn is_eof(&self) -> bool {
         self.tklist.is_eof()
@@ -557,7 +565,7 @@ impl CodeGen for Parser {
     fn program(&mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>), ParseError> {
         let mut code = vec![];
         while !self.is_eof() {
-            if let Some(func) = self.funcdef2()? {
+            if let Some(func) = self.funcdef()? {
                 code.push(func);
             }
         }
@@ -579,7 +587,7 @@ impl CodeGen for Parser {
         }
         Ok(())
     }
-    fn funcdef2(&mut self) -> Result<Option<Function>, ParseError> {
+    fn funcdef(&mut self) -> Result<Option<Function>, ParseError> {
         // まず int *x まで見る
         let ty = self.typespec()?;
         let mut _ty = self.ptr(ty.clone());
@@ -615,29 +623,6 @@ impl CodeGen for Parser {
             }
         }
         Ok(None)
-    }
-    fn funcdef(&mut self) -> Result<Function, ParseError> {
-        let ty = self.typespec()?;
-        let return_type = self.ptr(ty);
-        match self.consume_ident() {
-            Some(name) => {
-                self.funcargs()?;
-                // この時点でのローカル変数が引数である
-                let params: Vec<_> = self.locals.iter().cloned().collect();
-                let stmts = self.compound_stmt()?;
-                Ok(Function::new(
-                    return_type,
-                    name,
-                    stmts,
-                    params,
-                    std::mem::replace(&mut self.locals, vec![]),
-                ))
-            }
-            _ => Err(ParseError {
-                pos: self.pos(),
-                msg: "evrything has to be inside a function!".to_owned(),
-            }),
-        }
     }
     fn type_suffix(&mut self, mut ty: Type) -> Result<Type, ParseError> {
         let mut array_dims = vec![];
@@ -696,9 +681,9 @@ impl CodeGen for Parser {
         self.expect("{")?;
         let mut block = vec![];
         while !self.consume("}") {
-            match self.head_str().as_deref() {
-                Some("int") => block.extend(self.vardef()?),
-                _ => block.push(self.stmt()?), // 途中に中括弧閉じがあっても、ここで消費されるはず
+            match self.peek_reserved().as_deref() {
+                Some("int") | Some("char") => block.extend(self.vardef()?),
+                _ => block.push(self.stmt()?),
             };
         }
         Ok(block)
@@ -766,7 +751,7 @@ impl CodeGen for Parser {
     fn equality(&mut self) -> Result<Node, ParseError> {
         let mut node = self.relational()?;
         loop {
-            match self.head_str().as_deref() {
+            match self.peek_reserved().as_deref() {
                 Some("==") => node = Node::new_bin(NdEq, node, self.shift().relational()?),
                 Some("!=") => node = Node::new_bin(NdNeq, node, self.shift().relational()?),
                 _ => return Ok(node),
@@ -776,7 +761,7 @@ impl CodeGen for Parser {
     fn relational(&mut self) -> Result<Node, ParseError> {
         let mut node = self.add()?;
         loop {
-            match self.head_str().as_deref() {
+            match self.peek_reserved().as_deref() {
                 Some("<") => node = Node::new_bin(NdLt, node, self.shift().add()?),
                 Some("<=") => node = Node::new_bin(NdLe, node, self.shift().add()?),
                 Some(">") => node = Node::new_bin(NdLt, self.shift().add()?, node),
@@ -788,7 +773,7 @@ impl CodeGen for Parser {
     fn add(&mut self) -> Result<Node, ParseError> {
         let mut node = self.mul()?;
         loop {
-            match self.head_str().as_deref() {
+            match self.peek_reserved().as_deref() {
                 Some("+") => node = Node::new_add(node, self.shift().mul()?),
                 Some("-") => node = Node::new_sub(node, self.shift().mul()?),
                 _ => return Ok(node),
@@ -798,7 +783,7 @@ impl CodeGen for Parser {
     fn mul(&mut self) -> Result<Node, ParseError> {
         let mut node = self.unary()?;
         loop {
-            match self.head_str().as_deref() {
+            match self.peek_reserved().as_deref() {
                 Some("*") => node = Node::new_bin(NdMul, node, self.shift().unary()?),
                 Some("/") => node = Node::new_bin(NdDiv, node, self.shift().unary()?),
                 _ => return Ok(node),
@@ -806,7 +791,7 @@ impl CodeGen for Parser {
         }
     }
     fn unary(&mut self) -> Result<Node, ParseError> {
-        match self.head_str().as_deref() {
+        match self.peek_reserved().as_deref() {
             Some("+") => self.shift().unary(),
             Some("-") => Ok(Node::new_bin(
                 NdSub,

@@ -3,7 +3,8 @@ use crate::r#type::Type;
 use std::rc::Rc;
 
 // 関数呼び出しのレジスタ 参考 https://en.wikipedia.org/wiki/X86_calling_conventions#x86-64_calling_conventions
-const ARGREG: [&'static str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
+const ARGREG64: [&'static str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
+const ARGREG8: [&'static str; 6] = ["dil", "sil", "dl", "cl", "r8b", "r9b"];
 const ARGLEN: usize = 6;
 const RESERVED_REGISTER_STACK_SIZE: usize = 32;
 
@@ -31,15 +32,23 @@ fn load(ty: &Type) {
     }
     // アドレスを取り出し、値を取得してpushし直す
     println!("  pop rax  #load");
-    println!("  mov rax, [rax]");
+    if ty.size() == 1 {
+        println!("  movsx rax, byte ptr [rax]\n");
+    } else {
+        println!("  mov rax, [rax]");
+    }
     println!("  push rax");
 }
-fn store() {
+fn store(ty: &Type) {
     // 下から 値 | アドレス と並んでいるときに、
     // 値をそのアドレスに格納し、その値をpush
     println!("  pop rdi  #store");
     println!("  pop rax");
-    println!("  mov [rax], rdi");
+    if ty.size() == 1 {
+        println!("  mov [rax], dil");
+    } else {
+        println!("  mov [rax], rdi");
+    }
     println!("  push rdi");
 }
 impl CodeGenerator {
@@ -124,7 +133,7 @@ impl CodeGenerator {
                     }
                 }
                 self.gen_expr(rhs)?;
-                store();
+                store(&node.get_type());
             }
             Node::FunCall { name, args } => {
                 if args.len() > ARGLEN {
@@ -136,7 +145,7 @@ impl CodeGenerator {
                     self.gen_expr(arg)?;
                 }
                 for i in (0..args.len()).rev() {
-                    println!("  pop {}", ARGREG[i])
+                    println!("  pop {}", ARGREG64[i])
                 }
                 println!("  call {}", name);
                 println!("  push rax"); // 関数終了時にreturnの値がraxに入っている。
@@ -274,7 +283,11 @@ pub fn code_gen(program: Vec<Function>, globals: Vec<Rc<Var>>) -> Result<(), Cod
         // となる
         // lvarsもvar_offsetもvar.idもあくまで出現順である
         for i in 0..func.params.len() {
-            println!("  mov [rbp-{}], {}", cg.var_offsets[i], ARGREG[i])
+            if func.params[i].ty.size() == 1 {
+                println!("  mov [rbp-{}], {}", cg.var_offsets[i], ARGREG8[i])
+            } else {
+                println!("  mov [rbp-{}], {}", cg.var_offsets[i], ARGREG64[i])
+            }
         }
         for node in &func.body {
             cg.gen_stmt(node)?;

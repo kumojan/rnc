@@ -10,6 +10,7 @@ pub struct TypeError {
 #[derive(Clone, PartialEq)]
 pub enum Type {
     TyInt,
+    TyChar,
     TyPtr(Box<Type>),
     TyArray { base: Box<Type>, len: usize },
     TyFunction { arg: Box<Vec<Type>>, ret: Box<Type> },
@@ -67,6 +68,7 @@ impl Type {
     }
     pub fn size(&self) -> usize {
         match self {
+            Type::TyChar => 1,
             Type::TyInt => 8,
             Type::TyPtr(..) => 8,
             Type::TyArray { base, len } => base.size() * len,

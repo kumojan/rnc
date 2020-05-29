@@ -90,7 +90,7 @@ impl Lexer {
             && match l {
                 2 => ["if"].contains(&&s[..]),
                 3 => ["for", "int"].contains(&&s[..]),
-                4 => ["else"].contains(&&s[..]),
+                4 => ["else", "char"].contains(&&s[..]),
                 5 => ["while"].contains(&&s[..]),
                 6 => ["return", "sizeof"].contains(&&s[..]),
                 _ => unimplemented!(),
