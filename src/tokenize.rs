@@ -13,6 +13,7 @@ use std::fmt;
 pub enum TokenKind {
     TkReserved(String),
     TkIdent(String),
+    TkString(String),
     TkNum(u32),
     TkReturn,
     TkEOF,
@@ -36,15 +37,15 @@ impl Token {
             pos,
         }
     }
-    fn new_punct(s: String, pos: usize) -> Self {
+    fn new_reserved(s: String, pos: usize) -> Self {
         Self {
             kind: TkReserved(s),
             pos,
         }
     }
-    fn new_res_word(s: String, pos: usize) -> Self {
+    fn new_string(s: String, pos: usize) -> Self {
         Self {
-            kind: TkReserved(s),
+            kind: TkString(s),
             pos,
         }
     }
@@ -167,29 +168,36 @@ impl Lexer {
         }
         None
     }
+    fn read_string(&mut self) -> Option<String> {
+        if self.peek_char(0) == '"' {
+            self.pos += 1;
+            let s: String = self.code[self.pos..]
+                .iter()
+                .take_while(|c| **c != '"')
+                .collect();
+            self.pos += s.len() + 1;
+            return Some(s);
+        }
+        None
+    }
     pub fn tokenize(&mut self) -> Result<VecDeque<Token>, TokenizeError> {
         let mut list: VecDeque<Token> = VecDeque::new();
         while !self.is_at_end() {
             if self.read_whitespace() {
                 continue;
-            }
-            if let Some(s) = self.read_punct() {
-                list.push_back(Token::new_punct(s, self.pos));
-                continue;
-            }
-            if let Some(s) = self.read_word() {
-                list.push_back(Token::new_res_word(s, self.pos));
-                continue;
-            }
-            if let Some(n) = self.read_num() {
+            } else if let Some(s) = self.read_punct() {
+                list.push_back(Token::new_reserved(s, self.pos));
+            } else if let Some(s) = self.read_word() {
+                list.push_back(Token::new_reserved(s, self.pos));
+            } else if let Some(n) = self.read_num() {
                 list.push_back(Token::new_num(n, self.pos));
-                continue;
-            }
-            if let Some(s) = self.read_ident() {
+            } else if let Some(s) = self.read_ident() {
                 list.push_back(Token::new_ident(s, self.pos));
-                continue;
+            } else if let Some(s) = self.read_string() {
+                list.push_back(Token::new_string(s, self.pos));
+            } else {
+                return Err(self.pos)?;
             }
-            return Err(self.pos)?;
         }
         list.push_back(Token {
             kind: TkEOF,

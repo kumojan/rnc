@@ -95,6 +95,9 @@ impl CodeGenerator {
                 self.gen_addr(var); // まず変数のアドレスを取得する
                 load(&var.ty); // 配列型の場合は、値を取り出さず、アドレスをそのまま使う
             }
+            Node::Literal { id, .. } => {
+                println!("  push offset .L.data.{}", id);
+            }
             Node::Addr { node } => match &**node {
                 Node::Var { var } => self.gen_addr(var),
                 Node::Deref { node } => self.gen_expr(node)?, // &*はスキップする
@@ -251,7 +254,11 @@ impl CodeGenerator {
         Ok(())
     }
 }
-pub fn code_gen(program: Vec<Function>, globals: Vec<Rc<Var>>) -> Result<(), CodeGenError> {
+pub fn code_gen(
+    program: Vec<Function>,
+    globals: Vec<Rc<Var>>,
+    string_literals: Vec<String>,
+) -> Result<(), CodeGenError> {
     let mut cg = CodeGenerator::default();
     println!(".intel_syntax noprefix");
 
@@ -259,6 +266,13 @@ pub fn code_gen(program: Vec<Function>, globals: Vec<Rc<Var>>) -> Result<(), Cod
     for v in &globals {
         println!("{}:", v.name);
         println!("  .zero {}", v.ty.size());
+    }
+    for (i, s) in string_literals.iter().enumerate() {
+        println!(".L.data.{}:", i);
+        for c in s.as_bytes() {
+            println!("  .byte {}", c);
+        }
+        println!("  .byte 0");
     }
     println!(".text");
     for func in program {
@@ -343,6 +357,7 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
     match node {
         Node::Num { val } => s += &format!("{} [label=\"num {}\"];\n", nodename, val),
         Node::Var { var } => s += &format!("{} [label=\"{:?}\"];\n", nodename, var),
+        Node::Literal { id, .. } => s += &format!("{} [label=\"literal {}\"];\n", nodename, id),
         Node::Bin { kind, lhs, rhs } => {
             s += &format!("{} [label=\"{:?}\"];\n", nodename, kind);
             s += &graph_gen(lhs, &nodename, 0, None);

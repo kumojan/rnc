@@ -77,6 +77,10 @@ pub enum Node {
         name: String,
         args: Box<Vec<Node>>,
     },
+    Literal {
+        ty: Type,
+        id: usize,
+    },
     // 文(statement)
     ExprStmt {
         expr: Box<Node>,
@@ -114,6 +118,7 @@ impl fmt::Debug for Node {
             Node::FunCall { name, .. } => write!(f, "function {}", name),
             Node::Addr { .. } => write!(f, "address"),
             Node::Deref { .. } => write!(f, "deref"),
+            Node::Literal { ty, .. } => write!(f, "{:?} literal", ty),
         }
     }
 }
@@ -138,6 +143,7 @@ impl Node {
                 } // ポインタ同士の引き算はint
                 _ => lhs.get_type(),
             },
+            Self::Literal { ty, .. } => ty.clone(),
             Self::FunCall { .. } => Type::TyInt, // 関数の戻り値は全部int
             _ => unimplemented!(),
         }
@@ -289,6 +295,7 @@ pub trait TokenReader {
     fn consume(&mut self, s: &str) -> bool;
     fn consume_return(&mut self) -> bool;
     fn consume_num(&mut self) -> Option<u32>;
+    fn consume_string(&mut self) -> Option<String>;
     fn consume_ident(&mut self) -> Option<String>;
     fn consume_reserved(&mut self) -> Option<String>;
     fn is_eof(&self) -> bool;
@@ -328,10 +335,10 @@ pub trait TokenReader {
 /// unary = ("+" | "-" | "*" | "&") unary
 ///       | postfix
 /// postfix = primary ("[" expr "]")*
-/// primary = num | ident ("(" (expr ("," expr )*)? ")")? | "(" expr ")" | "sizeof" unary
+/// primary = num | str | ident ("(" (expr ("," expr )*)? ")")? | "(" expr ")" | "sizeof" unary
 ///
 pub trait CodeGen {
-    fn program(&mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>), ParseError>;
+    fn program(self) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<String>), ParseError>;
     fn funcargs(&mut self) -> Result<(), ParseError>;
     fn funcdef(&mut self) -> Result<Option<Function>, ParseError>;
     fn type_suffix(&mut self, ty: Type) -> Result<Type, ParseError>;
@@ -392,8 +399,18 @@ impl TokenReader for VecDeque<Token> {
             None
         }
     }
+    fn consume_string(&mut self) -> Option<String> {
+        if let TokenKind::TkString(ref s) = self[0].kind {
+            let s = s.clone();
+            self.pop_front();
+            Some(s)
+        } else {
+            None
+        }
+    }
     fn consume_ident(&mut self) -> Option<String> {
-        if let TokenKind::TkIdent(s) = self[0].kind.clone() {
+        if let TokenKind::TkIdent(ref s) = self[0].kind {
+            let s = s.clone();
             self.pop_front();
             Some(s)
         } else {
@@ -401,7 +418,8 @@ impl TokenReader for VecDeque<Token> {
         }
     }
     fn consume_reserved(&mut self) -> Option<String> {
-        if let TokenKind::TkReserved(s) = self[0].kind.clone() {
+        if let TokenKind::TkReserved(ref s) = self[0].kind {
+            let s = s.clone();
             self.pop_front();
             Some(s)
         } else {
@@ -460,6 +478,7 @@ pub struct Parser {
     tklist: VecDeque<Token>,
     locals: Vec<Rc<Var>>, // Node::Varと共有する。
     globals: Vec<Rc<Var>>,
+    string_literals: Vec<String>,
 }
 impl Parser {
     pub fn new(tklist: VecDeque<Token>) -> Self {
@@ -467,6 +486,7 @@ impl Parser {
             tklist,
             locals: Vec::new(),
             globals: Vec::new(),
+            string_literals: Vec::new(),
         }
     }
     fn find_var(&self, name: &String) -> Option<Rc<Var>> {
@@ -510,6 +530,14 @@ impl Parser {
             return Ok(var);
         }
     }
+    fn add_string_literal(&mut self, data: String) -> Node {
+        let n = Node::Literal {
+            ty: Type::TyChar.to_array(data.len() + 1), // string末尾の'\0'も大きさに含める
+            id: self.string_literals.len(),
+        };
+        self.string_literals.push(data);
+        n
+    }
 }
 impl TokenReader for Parser {
     fn shift(&mut self) -> &mut Self {
@@ -533,6 +561,9 @@ impl TokenReader for Parser {
     }
     fn consume_ident(&mut self) -> Option<String> {
         self.tklist.consume_ident()
+    }
+    fn consume_string(&mut self) -> Option<String> {
+        self.tklist.consume_string()
     }
     fn consume_reserved(&mut self) -> Option<String> {
         self.tklist.consume_reserved()
@@ -562,14 +593,14 @@ impl TokenReader for Parser {
 
 impl CodeGen for Parser {
     // コード生成
-    fn program(&mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>), ParseError> {
+    fn program(mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<String>), ParseError> {
         let mut code = vec![];
         while !self.is_eof() {
             if let Some(func) = self.funcdef()? {
                 code.push(func);
             }
         }
-        Ok((code, std::mem::replace(&mut self.globals, vec![])))
+        Ok((code, self.globals, self.string_literals))
     }
     fn funcargs(&mut self) -> Result<(), ParseError> {
         self.expect("(")?;
@@ -818,6 +849,8 @@ impl CodeGen for Parser {
             self.expect(")").map(|_| node)?
         } else if let Some(val) = self.consume_num() {
             Ok(Node::new_num(val))
+        } else if let Some(s) = self.consume_string() {
+            Ok(self.add_string_literal(s))
         } else if self.consume("sizeof") {
             // このnodeは型のサイズを取得するためのみに使われ、
             // 実際には評価されない
