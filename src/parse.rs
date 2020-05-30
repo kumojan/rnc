@@ -81,6 +81,10 @@ pub enum Node {
         ty: Type,
         id: usize,
     },
+    StmtExpr {
+        stmts: Box<Node>, // blockを持たせる
+        expr: Box<Node>,
+    },
     // 文(statement)
     ExprStmt {
         expr: Box<Node>,
@@ -119,6 +123,7 @@ impl fmt::Debug for Node {
             Node::Addr { .. } => write!(f, "address"),
             Node::Deref { .. } => write!(f, "deref"),
             Node::Literal { ty, .. } => write!(f, "{:?} literal", ty),
+            Node::StmtExpr { .. } => write!(f, "stmt expr"),
         }
     }
 }
@@ -145,7 +150,8 @@ impl Node {
             },
             Self::Literal { ty, .. } => ty.clone(),
             Self::FunCall { .. } => Type::TyInt, // 関数の戻り値は全部int
-            _ => unimplemented!(),
+            Self::StmtExpr { expr, .. } => expr.get_type(),
+            _ => unimplemented!("called get_type for statements!"),
         }
     }
     fn new_num(val: u32) -> Self {
@@ -248,6 +254,14 @@ impl Node {
             loop_: Box::new(loop_),
         }
     }
+    fn new_stmt_expr(stmts: Vec<Node>, expr: Node) -> Self {
+        Self::StmtExpr {
+            stmts: Box::new(Self::Block {
+                stmts: Box::new(stmts),
+            }),
+            expr: Box::new(expr),
+        }
+    }
 }
 
 pub struct Function {
@@ -335,7 +349,12 @@ pub trait TokenReader {
 /// unary = ("+" | "-" | "*" | "&") unary
 ///       | postfix
 /// postfix = primary ("[" expr "]")*
-/// primary = num | str | ident ("(" (expr ("," expr )*)? ")")? | "(" expr ")" | "sizeof" unary
+/// primary = num
+///     | str
+///     | ident ("(" (expr ("," expr )*)? ")")?
+///     | "(" expr ")"
+///     | "sizeof" unary
+///     | "(" "{" stmt* expr ";" "}" ")"
 ///
 pub trait CodeGen {
     fn program(self) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<String>), ParseError>;
@@ -845,8 +864,19 @@ impl CodeGen for Parser {
     }
     fn primary(&mut self) -> Result<Node, ParseError> {
         if self.consume("(") {
-            let node = self.expr();
-            self.expect(")").map(|_| node)?
+            if self.peek("{") {
+                let mut stmts = self.compound_stmt()?;
+                self.expect(")")?;
+                // 最後はexpression statementでないといけない
+                if let Some(Node::ExprStmt { expr }) = stmts.pop() {
+                    Ok(Node::new_stmt_expr(stmts, *expr))
+                } else {
+                    Err(self.raise_err("statement expression returning void is not supported"))
+                }
+            } else {
+                let node = self.expr();
+                self.expect(")").map(|_| node)?
+            }
         } else if let Some(val) = self.consume_num() {
             Ok(Node::new_num(val))
         } else if let Some(s) = self.consume_string() {

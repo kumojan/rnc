@@ -153,6 +153,10 @@ impl CodeGenerator {
                 println!("  call {}", name);
                 println!("  push rax"); // 関数終了時にreturnの値がraxに入っている。
             }
+            Node::StmtExpr { stmts, expr } => {
+                self.gen_stmt(stmts)?;
+                self.gen_expr(expr)?;
+            }
             Node::Bin { kind, lhs, rhs } => {
                 self.gen_expr(lhs)?;
                 self.gen_expr(rhs)?;
@@ -422,6 +426,10 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
             for (i, arg) in args.iter().enumerate() {
                 s += &graph_gen(arg, &nodename, i, Some("args"));
             }
+        }
+        Node::StmtExpr { stmts, expr } => {
+            s += &graph_gen(stmts, &nodename, 0, Some("statements"));
+            s += &graph_gen(expr, &nodename, 0, Some("return"));
         }
     }
     s
