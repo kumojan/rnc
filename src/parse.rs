@@ -307,9 +307,8 @@ pub trait TokenReader {
     fn peek_reserved(&self) -> Option<String>;
     // 見て、存在したら消費してtrue、存在しなければfalse
     fn consume(&mut self, s: &str) -> bool;
-    fn consume_return(&mut self) -> bool;
     fn consume_num(&mut self) -> Option<u32>;
-    fn consume_string(&mut self) -> Option<String>;
+    fn consume_string(&mut self) -> Option<Vec<u8>>;
     fn consume_ident(&mut self) -> Option<String>;
     fn consume_reserved(&mut self) -> Option<String>;
     fn is_eof(&self) -> bool;
@@ -357,7 +356,7 @@ pub trait TokenReader {
 ///     | "(" "{" stmt* expr ";" "}" ")"
 ///
 pub trait CodeGen {
-    fn program(self) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<String>), ParseError>;
+    fn program(self) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<Vec<u8>>), ParseError>;
     fn funcargs(&mut self) -> Result<(), ParseError>;
     fn funcdef(&mut self) -> Result<Option<Function>, ParseError>;
     fn type_suffix(&mut self, ty: Type) -> Result<Type, ParseError>;
@@ -403,13 +402,6 @@ impl TokenReader for VecDeque<Token> {
             _ => false,
         }
     }
-    fn consume_return(&mut self) -> bool {
-        if self[0].kind == TokenKind::TkReturn {
-            self.pop_front();
-            return true;
-        }
-        false
-    }
     fn consume_num(&mut self) -> Option<u32> {
         if let TokenKind::TkNum(val) = self[0].kind {
             self.pop_front();
@@ -418,7 +410,7 @@ impl TokenReader for VecDeque<Token> {
             None
         }
     }
-    fn consume_string(&mut self) -> Option<String> {
+    fn consume_string(&mut self) -> Option<Vec<u8>> {
         if let TokenKind::TkString(ref s) = self[0].kind {
             let s = s.clone();
             self.pop_front();
@@ -497,7 +489,7 @@ pub struct Parser {
     tklist: VecDeque<Token>,
     locals: Vec<Rc<Var>>, // Node::Varと共有する。
     globals: Vec<Rc<Var>>,
-    string_literals: Vec<String>,
+    string_literals: Vec<Vec<u8>>,
 }
 impl Parser {
     pub fn new(tklist: VecDeque<Token>) -> Self {
@@ -549,7 +541,7 @@ impl Parser {
             return Ok(var);
         }
     }
-    fn add_string_literal(&mut self, data: String) -> Node {
+    fn add_string_literal(&mut self, data: Vec<u8>) -> Node {
         let n = Node::Literal {
             ty: Type::TyChar.to_array(data.len() + 1), // string末尾の'\0'も大きさに含める
             id: self.string_literals.len(),
@@ -572,16 +564,13 @@ impl TokenReader for Parser {
     fn consume(&mut self, s: &str) -> bool {
         self.tklist.consume(s)
     }
-    fn consume_return(&mut self) -> bool {
-        self.tklist.consume_return()
-    }
     fn consume_num(&mut self) -> Option<u32> {
         self.tklist.consume_num()
     }
     fn consume_ident(&mut self) -> Option<String> {
         self.tklist.consume_ident()
     }
-    fn consume_string(&mut self) -> Option<String> {
+    fn consume_string(&mut self) -> Option<Vec<u8>> {
         self.tklist.consume_string()
     }
     fn consume_reserved(&mut self) -> Option<String> {
@@ -612,7 +601,7 @@ impl TokenReader for Parser {
 
 impl CodeGen for Parser {
     // コード生成
-    fn program(mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<String>), ParseError> {
+    fn program(mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<Vec<u8>>), ParseError> {
         let mut code = vec![];
         while !self.is_eof() {
             if let Some(func) = self.funcdef()? {

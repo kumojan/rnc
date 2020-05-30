@@ -261,7 +261,7 @@ impl CodeGenerator {
 pub fn code_gen(
     program: Vec<Function>,
     globals: Vec<Rc<Var>>,
-    string_literals: Vec<String>,
+    string_literals: Vec<Vec<u8>>,
 ) -> Result<(), CodeGenError> {
     let mut cg = CodeGenerator::default();
     println!(".intel_syntax noprefix");
@@ -273,7 +273,7 @@ pub fn code_gen(
     }
     for (i, s) in string_literals.iter().enumerate() {
         println!(".L.data.{}:", i);
-        for c in s.as_bytes() {
+        for c in s {
             println!("  .byte {}", c);
         }
         println!("  .byte 0");

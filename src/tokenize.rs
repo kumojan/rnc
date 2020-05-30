@@ -9,14 +9,28 @@ use std::fmt;
 /// トークン列に分けていく
 /// エラーメッセージとしては、予期せぬ記号のみ
 ///
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum TokenKind {
     TkReserved(String),
     TkIdent(String),
-    TkString(String),
+    TkString(Vec<u8>),
     TkNum(u32),
-    TkReturn,
     TkEOF,
+}
+impl fmt::Debug for TokenKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::TkString(v) => write!(
+                f,
+                "TkString \"{}\"",
+                String::from_utf8_lossy(v).escape_debug()
+            ), // これ以外はderiveして欲しいのだが...
+            Self::TkReserved(s) => write!(f, "TkReserved \"{}\"", s),
+            Self::TkIdent(s) => write!(f, "TkIdent \"{}\"", s),
+            Self::TkNum(n) => write!(f, "TkNum({})", n),
+            Self::TkEOF => write!(f, "TkEOF"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -49,7 +63,7 @@ impl Token {
             len,
         }
     }
-    fn new_string(s: String, pos: usize, len: usize) -> Self {
+    fn new_string(s: Vec<u8>, pos: usize, len: usize) -> Self {
         Self {
             kind: TkString(s),
             pos,
@@ -188,7 +202,7 @@ impl Lexer {
         }
         None
     }
-    fn read_octal(&mut self) -> Option<char> {
+    fn read_octal(&mut self) -> Option<u8> {
         let s: String = self.code[self.pos..]
             .iter()
             .take(3)
@@ -197,17 +211,16 @@ impl Lexer {
         self.pos += s.len();
         if s.len() > 0 {
             // literalでなければ、castしてもpanicしない(上位ビット切り捨て)
-            Some(u32::from_str_radix(&s, 8).unwrap() as u8 as char)
+            Some(u32::from_str_radix(&s, 8).unwrap() as u8)
         } else {
             None
         }
     }
-    fn read_hexadecimal(&mut self) -> Result<char, TokenizeError> {
+    fn read_hexadecimal(&mut self) -> Result<u8, TokenizeError> {
         let s: String = self.code[self.pos..]
             .iter()
-            .take(2)
             .take_while(|c| {
-                ('a'..='z').contains(c) || ('A'..='Z').contains(c) || ('0'..='7').contains(c)
+                ('a'..='z').contains(c) || ('A'..='Z').contains(c) || ('0'..='9').contains(c)
             })
             .collect();
         self.pos += s.len();
@@ -216,14 +229,13 @@ impl Lexer {
             // 169 as char は ©という記号、ないし [194, 169] というバイト列になってしまう。
             // 一方cはcharはただのu8なので、169はそのまま169になる
             // この問題を回避するには、String LiteralをrustのStringとして保持するのをやめてVec<u8>
-            // などとして持つ必要がある。
-            // が、とりあえずこのままにしておこう。
-            Ok(u32::from_str_radix(&s, 16).unwrap() as u8 as char)
+            // などとして持つ必要がある。 => 修正した
+            Ok(u32::from_str_radix(&s, 16).unwrap() as u8)
         } else {
             Err(TokenizeError::new("expected hex digits", self.pos))
         }
     }
-    fn read_string(&mut self) -> Result<Option<String>, TokenizeError> {
+    fn read_string(&mut self) -> Result<Option<Vec<u8>>, TokenizeError> {
         if self.peek_char(0) == '"' {
             let start_pos = self.pos;
             self.pos += 1;
@@ -231,7 +243,7 @@ impl Lexer {
             while !self.is_at_end() {
                 match self.consume() {
                     '"' => {
-                        return Ok(Some(v.iter().collect()));
+                        return Ok(Some(v));
                     }
                     '\\' => {
                         if let Some(o) = self.read_octal() {
@@ -240,22 +252,22 @@ impl Lexer {
                             if self.is_at_end() {
                                 break;
                             }
-                            v.push(match self.consume() {
-                                'a' => 7 as char,
-                                'b' => 8 as char,
-                                't' => 9 as char,
-                                'n' => 10 as char,
-                                'v' => 11 as char,
-                                'f' => 12 as char,
-                                'r' => 13 as char,
-                                'e' => 27 as char,
-                                'x' => self.read_hexadecimal()?,
-                                c => c,
-                                // _ => Err(TokenizeError::new("unknown char escape", self.pos - 1))?,
-                            });
+                            match self.consume() {
+                                'a' => v.push(7),
+                                'b' => v.push(8),
+                                't' => v.push(9),
+                                'n' => v.push(10),
+                                'v' => v.push(11),
+                                'f' => v.push(12),
+                                'r' => v.push(13),
+                                'e' => v.push(27),
+                                'x' | 'X' => v.push(self.read_hexadecimal()?),
+                                c => v.extend_from_slice(c.to_string().as_bytes()), // _ => Err(TokenizeError::new("unknown char escape", self.pos - 1))?,
+                            }
                         }
                     }
-                    c => v.push(c),
+                    // charを直接bytesに変換できないのだろうか...。
+                    c => v.extend_from_slice(c.to_string().as_bytes()),
                 }
             }
             Err(TokenizeError::new("unclosed string literal", start_pos))

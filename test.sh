@@ -208,9 +208,8 @@ assert 65 'int main() { return "\101"[0]; }'
 assert 104 'int main() { return "\1500"[0]; }'
 assert 0 'int main() { return "\x00"[0]; }'
 assert 119 'int main() { return "\x77"[0]; }'
-# rustのStringでこれらを保持できないので、今は通らない
-# assert 165 'int main() { return "\xA5"[0]; }'
-# assert 255 'int main() { return "\x00ff"[0]; }'
+assert 165 'int main() { return "\xA5"[0]; }'
+assert 255 'int main() { return "\x00ff"[0]; }'
 
 assert 0 'int main() { return ({ 0; }); }'
 assert 2 'int main() { return ({ 0; 1; 2; }); }'
