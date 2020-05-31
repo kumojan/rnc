@@ -110,10 +110,12 @@ pub struct Lexer {
 
 impl Lexer {
     pub fn new(code: &String) -> Self {
-        Self {
-            code: code.chars().collect(),
-            pos: 0,
+        let mut code: Vec<char> = code.chars().collect();
+        if code.last().unwrap() != &'\n' {
+            // TODO: コードが空の時
+            code.push('\n');
         }
+        Self { code, pos: 0 }
     }
     fn check_res_word(&self, s: &String, l: usize) -> bool {
         !is_alnum(&self.peek_char(l))
@@ -137,6 +139,7 @@ impl Lexer {
     fn peek_char(&self, n: usize) -> char {
         self.code[self.pos + n]
     }
+    /// 現在位置からn文字読み取る
     fn peek_str(&self, n: usize) -> String {
         self.code[self.pos..self.pos + n].to_vec().iter().collect()
     }
@@ -302,9 +305,33 @@ impl Lexer {
             Ok(None)
         }
     }
+    fn read_comment(&mut self) -> Result<(), TokenizeError> {
+        if self.pos == self.code.len() - 1 {
+            return Ok(());
+        }
+        if &self.peek_str(2) == "//" {
+            self.pos += 2;
+            self.pos += self.code[self.pos..]
+                .iter()
+                .position(|c| c == &'\n')
+                .unwrap()
+                + 1;
+        } else if &self.peek_str(2) == "/*" {
+            let start_pos = self.pos;
+            self.pos += 2;
+            self.pos += self.code[self.pos..]
+                .iter()
+                .zip(self.code[self.pos + 1..].iter())
+                .position(|c| c == (&'*', &'/'))
+                .ok_or(TokenizeError::new("unclosed block comment", start_pos))?
+                + 2;
+        }
+        Ok(())
+    }
     pub fn tokenize(&mut self) -> Result<VecDeque<Token>, TokenizeError> {
         let mut list: VecDeque<Token> = VecDeque::new();
         while !self.is_at_end() {
+            self.read_comment()?;
             let current = self.pos;
             if self.read_whitespace() {
                 continue;

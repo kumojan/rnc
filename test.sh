@@ -44,7 +44,7 @@ assert 4 'int main() { return (3+5)/2; }'
 assert 10 'int main() { return -10+20; }'
 assert 10 'int main() { return - -10; }'
 assert 10 'int main() { return - - +10; }'
-
+exit
 assert 0 'int main() { return 0==1; }'
 assert 1 'int main() { return 42==42; }'
 assert 1 'int main() { return 0!=1; }'
@@ -216,4 +216,7 @@ assert 2 'int main() { return ({ 0; 1; 2; }); }'
 assert 1 'int main() { ({ 0; return 1; 2; }); return 3; }'
 assert 6 'int main() { return ({ 1; }) + ({ 2; }) + ({ 3; }); }'
 assert 3 'int main() { return ({ int x=3; x; }); }'
+assert 2 'int main() { /* return 1; */ return 2; }'
+ assert 2 'int main() { // return 1;
+ return 2; }'
 echo OK
