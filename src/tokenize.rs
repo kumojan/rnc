@@ -110,12 +110,10 @@ pub struct Lexer {
 
 impl Lexer {
     pub fn new(code: &String) -> Self {
-        let mut code: Vec<char> = code.chars().collect();
-        if code.last().unwrap() != &'\n' {
-            // TODO: コードが空の時
-            code.push('\n');
+        Self {
+            code: code.chars().collect(),
+            pos: 0,
         }
-        Self { code, pos: 0 }
     }
     fn check_res_word(&self, s: &String, l: usize) -> bool {
         !is_alnum(&self.peek_char(l))
@@ -332,19 +330,19 @@ impl Lexer {
         let mut list: VecDeque<Token> = VecDeque::new();
         while !self.is_at_end() {
             self.read_comment()?;
-            let current = self.pos;
+            let tk_head = self.pos;
             if self.read_whitespace() {
                 continue;
             } else if let Some(s) = self.read_punct() {
-                list.push_back(Token::new_reserved(s, self.pos));
+                list.push_back(Token::new_reserved(s, tk_head));
             } else if let Some(s) = self.read_word() {
-                list.push_back(Token::new_reserved(s, self.pos));
+                list.push_back(Token::new_reserved(s, tk_head));
             } else if let Some(n) = self.read_num() {
-                list.push_back(Token::new_num(n, current, self.pos - current));
+                list.push_back(Token::new_num(n, tk_head, self.pos - tk_head));
             } else if let Some(s) = self.read_ident() {
-                list.push_back(Token::new_ident(s, self.pos));
+                list.push_back(Token::new_ident(s, tk_head));
             } else if let Some(s) = self.read_string()? {
-                list.push_back(Token::new_string(s, current, self.pos - current));
+                list.push_back(Token::new_string(s, tk_head, self.pos - tk_head));
             } else {
                 return Err(self.pos)?;
             }

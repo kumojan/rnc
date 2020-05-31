@@ -36,9 +36,9 @@ fn main() -> Result<(), String> {
         Some(filename) => {
             let code = open(&filename).map_err(|_| format!("cannot open file {}", filename))?;
             match compile(&code, matches.opt_present("t"), matches.opt_present("g")) {
-                Err(CompileError::Tokenize { pos, msg }) => error_at(&code, pos, msg),
+                Err(CompileError::Tokenize { pos, msg }) => error_at(&code, pos, msg, &filename),
                 Err(CompileError::Parse { pos, msg }) => {
-                    error_at(&code, pos, format!("parse failed: {}", msg))
+                    error_at(&code, pos, format!("parse failed: {}", msg,), &filename)
                 }
                 Err(CompileError::CodeGen { msg }) => {
                     error(format!("codegen failed with node: {}", msg))
@@ -72,5 +72,8 @@ fn open(filename: &String) -> std::io::Result<String> {
     let mut file = File::open(filename)?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
+    if contents.chars().last() != Some('\n') {
+        contents.push('\n');
+    }
     Ok(contents)
 }
