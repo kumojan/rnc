@@ -204,26 +204,27 @@ impl CodeGenerator {
                 then_,
                 else_,
             } => {
+                let label = self.label_count;
+                self.label_count += 1;
                 // 左辺を計算して結果をpush
                 self.gen_expr(condi)?;
                 // condi結果取り出し
                 println!("  pop rax");
                 println!("  cmp rax, 0");
                 // 結果がfalseならjump, trueならそのまま
-                println!("  je .L.else.{}", self.label_count);
+                println!("  je .L.else.{}", label);
                 if let Some(else_) = else_ {
                     // trueの場合
                     self.gen_stmt(then_)?;
-                    println!("  jmp .L.end.{}", self.label_count);
-                    println!(".L.else.{}:", self.label_count);
+                    println!("  jmp .L.end.{}", label);
+                    println!(".L.else.{}:", label);
                     // falseの場合
                     self.gen_stmt(else_)?; // こっちはjmp不要(次の行の.L1にそのまますすむ)
-                    println!(".L.end.{}:", self.label_count);
+                    println!(".L.end.{}:", label);
                 } else {
                     self.gen_stmt(then_)?;
-                    println!(".L.else.{}:", self.label_count);
+                    println!(".L.else.{}:", label);
                 }
-                self.label_count += 1;
             }
             Node::For {
                 start,
@@ -231,23 +232,24 @@ impl CodeGenerator {
                 end,
                 loop_,
             } => {
+                let label = self.label_count;
+                self.label_count += 1;
                 if let Some(start) = start {
                     self.gen_stmt(start)?;
                 }
-                println!(".L.begin.{}:", self.label_count);
+                println!(".L.begin.{}:", label);
                 if let Some(condi) = condi {
                     self.gen_expr(condi)?;
                     println!("  pop rax");
                     println!("  cmp rax, 0");
-                    println!("  je .L.end.{}", self.label_count);
+                    println!("  je .L.end.{}", label);
                 }
                 self.gen_stmt(loop_)?;
                 if let Some(end) = end {
                     self.gen_stmt(end)?;
                 }
-                println!("  jmp .L.begin.{}", self.label_count);
-                println!(".L.end.{}:", self.label_count);
-                self.label_count += 1;
+                println!("  jmp .L.begin.{}", label);
+                println!(".L.end.{}:", label);
             }
             _ => {
                 return Err(CodeGenError {
@@ -323,9 +325,8 @@ pub fn code_gen(
 }
 
 use std::fs;
-use std::io;
 use std::io::{BufWriter, Write};
-pub fn print_graph(program: &Vec<Function>) -> io::Result<()> {
+pub fn print_graph(program: &Vec<Function>) {
     let mut f = BufWriter::new(fs::File::create("graph.dot").unwrap());
     f.write(
         b"digraph {
@@ -335,16 +336,18 @@ fontsize = 16,
 fillcolor = \"green\",
 ];
 ",
-    )?;
+    )
+    .unwrap();
     for func in program {
         for (i, node) in func.body.iter().enumerate() {
-            f.write(format!("{} [label=\"func {}\"]\n", func.name, func.name).as_bytes())?;
-            f.write(graph_gen(node, &func.name, i, None).as_bytes())?;
+            f.write(format!("{} [label=\"func {}\"]\n", func.name, func.name).as_bytes())
+                .unwrap();
+            f.write(graph_gen(node, &func.name, i, None).as_bytes())
+                .unwrap();
         }
     }
 
-    f.write(b"}\n")?;
-    Ok(())
+    f.write(b"}\n").unwrap();
 }
 pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str>) -> String {
     if let Node::ExprStmt { expr } = node {

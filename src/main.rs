@@ -12,7 +12,7 @@ use crate::err::*;
 use crate::parse::*;
 use crate::tokenize::*;
 
-fn main() -> Result<(), CompileError> {
+fn main() -> Result<(), String> {
     // 実験
     // for i in 0..256 {
     //     println!(
@@ -33,19 +33,24 @@ fn main() -> Result<(), CompileError> {
     };
     // Result型を返すことで、, エラー終了時に終了ステータス1となる。
     match env::args().last() {
-        Some(code) => match compile(&code, matches.opt_present("t"), matches.opt_present("g")) {
-            Err(EnumError::Tokenize { pos, msg }) => error_at(&code, pos, msg),
-            Err(EnumError::Parse { pos, msg }) => {
-                error_at(&code, pos, format!("parse failed: {}", msg))
+        Some(filename) => {
+            let code = open(&filename).map_err(|_| format!("cannot open file {}", filename))?;
+            match compile(&code, matches.opt_present("t"), matches.opt_present("g")) {
+                Err(CompileError::Tokenize { pos, msg }) => error_at(&code, pos, msg),
+                Err(CompileError::Parse { pos, msg }) => {
+                    error_at(&code, pos, format!("parse failed: {}", msg))
+                }
+                Err(CompileError::CodeGen { msg }) => {
+                    error(format!("codegen failed with node: {}", msg))
+                }
+                _ => Ok(()),
             }
-            Err(EnumError::CodeGen { msg }) => error(format!("codegen failed with node: {}", msg)),
-            _ => Ok(()),
-        },
+        }
         None => error("input needed"),
     }
 }
 
-fn compile(code: &String, print_tklist: bool, print_graph_: bool) -> Result<(), EnumError> {
+fn compile(code: &String, print_tklist: bool, print_graph_: bool) -> Result<(), CompileError> {
     let token_list = Lexer::new(code).tokenize()?;
     if print_tklist {
         for tk in &token_list {
@@ -59,4 +64,13 @@ fn compile(code: &String, print_tklist: bool, print_graph_: bool) -> Result<(), 
     }
     code_gen(functions, globals, string_literals)?;
     Ok(())
+}
+
+use std::fs::File;
+use std::io::prelude::*;
+fn open(filename: &String) -> std::io::Result<String> {
+    let mut file = File::open(filename)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    Ok(contents)
 }

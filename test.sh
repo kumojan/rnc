@@ -20,7 +20,7 @@ assert() {
   expected="$1"
   input="$2"
 
-  ./target/debug/rnc "$input" > bind/tmp.s
+  ./target/debug/rnc <(echo "$input") > bind/tmp.s
   CMD="gcc -static -o tmp tmp.s tmp2.o; ./tmp"
   docker run --rm --mount type=bind,src=$PWD/bind,dst=/home/user --workdir /home/user compilerbook /bin/bash -c "$CMD"
   actual="$?"
@@ -114,7 +114,7 @@ assert 7 'int main() { int x=3; int y=5; *(&x+1)=7; return y; }'
 assert 7 'int main() { int x=3; int y=5; *(&y-1)=7; return x; }'
 assert 2 'int main() { int x=3; return (&x+2)-&x; }'
 
-assert 7 'int main() { return 1 + _add(1, _add(2, 3)); } int _add(int a, int b) { return a+b; }'
+assert 18 'int main() { return 1 + _add(1, _add(2, 3)); } int _add(int a, int b) { return a+2*b; }'
 assert 12 'int main() { return double_add(5, 2); } int double_add(int a, int b) { return 2*a+b; }'  # 引数の順番チェック
 assert 1 'int main() { return is_odd(9); } int is_odd(int n) {if (n>0) return is_even(n-1); else return 0;} int is_even(int n) {if (n>0) return is_odd(n-1); else return 1;}'  # 複数関数定義チェック
 assert 55 'int main() { return fib(9); } int fib(int x) { if (x<=1) return 1; return fib(x-1) + fib(x-2); }'

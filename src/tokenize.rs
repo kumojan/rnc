@@ -205,7 +205,7 @@ impl Lexer {
     fn read_octal(&mut self) -> Option<u8> {
         let s: String = self.code[self.pos..]
             .iter()
-            .take(3)
+            .take(3) // octalは最大3桁しか読まない
             .take_while(|c| ('0'..='7').contains(c))
             .collect();
         self.pos += s.len();
@@ -220,13 +220,14 @@ impl Lexer {
         let s: String = self.code[self.pos..]
             .iter()
             .take_while(|c| {
+                // hexadecimalは何桁でも読む
                 ('a'..='z').contains(c) || ('A'..='Z').contains(c) || ('0'..='9').contains(c)
             })
             .collect();
         self.pos += s.len();
         if s.len() > 0 {
             // rustのchar, Stringは文字コード外の文字列を受け付けないので、
-            // 169 as char は ©という記号、ないし [194, 169] というバイト列になってしまう。
+            // 例えば、169 as char は ©という記号、ないし [194, 169] というバイト列になってしまう。
             // 一方cはcharはただのu8なので、169はそのまま169になる
             // この問題を回避するには、String LiteralをrustのStringとして保持するのをやめてVec<u8>
             // などとして持つ必要がある。 => 修正した
