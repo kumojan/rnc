@@ -38,6 +38,7 @@ pub struct Token {
     pub kind: TokenKind,
     pub pos: usize,
     pub len: usize,
+    pub line_no: usize,
 }
 impl Token {
     fn new_num(val: u32, pos: usize, len: usize) -> Self {
@@ -45,6 +46,7 @@ impl Token {
             kind: TkNum(val),
             pos,
             len,
+            line_no: 0,
         }
     }
     fn new_ident(s: String, pos: usize) -> Self {
@@ -52,6 +54,7 @@ impl Token {
         Self {
             kind: TkIdent(s),
             pos,
+            line_no: 0,
             len,
         }
     }
@@ -60,6 +63,7 @@ impl Token {
         Self {
             kind: TkReserved(s),
             pos,
+            line_no: 0,
             len,
         }
     }
@@ -68,6 +72,7 @@ impl Token {
             kind: TkString(s),
             pos,
             len,
+            line_no: 0,
         }
     }
 }
@@ -327,7 +332,19 @@ impl Lexer {
             kind: TkEOF,
             pos: self.code.len(),
             len: 0,
+            line_no: 0,
         });
+        // 行番号を計算してトークンに付加
+        let mut head = 0;
+        let mut line_no = 0;
+        for mut tk in list.iter_mut() {
+            line_no += self.code[head..tk.pos]
+                .iter()
+                .filter(|c| **c == '\n')
+                .count();
+            tk.line_no = line_no;
+            head = tk.pos;
+        }
         Ok(list)
     }
 }
