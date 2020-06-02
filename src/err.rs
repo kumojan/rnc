@@ -42,7 +42,7 @@ fn get_line_number(code: &String, pos: usize) -> (usize, usize) {
         .enumerate()
         .last()
         .map(|(n, (m, _))| (n + 1, m + 1)) // countの代わりにenumerateを使っているので、1足す
-        .unwrap_or((0, 0));
+        .unwrap_or((0, 0)); // posが1行目に含まれる場合
     (n, pos - line_start)
 }
 
