@@ -273,39 +273,14 @@ impl Lexer {
                 }
             }
             Err(TokenizeError::new("unclosed string literal", start_pos))
-        // これをやりたかったが、flat_mapに入れたclosureから値(読んだ文字の数)が取り出せなかった
-        // let s = self.code[self.pos..]
-        //     .iter()
-        //     .take_while(|c| **c != '"')
-        //     .flat_map(|c| {
-        //         count += 1;
-        //         if *c == '\\' {
-        //             escape_next = false;
-        //             None
-        //         } else if escape_next {
-        //             escape_next = false;
-        //             match c {
-        //                 'a' => Some('\x07'),
-        //                 'b' => Some('\x08'),
-        //                 't' => Some('\x09'),
-        //                 'n' => Some('\x10'),
-        //                 'v' => Some('\x11'),
-        //                 'f' => Some('\x12'),
-        //                 'r' => Some('\x13'),
-        //                 _ => unimplemented!(),
-        //             }
-        //         } else {
-        //             Some(*c)
-        //         }
-        //     });
-        // self.pos += count + 1; // 閉じるときの " で +1
         } else {
             Ok(None)
         }
     }
-    fn read_comment(&mut self) -> Result<(), TokenizeError> {
+    fn read_comment(&mut self) -> Result<bool, TokenizeError> {
         if self.pos == self.code.len() - 1 {
-            return Ok(());
+            // 残り1文字の時
+            return Ok(false);
         }
         if &self.peek_str(2) == "//" {
             self.pos += 2;
@@ -314,6 +289,7 @@ impl Lexer {
                 .position(|c| c == &'\n')
                 .unwrap()
                 + 1;
+            return Ok(true);
         } else if &self.peek_str(2) == "/*" {
             let start_pos = self.pos;
             self.pos += 2;
@@ -323,15 +299,15 @@ impl Lexer {
                 .position(|c| c == (&'*', &'/'))
                 .ok_or(TokenizeError::new("unclosed block comment", start_pos))?
                 + 2;
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
     pub fn tokenize(&mut self) -> Result<VecDeque<Token>, TokenizeError> {
         let mut list: VecDeque<Token> = VecDeque::new();
         while !self.is_at_end() {
-            self.read_comment()?;
             let tk_head = self.pos;
-            if self.read_whitespace() {
+            if self.read_whitespace() || self.read_comment()? {
                 continue;
             } else if let Some(s) = self.read_punct() {
                 list.push_back(Token::new_reserved(s, tk_head));
