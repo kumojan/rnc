@@ -28,31 +28,30 @@ impl fmt::Debug for Var {
 
 // #[derive(Debug)]
 #[derive(Clone, Copy)]
-pub enum NodeKind {
-    NdAdd,
-    NdSub,
-    NdMul,
-    NdDiv,
-    NdEq,
-    NdNeq,
-    NdLt,
-    NdLe,
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    _Eq,
+    Neq,
+    Lt,
+    Le,
 }
-impl fmt::Debug for NodeKind {
+impl fmt::Debug for BinOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            NdAdd => write!(f, "+"),
-            NdSub => write!(f, "-"),
-            NdMul => write!(f, "*"),
-            NdDiv => write!(f, "/"),
-            NdEq => write!(f, "=="),
-            NdNeq => write!(f, "!="),
-            NdLt => write!(f, "<"),
-            NdLe => write!(f, "<="),
+            BinOp::Add => write!(f, "+"),
+            BinOp::Sub => write!(f, "-"),
+            BinOp::Mul => write!(f, "*"),
+            BinOp::Div => write!(f, "/"),
+            BinOp::_Eq => write!(f, "=="),
+            BinOp::Neq => write!(f, "!="),
+            BinOp::Lt => write!(f, "<"),
+            BinOp::Le => write!(f, "<="),
         }
     }
 }
-use NodeKind::*;
 
 #[allow(dead_code)]
 pub enum Node {
@@ -74,7 +73,7 @@ pub enum Node {
         rhs: Box<Node>,
     },
     Bin {
-        kind: NodeKind,
+        kind: BinOp,
         lhs: Box<Node>,
         rhs: Box<Node>,
     },
@@ -148,9 +147,7 @@ impl Node {
             }
             Self::Assign { lvar, .. } => lvar.get_type(),
             Self::Bin { kind, lhs, rhs } => match kind {
-                NodeKind::NdSub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => {
-                    Type::TyInt
-                } // ポインタ同士の引き算はint
+                BinOp::Sub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => Type::TyInt, // ポインタ同士の引き算はint
                 _ => lhs.get_type(),
             },
             Self::Literal { ty, .. } => ty.clone(),
@@ -200,7 +197,7 @@ impl Node {
             expr: Box::new(expr),
         }
     }
-    fn new_bin(kind: NodeKind, lhs: Node, rhs: Node) -> Self {
+    fn new_bin(kind: BinOp, lhs: Node, rhs: Node) -> Self {
         Self::Bin {
             kind,
             lhs: Box::new(lhs),
@@ -210,16 +207,16 @@ impl Node {
     fn new_add(lhs: Node, rhs: Node) -> Self {
         match (lhs.get_type().is_ptr_like(), rhs.get_type().is_ptr_like()) {
             // 値 + 値
-            (false, false) => Self::new_bin(NdAdd, lhs, rhs),
+            (false, false) => Self::new_bin(BinOp::Add, lhs, rhs),
             // 値+ポインタ => ポインタ+値と見なす
             (false, true) => Self::new_add(rhs, lhs),
             // ポインタ + 値 は値だけずれたポインタを返す(型はlhsなのでポインタになる)
             (true, false) => {
                 let ty_size = lhs.get_type().get_base().unwrap().size() as u32;
                 Self::new_bin(
-                    NdAdd,
+                    BinOp::Add,
                     lhs,
-                    Self::new_bin(NdMul, Node::new_num(ty_size), rhs),
+                    Self::new_bin(BinOp::Mul, Node::new_num(ty_size), rhs),
                 )
             }
             (true, true) => unimplemented!(), // ポインタ同士の足し算は意味をなさない
@@ -228,22 +225,22 @@ impl Node {
     fn new_sub(lhs: Node, rhs: Node) -> Self {
         match (lhs.get_type().is_ptr_like(), rhs.get_type().is_ptr_like()) {
             // 値 - 値
-            (false, false) => Self::new_bin(NdSub, lhs, rhs),
+            (false, false) => Self::new_bin(BinOp::Sub, lhs, rhs),
             // ポインタ - 値
             (true, false) => {
                 let ty_size = lhs.get_type().get_base().unwrap().size() as u32;
                 Self::new_bin(
-                    NdSub,
+                    BinOp::Sub,
                     lhs,
-                    Self::new_bin(NdMul, rhs, Node::new_num(ty_size)),
+                    Self::new_bin(BinOp::Mul, rhs, Node::new_num(ty_size)),
                 )
             }
             // ポインタ - ポインタ (ずれを返す int)
             (true, true) => {
                 let ty_size = lhs.get_type().get_base().unwrap().size() as u32;
                 Node::new_bin(
-                    NdDiv,
-                    Node::new_bin(NdSub, lhs, rhs),
+                    BinOp::Div,
+                    Node::new_bin(BinOp::Sub, lhs, rhs),
                     Node::new_num(ty_size),
                 )
             }
@@ -808,8 +805,8 @@ impl CodeGen for Parser {
         let mut node = self.relational()?;
         loop {
             match self.peek_reserved().as_deref() {
-                Some("==") => node = Node::new_bin(NdEq, node, self.shift().relational()?),
-                Some("!=") => node = Node::new_bin(NdNeq, node, self.shift().relational()?),
+                Some("==") => node = Node::new_bin(BinOp::_Eq, node, self.shift().relational()?),
+                Some("!=") => node = Node::new_bin(BinOp::Neq, node, self.shift().relational()?),
                 _ => return Ok(node),
             }
         }
@@ -818,10 +815,10 @@ impl CodeGen for Parser {
         let mut node = self.add()?;
         loop {
             match self.peek_reserved().as_deref() {
-                Some("<") => node = Node::new_bin(NdLt, node, self.shift().add()?),
-                Some("<=") => node = Node::new_bin(NdLe, node, self.shift().add()?),
-                Some(">") => node = Node::new_bin(NdLt, self.shift().add()?, node),
-                Some(">=") => node = Node::new_bin(NdLe, self.shift().add()?, node),
+                Some("<") => node = Node::new_bin(BinOp::Lt, node, self.shift().add()?),
+                Some("<=") => node = Node::new_bin(BinOp::Le, node, self.shift().add()?),
+                Some(">") => node = Node::new_bin(BinOp::Lt, self.shift().add()?, node),
+                Some(">=") => node = Node::new_bin(BinOp::Le, self.shift().add()?, node),
                 _ => return Ok(node),
             }
         }
@@ -840,8 +837,8 @@ impl CodeGen for Parser {
         let mut node = self.unary()?;
         loop {
             match self.peek_reserved().as_deref() {
-                Some("*") => node = Node::new_bin(NdMul, node, self.shift().unary()?),
-                Some("/") => node = Node::new_bin(NdDiv, node, self.shift().unary()?),
+                Some("*") => node = Node::new_bin(BinOp::Mul, node, self.shift().unary()?),
+                Some("/") => node = Node::new_bin(BinOp::Div, node, self.shift().unary()?),
                 _ => return Ok(node),
             }
         }
@@ -850,7 +847,7 @@ impl CodeGen for Parser {
         match self.peek_reserved().as_deref() {
             Some("+") => self.shift().unary(),
             Some("-") => Ok(Node::new_bin(
-                NdSub,
+                BinOp::Sub,
                 Node::new_num(0),
                 self.shift().unary()?,
             )),

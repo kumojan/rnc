@@ -1,4 +1,4 @@
-use crate::parse::{Function, Node, NodeKind, Var};
+use crate::parse::{BinOp, Function, Node, Var};
 use crate::r#type::Type;
 use std::rc::Rc;
 
@@ -163,14 +163,14 @@ impl CodeGenerator {
                 println!("  pop rdi");
                 println!("  pop rax");
                 let code = match kind {
-                    NodeKind::NdAdd => "  add rax, rdi",
-                    NodeKind::NdSub => "  sub rax, rdi",
-                    NodeKind::NdMul => "  imul rax, rdi",
-                    NodeKind::NdDiv => "  cqo\n  idiv rdi",
-                    NodeKind::NdEq => "  cmp rax, rdi\n  sete al\n  movzb rax, al", // 最後のmovzbは、raxの上位56を削除して、下位8ビットにalを入れるということだろう。
-                    NodeKind::NdNeq => "  cmp rax, rdi\n  setne al\n  movzb rax, al",
-                    NodeKind::NdLt => "  cmp rax, rdi\n  setl al\n  movzb rax, al",
-                    NodeKind::NdLe => "  cmp rax, rdi\n  setle al\n  movzb rax, al",
+                    BinOp::Add => "  add rax, rdi",
+                    BinOp::Sub => "  sub rax, rdi",
+                    BinOp::Mul => "  imul rax, rdi",
+                    BinOp::Div => "  cqo\n  idiv rdi",
+                    BinOp::_Eq => "  cmp rax, rdi\n  sete al\n  movzb rax, al", // 最後のmovzbは、raxの上位56を削除して、下位8ビットにalを入れるということだろう。
+                    BinOp::Neq => "  cmp rax, rdi\n  setne al\n  movzb rax, al",
+                    BinOp::Lt => "  cmp rax, rdi\n  setl al\n  movzb rax, al",
+                    BinOp::Le => "  cmp rax, rdi\n  setle al\n  movzb rax, al",
                 };
                 println!("{}", code);
                 println!("  push rax")
