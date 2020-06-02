@@ -21,6 +21,11 @@ impl fmt::Debug for Var {
     }
 }
 
+// #[derive(Default)]
+// struct Scope {
+//     vars: Vec<Rc<Var>>,
+// }
+
 // #[derive(Debug)]
 #[derive(Clone, Copy)]
 pub enum NodeKind {
@@ -362,7 +367,7 @@ pub trait CodeGen {
     fn type_suffix(&mut self, ty: Type) -> Result<Type, ParseError>;
     fn vardef(&mut self) -> Result<Vec<Node>, ParseError>;
     fn initializer(&mut self) -> Result<Option<Node>, ParseError>;
-    fn compound_stmt(&mut self) -> Result<Vec<Node>, ParseError>;
+    fn compound_stmt(&mut self, new_scope: bool) -> Result<Vec<Node>, ParseError>;
     fn stmt(&mut self) -> Result<Node, ParseError>;
     fn expr(&mut self) -> Result<Node, ParseError>;
     fn assign(&mut self) -> Result<Node, ParseError>;
@@ -490,6 +495,7 @@ pub struct Parser {
     locals: Vec<Rc<Var>>, // Node::Varと共有する。
     globals: Vec<Rc<Var>>,
     string_literals: Vec<Vec<u8>>,
+    scope_stack: VecDeque<VecDeque<Rc<Var>>>, // 前に内側のスコープがある
 }
 impl Parser {
     pub fn new(tklist: VecDeque<Token>) -> Self {
@@ -498,38 +504,41 @@ impl Parser {
             locals: Vec::new(),
             globals: Vec::new(),
             string_literals: Vec::new(),
+            scope_stack: Default::default(),
         }
     }
+    /// 必ずleave_scopeと対にして使うこと
+    fn enter_scope(&mut self) {
+        self.scope_stack.push_front(Default::default());
+    }
+    /// 必ずenter_scopeと対にして使うこと
+    fn leave_scope(&mut self) {
+        self.scope_stack.pop_front();
+    }
     fn find_var(&self, name: &String) -> Option<Rc<Var>> {
-        self.locals
+        // println!("searching {} in {:?}", name, self.scope_stack);
+        self.scope_stack
             .iter()
-            .find(|v| v.name == *name)
+            .flat_map(|scope| scope.iter().find(|v| &v.name == name))
+            .next()
             .or_else(|| self.globals.iter().find(|v| v.name == *name))
             .cloned()
     }
     fn add_var(&mut self, name: &String, ty: Type) -> Result<Rc<Var>, ParseError> {
-        if let Some(v) = self.locals.iter().find(|v| v.name == *name) {
-            if v.ty != ty {
-                unimplemented!("type change of vars");
-            }
-            return Ok(v.clone());
-        } else {
-            let var = Rc::new(Var {
-                name: name.clone(),
-                ty,
-                id: self.locals.len(),
-                is_local: true,
-            });
-            self.locals.push(var.clone());
-            return Ok(var);
-        }
+        let var = Rc::new(Var {
+            name: name.clone(),
+            ty,
+            id: self.locals.len(),
+            is_local: true,
+        });
+        self.locals.push(var.clone());
+        self.scope_stack[0].push_front(var.clone()); // scopeにも追加
+        return Ok(var);
     }
+    // グローバル変数は重複して宣言できない
     fn add_global(&mut self, name: &String, ty: Type) -> Result<Rc<Var>, ParseError> {
-        if let Some(v) = self.globals.iter().find(|v| v.name == *name) {
-            if v.ty != ty {
-                unimplemented!("type change of vars");
-            }
-            return Ok(v.clone());
+        if self.globals.iter().find(|v| v.name == *name).is_some() {
+            Err(self.raise_err("global var redefined!"))
         } else {
             let var = Rc::new(Var {
                 name: name.clone(),
@@ -634,9 +643,11 @@ impl CodeGen for Parser {
         // 次に関数の有無を見る
         if self.peek("(") {
             // 関数の宣言
+            self.enter_scope();
             self.funcargs()?;
             let params: Vec<_> = self.locals.iter().cloned().collect();
-            let stmts = self.compound_stmt()?;
+            let stmts = self.compound_stmt(false)?;
+            self.leave_scope();
             return Ok(Some(Function::new(
                 _ty,
                 name,
@@ -706,7 +717,7 @@ impl CodeGen for Parser {
     fn initializer(&mut self) -> Result<Option<Node>, ParseError> {
         let node = if self.consume("=") {
             if self.peek("{") {
-                unimplemented!();
+                unimplemented!("array initiation not implemented");
             } else {
                 Some(self.expr()?)
             }
@@ -716,14 +727,20 @@ impl CodeGen for Parser {
         Ok(node)
     }
 
-    fn compound_stmt(&mut self) -> Result<Vec<Node>, ParseError> {
+    fn compound_stmt(&mut self, enter_scope: bool) -> Result<Vec<Node>, ParseError> {
         self.expect("{")?;
+        if enter_scope {
+            self.enter_scope();
+        }
         let mut block = vec![];
         while !self.consume("}") {
             match self.peek_reserved().as_deref() {
                 Some("int") | Some("char") => block.extend(self.vardef()?),
                 _ => block.push(self.stmt()?),
             };
+        }
+        if enter_scope {
+            self.leave_scope();
         }
         Ok(block)
     }
@@ -737,7 +754,7 @@ impl CodeGen for Parser {
         };
         let node = if self.peek("{") {
             Node::Block {
-                stmts: Box::new(self.compound_stmt()?),
+                stmts: Box::new(self.compound_stmt(true)?),
             }
         } else if self.consume("if") {
             self.expect("(")?;
@@ -854,7 +871,7 @@ impl CodeGen for Parser {
     fn primary(&mut self) -> Result<Node, ParseError> {
         if self.consume("(") {
             if self.peek("{") {
-                let mut stmts = self.compound_stmt()?;
+                let mut stmts = self.compound_stmt(true)?;
                 self.expect(")")?;
                 // 最後はexpression statementでないといけない
                 if let Some(Node::ExprStmt { expr }) = stmts.pop() {

@@ -44,7 +44,7 @@ assert 4 'int main() { return (3+5)/2; }'
 assert 10 'int main() { return -10+20; }'
 assert 10 'int main() { return - -10; }'
 assert 10 'int main() { return - - +10; }'
-exit
+
 assert 0 'int main() { return 0==1; }'
 assert 1 'int main() { return 42==42; }'
 assert 1 'int main() { return 0!=1; }'
@@ -92,6 +92,8 @@ assert 45 "int main () { int i, a = 0;for(i=0; i<10; i = i+1) a = a + i; return 
 assert 55 "int main () { int a = 0; int i=0;for(;i<10;) a = a + (i=i+1); return a; }"
 assert 42 "int main () { for(;;) return 42; }"
 assert 89 "int main () { int i, a=1,b=1;for(i=0;i<10;i=i+1) {{int c=b;b=a+b;a=c;}} return a; }"
+echo 'test for if, for, while done'
+sleep 120
 
 assert 3 'int main() { return ret3(); }'
 assert 5 'int main() { return ret5(); }'
@@ -120,6 +122,8 @@ assert 1 'int main() { return is_odd(9); } int is_odd(int n) {if (n>0) return is
 assert 55 'int main() { return fib(9); } int fib(int x) { if (x<=1) return 1; return fib(x-1) + fib(x-2); }'
 
 assert 11 "int main() { return f(1,2); } int f(int a, int c) { int b = 10, d=11; return a + b;}"  # 関数内ローカルパラメタチェック
+echo 'test for funcall, funcdef, pointer done'
+sleep 120
 
 assert 3 'int main() { int x[3]; *x=3; *(x+1)=4; *(x+2)=5; return *x; }'
 assert 4 'int main() { int x[3]; *x=3; *(x+1)=4; *(x+2)=5; return *(x+1); }'
@@ -169,6 +173,8 @@ assert 3 'int x[4]; int main() { x[0]=0; x[1]=1; x[2]=2; x[3]=3; return x[3]; }'
 
 assert 8 'int x; int main() { return sizeof(x); }'
 assert 32 'int x[4]; int main() { return sizeof(x); }'
+echo 'test for array done'
+sleep 120
 
 assert 1 'int main() { char x=1; return x; }'
 assert 1 'int main() { char x=1; char y=2; return x; }'
@@ -210,6 +216,8 @@ assert 0 'int main() { return "\x00"[0]; }'
 assert 119 'int main() { return "\x77"[0]; }'
 assert 165 'int main() { return "\xA5"[0]; }'
 assert 255 'int main() { return "\x00ff"[0]; }'
+echo 'test for char done'
+sleep 120
 
 assert 0 'int main() { return ({ 0; }); }'
 assert 2 'int main() { return ({ 0; 1; 2; }); }'
@@ -217,6 +225,12 @@ assert 1 'int main() { ({ 0; return 1; 2; }); return 3; }'
 assert 6 'int main() { return ({ 1; }) + ({ 2; }) + ({ 3; }); }'
 assert 3 'int main() { return ({ int x=3; x; }); }'
 assert 2 'int main() { /* return 1; */ return 2; }'
- assert 2 'int main() { // return 1;
- return 2; }'
+assert 2 'int main() { // return 1;
+return 2; }'
+
+# ブロックスコープ
+assert 2 'int main() { int x=2; { int x=3; } return x; }'
+assert 4 'int main() { int x=2; { int x=3; } { int x=4; return x; }}'
+assert 3 'int main() { int x=2; { x=3; } return x; }'
+echo 'test for test for statement expression, block scope done'
 echo OK
