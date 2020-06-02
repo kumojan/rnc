@@ -54,7 +54,7 @@ impl fmt::Debug for BinOp {
 }
 
 #[allow(dead_code)]
-pub enum Node {
+pub enum NodeKind {
     // 式(expression)
     Num {
         val: u32,
@@ -111,112 +111,130 @@ pub enum Node {
         loop_: Box<Node>,
     },
 }
-impl fmt::Debug for Node {
+impl fmt::Debug for NodeKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Node::Num { val } => write!(f, "Num {}", val),
-            Node::Var { var } => write!(f, "{:?}", var),
-            Node::Return { .. } => write!(f, "return"),
-            Node::ExprStmt { .. } => write!(f, "expr stmt"),
-            Node::Bin { kind, .. } => write!(f, "Bin {:?}", kind),
-            Node::Assign { .. } => write!(f, "assign"),
-            Node::If { .. } => write!(f, "If"),
-            Node::For { .. } => write!(f, "for"),
-            Node::Block { stmts } => stmts.iter().map(|s| write!(f, "{:?} ", s)).collect(),
-            Node::FunCall { name, .. } => write!(f, "function {}", name),
-            Node::Addr { .. } => write!(f, "address"),
-            Node::Deref { .. } => write!(f, "deref"),
-            Node::Literal { ty, .. } => write!(f, "{:?} literal", ty),
-            Node::StmtExpr { .. } => write!(f, "stmt expr"),
+            NodeKind::Num { val } => write!(f, "Num {}", val),
+            NodeKind::Var { var } => write!(f, "{:?}", var),
+            NodeKind::Return { .. } => write!(f, "return"),
+            NodeKind::ExprStmt { .. } => write!(f, "expr stmt"),
+            NodeKind::Bin { kind, .. } => write!(f, "Bin {:?}", kind),
+            NodeKind::Assign { .. } => write!(f, "assign"),
+            NodeKind::If { .. } => write!(f, "If"),
+            NodeKind::For { .. } => write!(f, "for"),
+            // NodeKind::Block { stmts } => stmts.iter().map(|s| write!(f, " {:?} ", s)).collect(),
+            NodeKind::Block { .. } => write!(f, "block"),
+            NodeKind::FunCall { name, .. } => write!(f, "function {}", name),
+            NodeKind::Addr { .. } => write!(f, "address"),
+            NodeKind::Deref { .. } => write!(f, "deref"),
+            NodeKind::Literal { ty, .. } => write!(f, "{:?} literal", ty),
+            NodeKind::StmtExpr { .. } => write!(f, "stmt expr"),
         }
     }
 }
+pub struct Node {
+    pub kind: NodeKind,
+    ty: Option<Type>,
+}
 impl Node {
     pub fn get_type(&self) -> Type {
-        match self {
-            Self::Num { .. } => Type::TyInt,
-            Self::Var { var } => var.ty.clone(),
-            Self::Addr { node } => node.get_type().to_ptr(),
-            Self::Deref { node } => {
-                let _ty = node.get_type();
-                if _ty.is_ptr_like() {
-                    _ty.get_base().unwrap()
-                } else {
-                    panic!("invalid dereference!")
-                }
-            }
-            Self::Assign { lvar, .. } => lvar.get_type(),
-            Self::Bin { kind, lhs, rhs } => match kind {
-                BinOp::Sub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => Type::TyInt, // ポインタ同士の引き算はint
-                _ => lhs.get_type(),
-            },
-            Self::Literal { ty, .. } => ty.clone(),
-            Self::FunCall { .. } => Type::TyInt, // 関数の戻り値は全部int
-            Self::StmtExpr { expr, .. } => expr.get_type(),
+        match &self.ty {
+            Some(ty) => ty.clone(),
             _ => unimplemented!("called get_type for statements!"),
         }
     }
     fn new_num(val: u32) -> Self {
-        Self::Num { val }
+        Self {
+            kind: NodeKind::Num { val },
+            ty: Some(Type::TyInt),
+        }
     }
     fn new_lvar(var: Rc<Var>) -> Self {
-        Self::Var { var }
+        Self {
+            ty: Some(var.ty.clone()),
+            kind: NodeKind::Var { var },
+        }
     }
     fn new_if(condi: Node, then_: Node, else_: Option<Node>) -> Self {
-        Self::If {
-            condi: Box::new(condi),
-            then_: Box::new(then_),
-            else_: else_.map(Box::new),
+        Self {
+            kind: NodeKind::If {
+                condi: Box::new(condi),
+                then_: Box::new(then_),
+                else_: else_.map(Box::new),
+            },
+            ty: None,
         }
     }
     fn new_unary(t: &str, node: Node) -> Self {
-        match t {
-            "return" => Self::Return {
-                returns: Box::new(node),
+        Self {
+            ty: match t {
+                "return" | "expr_stmt" => None,
+                "addr" => node.ty.clone().map(|t| t.to_ptr()),
+                "deref" => node.ty.clone().map(|t| t.get_base().unwrap()),
+                _ => unimplemented!(),
             },
-            "addr" => Self::Addr {
-                node: Box::new(node),
+            kind: match t {
+                "return" => NodeKind::Return {
+                    returns: Box::new(node),
+                },
+                "addr" => NodeKind::Addr {
+                    node: Box::new(node),
+                },
+                "deref" => NodeKind::Deref {
+                    node: Box::new(node),
+                },
+                "expr_stmt" => NodeKind::ExprStmt {
+                    expr: Box::new(node),
+                },
+                _ => unimplemented!(),
             },
-            "deref" => Self::Deref {
-                node: Box::new(node),
-            },
-            "expr_stmt" => Self::ExprStmt {
-                expr: Box::new(node),
-            },
-            _ => unimplemented!(),
         }
     }
     fn new_assign(lvar: Node, rhs: Node) -> Self {
-        Self::Assign {
-            lvar: Box::new(lvar),
-            rhs: Box::new(rhs),
+        Self {
+            ty: rhs.ty.clone(),
+            kind: NodeKind::Assign {
+                lvar: Box::new(lvar),
+                rhs: Box::new(rhs),
+            },
         }
     }
     fn new_expr_stmt(expr: Node) -> Self {
-        Self::ExprStmt {
-            expr: Box::new(expr),
+        Self {
+            kind: NodeKind::ExprStmt {
+                expr: Box::new(expr),
+            },
+            ty: None,
         }
     }
     fn new_bin(kind: BinOp, lhs: Node, rhs: Node) -> Self {
-        Self::Bin {
-            kind,
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
+        Self {
+            ty: match kind {
+                BinOp::Sub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => {
+                    Some(Type::TyInt)
+                } // ポインタ同士の引き算はint
+                _ => Some(lhs.get_type()),
+            },
+            kind: NodeKind::Bin {
+                kind,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            },
         }
     }
     fn new_add(lhs: Node, rhs: Node) -> Self {
         match (lhs.get_type().is_ptr_like(), rhs.get_type().is_ptr_like()) {
             // 値 + 値
-            (false, false) => Self::new_bin(BinOp::Add, lhs, rhs),
+            (false, false) => Node::new_bin(BinOp::Add, lhs, rhs),
             // 値+ポインタ => ポインタ+値と見なす
-            (false, true) => Self::new_add(rhs, lhs),
+            (false, true) => Node::new_add(rhs, lhs),
             // ポインタ + 値 は値だけずれたポインタを返す(型はlhsなのでポインタになる)
             (true, false) => {
                 let ty_size = lhs.get_type().get_base().unwrap().size() as u32;
-                Self::new_bin(
+                Node::new_bin(
                     BinOp::Add,
                     lhs,
-                    Self::new_bin(BinOp::Mul, Node::new_num(ty_size), rhs),
+                    Node::new_bin(BinOp::Mul, Node::new_num(ty_size), rhs),
                 )
             }
             (true, true) => unimplemented!(), // ポインタ同士の足し算は意味をなさない
@@ -225,14 +243,14 @@ impl Node {
     fn new_sub(lhs: Node, rhs: Node) -> Self {
         match (lhs.get_type().is_ptr_like(), rhs.get_type().is_ptr_like()) {
             // 値 - 値
-            (false, false) => Self::new_bin(BinOp::Sub, lhs, rhs),
+            (false, false) => Node::new_bin(BinOp::Sub, lhs, rhs),
             // ポインタ - 値
             (true, false) => {
                 let ty_size = lhs.get_type().get_base().unwrap().size() as u32;
-                Self::new_bin(
+                Node::new_bin(
                     BinOp::Sub,
                     lhs,
-                    Self::new_bin(BinOp::Mul, rhs, Node::new_num(ty_size)),
+                    Node::new_bin(BinOp::Mul, rhs, Node::new_num(ty_size)),
                 )
             }
             // ポインタ - ポインタ (ずれを返す int)
@@ -249,19 +267,40 @@ impl Node {
         }
     }
     fn new_for(start: Option<Node>, condi: Option<Node>, end: Option<Node>, loop_: Node) -> Self {
-        Self::For {
-            start: start.map(Box::new),
-            condi: condi.map(Box::new),
-            end: end.map(Box::new),
-            loop_: Box::new(loop_),
+        Node {
+            kind: NodeKind::For {
+                start: start.map(Box::new),
+                condi: condi.map(Box::new),
+                end: end.map(Box::new),
+                loop_: Box::new(loop_),
+            },
+            ty: None,
+        }
+    }
+    fn new_block(stmts: Vec<Node>) -> Self {
+        Self {
+            kind: NodeKind::Block {
+                stmts: Box::new(stmts),
+            },
+            ty: None,
         }
     }
     fn new_stmt_expr(stmts: Vec<Node>, expr: Node) -> Self {
-        Self::StmtExpr {
-            stmts: Box::new(Self::Block {
-                stmts: Box::new(stmts),
-            }),
-            expr: Box::new(expr),
+        Node {
+            ty: Some(expr.get_type()),
+            kind: NodeKind::StmtExpr {
+                stmts: Box::new(Node::new_block(stmts)),
+                expr: Box::new(expr),
+            },
+        }
+    }
+    fn new_funcall(name: String, args: Vec<Node>) -> Self {
+        Self {
+            kind: NodeKind::FunCall {
+                name,
+                args: Box::new(args),
+            },
+            ty: Some(Type::TyInt),
         }
     }
 }
@@ -548,9 +587,12 @@ impl Parser {
         }
     }
     fn add_string_literal(&mut self, data: Vec<u8>) -> Node {
-        let n = Node::Literal {
-            ty: Type::TyChar.to_array(data.len() + 1), // string末尾の'\0'も大きさに含める
-            id: self.string_literals.len(),
+        let n = Node {
+            kind: NodeKind::Literal {
+                ty: Type::TyChar.to_array(data.len() + 1), // string末尾の'\0'も大きさに含める
+                id: self.string_literals.len(),
+            },
+            ty: Some(Type::TyChar.to_array(data.len() + 1)),
         };
         self.string_literals.push(data);
         n
@@ -750,9 +792,7 @@ impl CodeGen for Parser {
             })
         };
         let node = if self.peek("{") {
-            Node::Block {
-                stmts: Box::new(self.compound_stmt(true)?),
-            }
+            Node::new_block(self.compound_stmt(true)?)
         } else if self.consume("if") {
             self.expect("(")?;
             let condi = read_until(self, ")")?;
@@ -785,9 +825,7 @@ impl CodeGen for Parser {
         } else if self.consume("return") {
             Node::new_unary("return", read_until(self, ";")?)
         } else {
-            Node::ExprStmt {
-                expr: Box::new(read_until(self, ";")?),
-            }
+            Node::new_expr_stmt(read_until(self, ";")?)
         };
         Ok(node)
     }
@@ -871,7 +909,7 @@ impl CodeGen for Parser {
                 let mut stmts = self.compound_stmt(true)?;
                 self.expect(")")?;
                 // 最後はexpression statementでないといけない
-                if let Some(Node::ExprStmt { expr }) = stmts.pop() {
+                if let Some(NodeKind::ExprStmt { expr }) = stmts.pop().map(|n| n.kind) {
                     Ok(Node::new_stmt_expr(stmts, *expr))
                 } else {
                     Err(self.raise_err("statement expression returning void is not supported"))
@@ -902,10 +940,7 @@ impl CodeGen for Parser {
                         break;
                     }
                 }
-                Ok(Node::FunCall {
-                    name,
-                    args: Box::new(args),
-                })
+                Ok(Node::new_funcall(name, args))
             } else {
                 // ただの変数
                 match self.find_var(&name) {

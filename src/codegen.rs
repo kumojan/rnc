@@ -1,4 +1,4 @@
-use crate::parse::{BinOp, Function, Node, Var};
+use crate::parse::{BinOp, Function, Node, NodeKind, Var};
 use crate::r#type::Type;
 use std::rc::Rc;
 
@@ -87,27 +87,27 @@ impl CodeGenerator {
         self.func_stack_size += 16;
     }
     fn gen_expr(&mut self, node: &Node) -> Result<(), CodeGenError> {
-        match node {
-            Node::Num { val, .. } => {
+        match &node.kind {
+            NodeKind::Num { val, .. } => {
                 println!("  push {}", val);
             }
-            Node::Var { var } => {
+            NodeKind::Var { var } => {
                 self.gen_addr(var); // まず変数のアドレスを取得する
                 load(&var.ty); // 配列型の場合は、値を取り出さず、アドレスをそのまま使う
             }
-            Node::Literal { id, .. } => {
+            NodeKind::Literal { id, .. } => {
                 println!("  push offset .L.data.{}", id);
             }
-            Node::Addr { node } => match &**node {
-                Node::Var { var } => self.gen_addr(var),
-                Node::Deref { node } => self.gen_expr(node)?, // &*はスキップする
+            NodeKind::Addr { node } => match &node.kind {
+                NodeKind::Var { var } => self.gen_addr(var),
+                NodeKind::Deref { node } => self.gen_expr(node)?, // &*はスキップする
                 _ => {
                     return Err(CodeGenError {
                         msg: "invalid address expression!".to_owned(),
                     })
                 }
             },
-            Node::Deref { node } => {
+            NodeKind::Deref { node } => {
                 // **x(2段回)だと、gen(x); load(); load();
                 // となる。つまりxの結果(xが変数ならば、その値)を取得し、
                 // それをアドレスとして値を取得、
@@ -118,13 +118,13 @@ impl CodeGenerator {
                 // TODO: 型エラーの処理
                 load(&node.get_type().get_base().unwrap());
             }
-            Node::Assign { lvar, rhs, .. } => {
+            NodeKind::Assign { lvar, rhs, .. } => {
                 println!("  #assign");
-                match &**lvar {
-                    Node::Var { var } => {
+                match &lvar.kind {
+                    NodeKind::Var { var } => {
                         self.gen_addr(var);
                     }
-                    Node::Deref { node } => {
+                    NodeKind::Deref { node } => {
                         self.gen_expr(node)?;
                     }
                     _ => {
@@ -138,7 +138,7 @@ impl CodeGenerator {
                 self.gen_expr(rhs)?;
                 store(&node.get_type());
             }
-            Node::FunCall { name, args } => {
+            NodeKind::FunCall { name, args } => {
                 if args.len() > ARGLEN {
                     return Err(CodeGenError {
                         msg: format!("too many arguments for func {} (must be less than 7)", name),
@@ -153,11 +153,11 @@ impl CodeGenerator {
                 println!("  call {}", name);
                 println!("  push rax"); // 関数終了時にreturnの値がraxに入っている。
             }
-            Node::StmtExpr { stmts, expr } => {
+            NodeKind::StmtExpr { stmts, expr } => {
                 self.gen_stmt(stmts)?;
                 self.gen_expr(expr)?;
             }
-            Node::Bin { kind, lhs, rhs } => {
+            NodeKind::Bin { kind, lhs, rhs } => {
                 self.gen_expr(lhs)?;
                 self.gen_expr(rhs)?;
                 println!("  pop rdi");
@@ -184,22 +184,22 @@ impl CodeGenerator {
         Ok(())
     }
     fn gen_stmt(&mut self, node: &Node) -> Result<(), CodeGenError> {
-        match node {
-            Node::Return { returns } => {
+        match &node.kind {
+            NodeKind::Return { returns } => {
                 self.gen_expr(returns)?; // その値を取得し
                 println!("  pop rax"); // raxに移す
                 println!("  jmp .L.return.{}", self.func_name);
             }
-            Node::Block { stmts } => {
+            NodeKind::Block { stmts } => {
                 for stmt in &**stmts {
                     self.gen_stmt(stmt)?;
                 }
             }
-            Node::ExprStmt { expr } => {
+            NodeKind::ExprStmt { expr } => {
                 self.gen_expr(expr)?;
                 println!("  pop rax"); // 最後に評価した値を捨てる
             }
-            Node::If {
+            NodeKind::If {
                 condi,
                 then_,
                 else_,
@@ -226,7 +226,7 @@ impl CodeGenerator {
                     println!(".L.else.{}:", label);
                 }
             }
-            Node::For {
+            NodeKind::For {
                 start,
                 condi,
                 end,
@@ -350,7 +350,7 @@ fillcolor = \"green\",
     f.write(b"}\n").unwrap();
 }
 pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str>) -> String {
-    if let Node::ExprStmt { expr } = node {
+    if let NodeKind::ExprStmt { expr } = &node.kind {
         return graph_gen(expr, &parent, number, Some("stmt"));
     }
     // 親が指定されているとき、そこから自分への辺を引く
@@ -361,34 +361,34 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
     } else {
         s += &format!("{} -> {}\n", parent, nodename);
     }
-    match node {
-        Node::Num { val } => s += &format!("{} [label=\"num {}\"];\n", nodename, val),
-        Node::Var { var } => s += &format!("{} [label=\"{:?}\"];\n", nodename, var),
-        Node::Literal { id, .. } => s += &format!("{} [label=\"literal {}\"];\n", nodename, id),
-        Node::Bin { kind, lhs, rhs } => {
+    match &node.kind {
+        NodeKind::Num { val } => s += &format!("{} [label=\"num {}\"];\n", nodename, val),
+        NodeKind::Var { var } => s += &format!("{} [label=\"{:?}\"];\n", nodename, var),
+        NodeKind::Literal { id, .. } => s += &format!("{} [label=\"literal {}\"];\n", nodename, id),
+        NodeKind::Bin { kind, lhs, rhs } => {
             s += &format!("{} [label=\"{:?}\"];\n", nodename, kind);
             s += &graph_gen(lhs, &nodename, 0, None);
             s += &graph_gen(rhs, &nodename, 1, None);
         }
-        Node::Assign { lvar, rhs } => {
+        NodeKind::Assign { lvar, rhs } => {
             s += &format!("{} [label=\"assign\"];\n", nodename);
             s += &graph_gen(lvar, &nodename, 0, None);
             s += &graph_gen(rhs, &nodename, 1, None);
         }
-        Node::Return { returns } => {
+        NodeKind::Return { returns } => {
             s += &format!("{} [label=\"return\"];\n", nodename);
             s += &graph_gen(returns, &nodename, number, None);
         }
-        Node::ExprStmt { .. } => panic!(),
-        Node::Addr { node } => {
+        NodeKind::ExprStmt { .. } => panic!(),
+        NodeKind::Addr { node } => {
             s += &format!("{} [label=\"addr\"];\n", nodename);
             s += &graph_gen(node, &nodename, 0, None);
         }
-        Node::Deref { node } => {
+        NodeKind::Deref { node } => {
             s += &format!("{} [label=\"deref\"];\n", nodename);
             s += &graph_gen(node, &nodename, 0, None);
         }
-        Node::If {
+        NodeKind::If {
             condi,
             then_,
             else_,
@@ -400,7 +400,7 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
                 s += &graph_gen(n, &nodename, 2, Some("else"));
             }
         }
-        Node::For {
+        NodeKind::For {
             start,
             condi,
             end,
@@ -418,19 +418,19 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
             }
             s += &graph_gen(loop_, &nodename, 3, Some("loop"));
         }
-        Node::Block { stmts } => {
+        NodeKind::Block { stmts } => {
             s += &format!("{} [label=\"block\"];\n", nodename);
             for (i, stmt) in stmts.iter().enumerate() {
                 s += &graph_gen(stmt, &nodename, i, None);
             }
         }
-        Node::FunCall { name, args } => {
+        NodeKind::FunCall { name, args } => {
             s += &format!("{} [label=\"func call {}\"];\n", nodename, name);
             for (i, arg) in args.iter().enumerate() {
                 s += &graph_gen(arg, &nodename, i, Some("args"));
             }
         }
-        Node::StmtExpr { stmts, expr } => {
+        NodeKind::StmtExpr { stmts, expr } => {
             s += &graph_gen(stmts, &nodename, 0, Some("statements"));
             s += &graph_gen(expr, &nodename, 0, Some("return"));
         }
