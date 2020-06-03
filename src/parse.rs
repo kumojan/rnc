@@ -135,6 +135,7 @@ impl fmt::Debug for NodeKind {
 pub struct Node {
     pub kind: NodeKind,
     ty: Option<Type>,
+    pub tok: Option<Token>,
 }
 impl Node {
     pub fn get_type(&self) -> Type {
@@ -143,19 +144,21 @@ impl Node {
             _ => unimplemented!("called get_type for statements!"),
         }
     }
-    fn new_num(val: u32) -> Self {
+    fn new_num(val: u32, tok: Option<Token>) -> Self {
         Self {
             kind: NodeKind::Num { val },
             ty: Some(Type::TyInt),
+            tok,
         }
     }
-    fn new_lvar(var: Rc<Var>) -> Self {
+    fn new_lvar(var: Rc<Var>, tok: Option<Token>) -> Self {
         Self {
             ty: Some(var.ty.clone()),
             kind: NodeKind::Var { var },
+            tok,
         }
     }
-    fn new_if(condi: Node, then_: Node, else_: Option<Node>) -> Self {
+    fn new_if(condi: Node, then_: Node, else_: Option<Node>, tok: Option<Token>) -> Self {
         Self {
             kind: NodeKind::If {
                 condi: Box::new(condi),
@@ -163,9 +166,10 @@ impl Node {
                 else_: else_.map(Box::new),
             },
             ty: None,
+            tok,
         }
     }
-    fn new_unary(t: &str, node: Node) -> Self {
+    fn new_unary(t: &str, node: Node, tok: Option<Token>) -> Self {
         Self {
             ty: match t {
                 "return" | "expr_stmt" => None,
@@ -188,26 +192,29 @@ impl Node {
                 },
                 _ => unimplemented!(),
             },
+            tok,
         }
     }
-    fn new_assign(lvar: Node, rhs: Node) -> Self {
+    fn new_assign(lvar: Node, rhs: Node, tok: Option<Token>) -> Self {
         Self {
             ty: rhs.ty.clone(),
             kind: NodeKind::Assign {
                 lvar: Box::new(lvar),
                 rhs: Box::new(rhs),
             },
+            tok,
         }
     }
-    fn new_expr_stmt(expr: Node) -> Self {
+    fn new_expr_stmt(expr: Node, tok: Option<Token>) -> Self {
         Self {
             kind: NodeKind::ExprStmt {
                 expr: Box::new(expr),
             },
             ty: None,
+            tok,
         }
     }
-    fn new_bin(kind: BinOp, lhs: Node, rhs: Node) -> Self {
+    fn new_bin(kind: BinOp, lhs: Node, rhs: Node, tok: Option<Token>) -> Self {
         Self {
             ty: match kind {
                 BinOp::Sub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => {
@@ -220,37 +227,40 @@ impl Node {
                 lhs: Box::new(lhs),
                 rhs: Box::new(rhs),
             },
+            tok,
         }
     }
-    fn new_add(lhs: Node, rhs: Node) -> Self {
+    fn new_add(lhs: Node, rhs: Node, tok: Option<Token>) -> Self {
         match (lhs.get_type().is_ptr_like(), rhs.get_type().is_ptr_like()) {
             // 値 + 値
-            (false, false) => Node::new_bin(BinOp::Add, lhs, rhs),
+            (false, false) => Node::new_bin(BinOp::Add, lhs, rhs, tok),
             // 値+ポインタ => ポインタ+値と見なす
-            (false, true) => Node::new_add(rhs, lhs),
+            (false, true) => Node::new_add(rhs, lhs, tok),
             // ポインタ + 値 は値だけずれたポインタを返す(型はlhsなのでポインタになる)
             (true, false) => {
                 let ty_size = lhs.get_type().get_base().unwrap().size() as u32;
                 Node::new_bin(
                     BinOp::Add,
                     lhs,
-                    Node::new_bin(BinOp::Mul, Node::new_num(ty_size), rhs),
+                    Node::new_bin(BinOp::Mul, Node::new_num(ty_size, None), rhs, None),
+                    tok,
                 )
             }
             (true, true) => unimplemented!(), // ポインタ同士の足し算は意味をなさない
         }
     }
-    fn new_sub(lhs: Node, rhs: Node) -> Self {
+    fn new_sub(lhs: Node, rhs: Node, tok: Option<Token>) -> Self {
         match (lhs.get_type().is_ptr_like(), rhs.get_type().is_ptr_like()) {
             // 値 - 値
-            (false, false) => Node::new_bin(BinOp::Sub, lhs, rhs),
+            (false, false) => Node::new_bin(BinOp::Sub, lhs, rhs, tok),
             // ポインタ - 値
             (true, false) => {
                 let ty_size = lhs.get_type().get_base().unwrap().size() as u32;
                 Node::new_bin(
                     BinOp::Sub,
                     lhs,
-                    Node::new_bin(BinOp::Mul, rhs, Node::new_num(ty_size)),
+                    Node::new_bin(BinOp::Mul, rhs, Node::new_num(ty_size, None), None),
+                    tok,
                 )
             }
             // ポインタ - ポインタ (ずれを返す int)
@@ -258,15 +268,22 @@ impl Node {
                 let ty_size = lhs.get_type().get_base().unwrap().size() as u32;
                 Node::new_bin(
                     BinOp::Div,
-                    Node::new_bin(BinOp::Sub, lhs, rhs),
-                    Node::new_num(ty_size),
+                    Node::new_bin(BinOp::Sub, lhs, rhs, None),
+                    Node::new_num(ty_size, None),
+                    tok,
                 )
             }
             // 値 - ポインタは意味をなさない
             (false, true) => unimplemented!(),
         }
     }
-    fn new_for(start: Option<Node>, condi: Option<Node>, end: Option<Node>, loop_: Node) -> Self {
+    fn new_for(
+        start: Option<Node>,
+        condi: Option<Node>,
+        end: Option<Node>,
+        loop_: Node,
+        tok: Option<Token>,
+    ) -> Self {
         Node {
             kind: NodeKind::For {
                 start: start.map(Box::new),
@@ -275,32 +292,36 @@ impl Node {
                 loop_: Box::new(loop_),
             },
             ty: None,
+            tok,
         }
     }
-    fn new_block(stmts: Vec<Node>) -> Self {
+    fn new_block(stmts: Vec<Node>, tok: Option<Token>) -> Self {
         Self {
             kind: NodeKind::Block {
                 stmts: Box::new(stmts),
             },
             ty: None,
+            tok,
         }
     }
-    fn new_stmt_expr(stmts: Vec<Node>, expr: Node) -> Self {
+    fn new_stmt_expr(stmts: Vec<Node>, expr: Node, tok: Option<Token>) -> Self {
         Node {
             ty: Some(expr.get_type()),
             kind: NodeKind::StmtExpr {
-                stmts: Box::new(Node::new_block(stmts)),
+                stmts: Box::new(Node::new_block(stmts, None)),
                 expr: Box::new(expr),
             },
+            tok,
         }
     }
-    fn new_funcall(name: String, args: Vec<Node>) -> Self {
+    fn new_funcall(name: String, args: Vec<Node>, tok: Option<Token>) -> Self {
         Self {
             kind: NodeKind::FunCall {
                 name,
                 args: Box::new(args),
             },
             ty: Some(Type::TyInt),
+            tok,
         }
     }
 }
@@ -415,94 +436,96 @@ pub trait CodeGen {
     fn postfix(&mut self) -> Result<Node, ParseError>;
     fn primary(&mut self) -> Result<Node, ParseError>;
 }
+pub struct Parser {
+    tklist: VecDeque<Token>,
+    locals: Vec<Rc<Var>>, // Node::Varと共有する。
+    globals: Vec<Rc<Var>>,
+    string_literals: Vec<Vec<u8>>,
+    scope_stack: VecDeque<VecDeque<Rc<Var>>>, // 前に内側のスコープがある
+    cur_tok: Option<Token>,
+}
 
-impl TokenReader for VecDeque<Token> {
+impl TokenReader for Parser {
+    /// トークンを一つ読んで、すすむ
+    /// 読んだトークンはcur_tokにいれる
     fn shift(&mut self) -> &mut Self {
-        self.pop_front();
+        self.cur_tok = self.tklist.pop_front();
         self
     }
     fn peek(&mut self, s: &str) -> bool {
-        match &self[0].kind {
+        match self.head_kind() {
             TokenKind::TkReserved(_s) if _s == s => true,
             _ => false,
         }
     }
     fn peek_reserved(&self) -> Option<String> {
-        match self[0].kind.clone() {
-            TokenKind::TkReserved(s) => Some(s),
+        match self.head_kind() {
+            TokenKind::TkReserved(s) => Some(s.clone()),
             _ => None,
         }
     }
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
     fn consume(&mut self, s: &str) -> bool {
-        match &self[0].kind {
+        match self.head_kind() {
             TokenKind::TkReserved(_s) if _s == s => {
-                self.pop_front();
+                self.shift();
                 true
             }
             _ => false,
         }
     }
     fn consume_num(&mut self) -> Option<u32> {
-        if let TokenKind::TkNum(val) = self[0].kind {
-            self.pop_front();
+        if let TokenKind::TkNum(ref val) = self.head_kind() {
+            let val = *val;
+            self.shift();
             Some(val)
         } else {
             None
         }
     }
     fn consume_string(&mut self) -> Option<Vec<u8>> {
-        if let TokenKind::TkString(ref s) = self[0].kind {
+        if let TokenKind::TkString(ref s) = self.head_kind() {
             let s = s.clone();
-            self.pop_front();
+            self.shift();
             Some(s)
         } else {
             None
         }
     }
     fn consume_ident(&mut self) -> Option<String> {
-        if let TokenKind::TkIdent(ref s) = self[0].kind {
+        if let TokenKind::TkIdent(ref s) = self.head_kind() {
             let s = s.clone();
-            self.pop_front();
+            self.shift();
             Some(s)
         } else {
             None
         }
     }
     fn consume_reserved(&mut self) -> Option<String> {
-        if let TokenKind::TkReserved(ref s) = self[0].kind {
+        if let TokenKind::TkReserved(ref s) = self.head_kind() {
             let s = s.clone();
-            self.pop_front();
+            self.shift();
             Some(s)
         } else {
             None
         }
     }
     fn is_eof(&self) -> bool {
-        self[0].kind == TokenKind::TkEOF
+        self.head_kind() == &TokenKind::TkEOF
     }
     fn expect(&mut self, s: &str) -> Result<(), ParseError> {
         if !self.consume(s) {
-            Err(ParseError {
-                pos: self[0].pos,
-                msg: format!("expected \'{}\'", s),
-            })
+            Err(self.raise_err(&format!("expected \'{}\'", s)))
         } else {
             Ok(())
         }
     }
-    /// 次がTkNum(val)の場合は1つずれてOk(val),それ以外はErr
     fn expect_num(&mut self) -> Result<u32, ParseError> {
-        self.consume_num().ok_or(ParseError {
-            pos: self[0].pos,
-            msg: "expected number".to_owned(),
-        })
+        self.consume_num().ok_or(self.raise_err("expected number"))
     }
     fn expect_ident(&mut self) -> Result<String, ParseError> {
-        self.consume_ident().ok_or(ParseError {
-            pos: self[0].pos,
-            msg: "expected identifier".to_owned(),
-        })
+        self.consume_ident()
+            .ok_or(self.raise_err("expected identifier"))
     }
     fn typespec(&mut self) -> Result<Type, ParseError> {
         match self.consume_reserved().as_deref() {
@@ -520,18 +543,10 @@ impl TokenReader for VecDeque<Token> {
     }
     fn raise_err(&self, msg: &str) -> ParseError {
         ParseError {
-            pos: self[0].pos,
+            pos: self.tklist[0].pos,
             msg: msg.to_owned(),
         }
     }
-}
-
-pub struct Parser {
-    tklist: VecDeque<Token>,
-    locals: Vec<Rc<Var>>, // Node::Varと共有する。
-    globals: Vec<Rc<Var>>,
-    string_literals: Vec<Vec<u8>>,
-    scope_stack: VecDeque<VecDeque<Rc<Var>>>, // 前に内側のスコープがある
 }
 impl Parser {
     pub fn new(tklist: VecDeque<Token>) -> Self {
@@ -541,7 +556,18 @@ impl Parser {
             globals: Vec::new(),
             string_literals: Vec::new(),
             scope_stack: Default::default(),
+            cur_tok: None,
         }
+    }
+    fn head_kind(&self) -> &TokenKind {
+        &self.tklist[0].kind
+    }
+    /// shiftによってtokenが格納されているときは
+    /// それを出して、Noneに置き換える
+    /// あるいはそのままNoneが取り出される
+    /// tokenは一つのNodeにしか渡らない
+    fn tok(&mut self) -> Option<Token> {
+        std::mem::replace(&mut self.cur_tok, None)
     }
     /// 必ずleave_scopeと対にして使うこと
     fn enter_scope(&mut self) {
@@ -593,59 +619,60 @@ impl Parser {
                 id: self.string_literals.len(),
             },
             ty: Some(Type::TyChar.to_array(data.len() + 1)),
+            tok: self.tok(),
         };
         self.string_literals.push(data);
         n
     }
 }
-impl TokenReader for Parser {
-    fn shift(&mut self) -> &mut Self {
-        self.tklist.shift();
-        self
-    }
-    fn peek_reserved(&self) -> Option<String> {
-        self.tklist.peek_reserved()
-    }
-    fn peek(&mut self, s: &str) -> bool {
-        self.tklist.peek(s)
-    }
-    fn consume(&mut self, s: &str) -> bool {
-        self.tklist.consume(s)
-    }
-    fn consume_num(&mut self) -> Option<u32> {
-        self.tklist.consume_num()
-    }
-    fn consume_ident(&mut self) -> Option<String> {
-        self.tklist.consume_ident()
-    }
-    fn consume_string(&mut self) -> Option<Vec<u8>> {
-        self.tklist.consume_string()
-    }
-    fn consume_reserved(&mut self) -> Option<String> {
-        self.tklist.consume_reserved()
-    }
-    fn is_eof(&self) -> bool {
-        self.tklist.is_eof()
-    }
-    fn expect(&mut self, s: &str) -> Result<(), ParseError> {
-        self.tklist.expect(s)
-    }
-    fn expect_num(&mut self) -> Result<u32, ParseError> {
-        self.tklist.expect_num()
-    }
-    fn expect_ident(&mut self) -> Result<String, ParseError> {
-        self.tklist.expect_ident()
-    }
-    fn typespec(&mut self) -> Result<Type, ParseError> {
-        self.tklist.typespec()
-    }
-    fn ptr(&mut self, ty: Type) -> Type {
-        self.tklist.ptr(ty)
-    }
-    fn raise_err(&self, msg: &str) -> ParseError {
-        self.tklist.raise_err(msg)
-    }
-}
+// impl TokenReader for Parser {
+//     fn shift(&mut self) -> &mut Self {
+//         self.tklist.shift();
+//         self
+//     }
+//     fn peek_reserved(&self) -> Option<String> {
+//         self.tklist.peek_reserved()
+//     }
+//     fn peek(&mut self, s: &str) -> bool {
+//         self.tklist.peek(s)
+//     }
+//     fn consume(&mut self, s: &str) -> bool {
+//         self.tklist.consume(s)
+//     }
+//     fn consume_num(&mut self) -> Option<u32> {
+//         self.tklist.consume_num()
+//     }
+//     fn consume_ident(&mut self) -> Option<String> {
+//         self.tklist.consume_ident()
+//     }
+//     fn consume_string(&mut self) -> Option<Vec<u8>> {
+//         self.tklist.consume_string()
+//     }
+//     fn consume_reserved(&mut self) -> Option<String> {
+//         self.tklist.consume_reserved()
+//     }
+//     fn is_eof(&self) -> bool {
+//         self.tklist.is_eof()
+//     }
+//     fn expect(&mut self, s: &str) -> Result<(), ParseError> {
+//         self.tklist.expect(s)
+//     }
+//     fn expect_num(&mut self) -> Result<u32, ParseError> {
+//         self.tklist.expect_num()
+//     }
+//     fn expect_ident(&mut self) -> Result<String, ParseError> {
+//         self.tklist.expect_ident()
+//     }
+//     fn typespec(&mut self) -> Result<Type, ParseError> {
+//         self.tklist.typespec()
+//     }
+//     fn ptr(&mut self, ty: Type) -> Type {
+//         self.tklist.ptr(ty)
+//     }
+//     fn raise_err(&self, msg: &str) -> ParseError {
+//         self.tklist.raise_err(msg)
+//     }
+// }
 
 impl CodeGen for Parser {
     // コード生成
@@ -739,12 +766,12 @@ impl CodeGen for Parser {
                 _ty = _ty.to_array(len);
             }
             // 初期化がなければ、コードには現れないので捨てられる
-            let lvar = self.add_var(&name, _ty).unwrap();
+            let var = self.add_var(&name, _ty).unwrap();
             if let Some(init) = self.initializer()? {
-                stmts.push(Node::new_expr_stmt(Node::new_assign(
-                    Node::new_lvar(lvar),
-                    init,
-                )));
+                stmts.push(Node::new_expr_stmt(
+                    Node::new_assign(Node::new_lvar(var, self.tok()), init, self.tok()),
+                    self.tok(),
+                ));
             }
             if !self.consume(",") {
                 self.expect(";")?; // コンマを見なかったら、セミコロンがあるはず
@@ -792,7 +819,7 @@ impl CodeGen for Parser {
             })
         };
         let node = if self.peek("{") {
-            Node::new_block(self.compound_stmt(true)?)
+            Node::new_block(self.compound_stmt(true)?, self.tok())
         } else if self.consume("if") {
             self.expect("(")?;
             let condi = read_until(self, ")")?;
@@ -802,30 +829,36 @@ impl CodeGen for Parser {
             } else {
                 None
             };
-            Node::new_if(condi, then_, else_)
+            Node::new_if(condi, then_, else_, self.tok())
         } else if self.consume("while") {
             self.expect("(")?;
-            Node::new_for(None, Some(read_until(self, ")")?), None, self.stmt()?)
+            Node::new_for(
+                None,
+                Some(read_until(self, ")")?),
+                None,
+                self.stmt()?,
+                self.tok(),
+            )
         } else if self.consume("for") {
             self.expect("(")?;
             let mut maybe_null_expr = |s: &str| {
                 Ok(if self.consume(s) {
                     None
                 } else {
-                    let n = Some(self.expr()?);
+                    let n = Some((self.expr()?, self.tok()));
                     self.expect(s)?;
                     n
                 })
             };
-            let start = maybe_null_expr(";")?.map(Node::new_expr_stmt);
-            let condi = maybe_null_expr(";")?;
-            let end = maybe_null_expr(")")?.map(Node::new_expr_stmt);
+            let start = maybe_null_expr(";")?.map(|(e, t)| Node::new_expr_stmt(e, t));
+            let condi = maybe_null_expr(";")?.map(|(e, _)| e);
+            let end = maybe_null_expr(")")?.map(|(e, t)| Node::new_expr_stmt(e, t));
             let loop_ = self.stmt()?;
-            Node::new_for(start, condi, end, loop_)
+            Node::new_for(start, condi, end, loop_, self.tok())
         } else if self.consume("return") {
-            Node::new_unary("return", read_until(self, ";")?)
+            Node::new_unary("return", read_until(self, ";")?, self.tok())
         } else {
-            Node::new_expr_stmt(read_until(self, ";")?)
+            Node::new_expr_stmt(read_until(self, ";")?, self.tok())
         };
         Ok(node)
     }
@@ -835,7 +868,7 @@ impl CodeGen for Parser {
     fn assign(&mut self) -> Result<Node, ParseError> {
         let mut node = self.equality()?;
         if self.consume("=") {
-            node = Node::new_assign(node, self.assign()?);
+            node = Node::new_assign(node, self.assign()?, self.tok());
         }
         Ok(node)
     }
@@ -843,8 +876,12 @@ impl CodeGen for Parser {
         let mut node = self.relational()?;
         loop {
             match self.peek_reserved().as_deref() {
-                Some("==") => node = Node::new_bin(BinOp::_Eq, node, self.shift().relational()?),
-                Some("!=") => node = Node::new_bin(BinOp::Neq, node, self.shift().relational()?),
+                Some("==") => {
+                    node = Node::new_bin(BinOp::_Eq, node, self.shift().relational()?, self.tok())
+                }
+                Some("!=") => {
+                    node = Node::new_bin(BinOp::Neq, node, self.shift().relational()?, self.tok())
+                }
                 _ => return Ok(node),
             }
         }
@@ -853,10 +890,14 @@ impl CodeGen for Parser {
         let mut node = self.add()?;
         loop {
             match self.peek_reserved().as_deref() {
-                Some("<") => node = Node::new_bin(BinOp::Lt, node, self.shift().add()?),
-                Some("<=") => node = Node::new_bin(BinOp::Le, node, self.shift().add()?),
-                Some(">") => node = Node::new_bin(BinOp::Lt, self.shift().add()?, node),
-                Some(">=") => node = Node::new_bin(BinOp::Le, self.shift().add()?, node),
+                Some("<") => node = Node::new_bin(BinOp::Lt, node, self.shift().add()?, self.tok()),
+                Some("<=") => {
+                    node = Node::new_bin(BinOp::Le, node, self.shift().add()?, self.tok())
+                }
+                Some(">") => node = Node::new_bin(BinOp::Lt, self.shift().add()?, node, self.tok()),
+                Some(">=") => {
+                    node = Node::new_bin(BinOp::Le, self.shift().add()?, node, self.tok())
+                }
                 _ => return Ok(node),
             }
         }
@@ -865,8 +906,8 @@ impl CodeGen for Parser {
         let mut node = self.mul()?;
         loop {
             match self.peek_reserved().as_deref() {
-                Some("+") => node = Node::new_add(node, self.shift().mul()?),
-                Some("-") => node = Node::new_sub(node, self.shift().mul()?),
+                Some("+") => node = Node::new_add(node, self.shift().mul()?, self.tok()),
+                Some("-") => node = Node::new_sub(node, self.shift().mul()?, self.tok()),
                 _ => return Ok(node),
             }
         }
@@ -875,8 +916,12 @@ impl CodeGen for Parser {
         let mut node = self.unary()?;
         loop {
             match self.peek_reserved().as_deref() {
-                Some("*") => node = Node::new_bin(BinOp::Mul, node, self.shift().unary()?),
-                Some("/") => node = Node::new_bin(BinOp::Div, node, self.shift().unary()?),
+                Some("*") => {
+                    node = Node::new_bin(BinOp::Mul, node, self.shift().unary()?, self.tok())
+                }
+                Some("/") => {
+                    node = Node::new_bin(BinOp::Div, node, self.shift().unary()?, self.tok())
+                }
                 _ => return Ok(node),
             }
         }
@@ -886,11 +931,12 @@ impl CodeGen for Parser {
             Some("+") => self.shift().unary(),
             Some("-") => Ok(Node::new_bin(
                 BinOp::Sub,
-                Node::new_num(0),
+                Node::new_num(0, self.tok()),
                 self.shift().unary()?,
+                self.tok(),
             )),
-            Some("&") => Ok(Node::new_unary("addr", self.shift().unary()?)),
-            Some("*") => Ok(Node::new_unary("deref", self.shift().unary()?)),
+            Some("&") => Ok(Node::new_unary("addr", self.shift().unary()?, self.tok())),
+            Some("*") => Ok(Node::new_unary("deref", self.shift().unary()?, self.tok())),
             _ => self.postfix(),
         }
     }
@@ -898,7 +944,11 @@ impl CodeGen for Parser {
         let mut node = self.primary()?;
         // x[y] は *(x+y)に同じ
         while self.consume("[") {
-            node = Node::new_unary("deref", Node::new_add(node, self.expr()?));
+            node = Node::new_unary(
+                "deref",
+                Node::new_add(node, self.expr()?, self.tok()),
+                self.tok(),
+            );
             self.expect("]")?;
         }
         Ok(node)
@@ -910,7 +960,7 @@ impl CodeGen for Parser {
                 self.expect(")")?;
                 // 最後はexpression statementでないといけない
                 if let Some(NodeKind::ExprStmt { expr }) = stmts.pop().map(|n| n.kind) {
-                    Ok(Node::new_stmt_expr(stmts, *expr))
+                    Ok(Node::new_stmt_expr(stmts, *expr, self.tok()))
                 } else {
                     Err(self.raise_err("statement expression returning void is not supported"))
                 }
@@ -919,14 +969,14 @@ impl CodeGen for Parser {
                 self.expect(")").map(|_| node)?
             }
         } else if let Some(val) = self.consume_num() {
-            Ok(Node::new_num(val))
+            Ok(Node::new_num(val, self.tok()))
         } else if let Some(s) = self.consume_string() {
             Ok(self.add_string_literal(s))
         } else if self.consume("sizeof") {
             // このnodeは型のサイズを取得するためのみに使われ、
             // 実際には評価されない
             let node = self.unary()?;
-            Ok(Node::new_num(node.get_type().size() as u32))
+            Ok(Node::new_num(node.get_type().size() as u32, self.tok()))
         } else {
             let name = self.expect_ident()?;
             // 関数呼び出し
@@ -940,11 +990,11 @@ impl CodeGen for Parser {
                         break;
                     }
                 }
-                Ok(Node::new_funcall(name, args))
+                Ok(Node::new_funcall(name, args, self.tok()))
             } else {
                 // ただの変数
                 match self.find_var(&name) {
-                    Some(var) => Ok(Node::new_lvar(var)),
+                    Some(var) => Ok(Node::new_lvar(var, self.tok())),
                     _ => Err(ParseError {
                         pos: 0,
                         msg: "variable not found!".to_owned(),

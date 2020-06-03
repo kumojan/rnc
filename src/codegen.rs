@@ -87,6 +87,9 @@ impl CodeGenerator {
         self.func_stack_size += 16;
     }
     fn gen_expr(&mut self, node: &Node) -> Result<(), CodeGenError> {
+        if let Some(tok) = &node.tok {
+            println!(".loc 1 {}", tok.line_no);
+        }
         match &node.kind {
             NodeKind::Num { val, .. } => {
                 println!("  push {}", val);
@@ -184,6 +187,9 @@ impl CodeGenerator {
         Ok(())
     }
     fn gen_stmt(&mut self, node: &Node) -> Result<(), CodeGenError> {
+        if let Some(tok) = &node.tok {
+            println!(".loc 1 {}", tok.line_no);
+        }
         match &node.kind {
             NodeKind::Return { returns } => {
                 self.gen_expr(returns)?; // その値を取得し

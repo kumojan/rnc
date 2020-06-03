@@ -34,6 +34,7 @@ fn main() -> Result<(), String> {
     // Result型を返すことで、, エラー終了時に終了ステータス1となる。
     match env::args().last() {
         Some(filename) => {
+            println!(".file 1 \"{}\"", filename);
             let code = open(&filename).map_err(|_| format!("cannot open file {}", filename))?;
             match compile(&code, matches.opt_present("t"), matches.opt_present("g")) {
                 Err(CompileError::Tokenize { pos, msg }) => error_at(&code, pos, msg, &filename),
