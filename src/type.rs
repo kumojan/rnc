@@ -49,16 +49,16 @@ impl Type {
             _ => false,
         }
     }
-    pub fn to_ptr(&self) -> Self {
+    pub fn to_ptr(self) -> Self {
         Type::TyPtr(Box::new(self.clone()))
     }
-    pub fn to_array(&self, len: usize) -> Self {
+    pub fn to_array(self, len: usize) -> Self {
         Type::TyArray {
             len,
             base: Box::new(self.clone()),
         }
     }
-    pub fn to_ptr_recursive(&self, depth: u8) -> Self {
+    pub fn to_ptr_recursive(self, depth: u8) -> Self {
         let mut ty = self.clone();
         for _ in 0..depth {
             ty = ty.to_ptr();

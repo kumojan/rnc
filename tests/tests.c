@@ -749,97 +749,105 @@ int main() {
          }),
          "({ struct {int a; int b;} x[3]; int *p=x; p[3]=3; x[1].b; })");
 
-  // assert(6, ({
-  //          struct {
-  //            int a[3];
-  //            int b[5];
-  //          } x;
-  //          int *p = &x;
-  //          x.a[0] = 6;
-  //          p[0];
-  //        }),
-  //        "({ struct {int a[3]; int b[5];} x; int *p=&x; x.a[0]=6; p[0]; })");
-  // assert(7, ({
-  //          struct {
-  //            int a[3];
-  //            int b[5];
-  //          } x;
-  //          int *p = &x;
-  //          x.b[0] = 7;
-  //          p[3];
-  //        }),
-  //        "({ struct {int a[3]; int b[5];} x; int *p=&x; x.b[0]=7; p[3]; })");
+  assert(6, ({
+           struct {
+             int a[3];
+             int b[5];
+           } x;
+           int *p = &x;
+           x.a[0] = 6;
+           p[0];
+         }),
+         "({ struct {int a[3]; int b[5];} x; int *p=&x; x.a[0]=6; p[0]; })");
+  assert(7, ({
+           struct {
+             int a[3];
+             int b[5];
+           } x;
+           int *p = &x;
+           x.b[0] = 7;
+           p[3];
+         }),
+         "({ struct {int a[3]; int b[5];} x; int *p=&x; x.b[0]=7; p[3]; })");
 
-  // assert(6, ({
-  //          struct {
-  //            struct {
-  //              int b;
-  //            } a;
-  //          } x;
-  //          x.a.b = 6;
-  //          x.a.b;
-  //        }),
-  //        "({ struct { struct { int b; } a; } x; x.a.b=6; x.a.b; })");
+  assert(6, ({
+           struct {
+             struct {
+               int b;
+             } a;
+           } x;
+           x.a.b = 6;
+           x.a.b;
+         }),
+         "({ struct { struct { int b; } a; } x; x.a.b=6; x.a.b; })");
 
-  // assert(8, ({
-  //          struct {
-  //            int a;
-  //          } x;
-  //          sizeof(x);
-  //        }),
-  //        "({ struct {int a;} x; sizeof(x); })");
-  // assert(16, ({
-  //          struct {
-  //            int a;
-  //            int b;
-  //          } x;
-  //          sizeof(x);
-  //        }),
-  //        "({ struct {int a; int b;} x; sizeof(x); })");
-  // assert(16, ({
-  //          struct {
-  //            int a, b;
-  //          } x;
-  //          sizeof(x);
-  //        }),
-  //        "({ struct {int a, b;} x; sizeof(x); })");
-  // assert(24, ({
-  //          struct {
-  //            int a[3];
-  //          } x;
-  //          sizeof(x);
-  //        }),
-  //        "({ struct {int a[3];} x; sizeof(x); })");
-  // assert(32, ({
-  //          struct {
-  //            int a;
-  //          } x[4];
-  //          sizeof(x);
-  //        }),
-  //        "({ struct {int a;} x[4]; sizeof(x); })");
-  // assert(48, ({
-  //          struct {
-  //            int a[3];
-  //          } x[2];
-  //          sizeof(x);
-  //        }),
-  //        "({ struct {int a[3];} x[2]; sizeof(x); })");
-  // assert(2, ({
-  //          struct {
-  //            char a;
-  //            char b;
-  //          } x;
-  //          sizeof(x);
-  //        }),
-  //        "({ struct {char a; char b;} x; sizeof(x); })");
-  // assert(9, ({
-  //          struct {
-  //            char a;
-  //            int b;
-  //          } x;
-  //          sizeof(x);
-  //        }),
-  //        "({ struct {char a; int b;} x; sizeof(x); })");
+  assert(8, ({
+           struct {
+             int a;
+           } x;
+           sizeof(x);
+         }),
+         "({ struct {int a;} x; sizeof(x); })");
+  assert(16, ({
+           struct {
+             int a;
+             int b;
+           } x;
+           sizeof(x);
+         }),
+         "({ struct {int a; int b;} x; sizeof(x); })");
+  assert(16, ({
+           struct {
+             int a, b;
+           } x;
+           sizeof(x);
+         }),
+         "({ struct {int a, b;} x; sizeof(x); })");
+  assert(24, ({
+           struct {
+             int a[3];
+           } x;
+           sizeof(x);
+         }),
+         "({ struct {int a[3];} x; sizeof(x); })");
+  assert(32, ({
+           struct {
+             int a;
+           } x[4];
+           sizeof(x);
+         }),
+         "({ struct {int a;} x[4]; sizeof(x); })");
+  assert(48, ({
+           struct {
+             int a[3];
+           } x[2];
+           sizeof(x);
+         }),
+         "({ struct {int a[3];} x[2]; sizeof(x); })");
+  assert(2, ({
+           struct {
+             char a;
+             char b;
+           } x;
+           sizeof(x);
+         }),
+         "({ struct {char a; char b;} x; sizeof(x); })");
+  assert(9, ({
+           struct {
+             char a;
+             int b;
+           } x;
+           sizeof(x);
+         }),
+         "({ struct {char a; int b;} x; sizeof(x); })");
+  assert(8, ({
+           struct {
+             char a;
+             int b;
+           } *x;
+           sizeof(x);
+         }),
+         "({ struct {char a; int b;} *x; sizeof(x); })");
 
   printf("OK\n");
   return 0;

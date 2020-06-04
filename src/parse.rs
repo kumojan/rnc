@@ -126,7 +126,6 @@ impl fmt::Debug for NodeKind {
             NodeKind::Assign { .. } => write!(f, "assign"),
             NodeKind::If { .. } => write!(f, "If"),
             NodeKind::For { .. } => write!(f, "for"),
-            // NodeKind::Block { stmts } => stmts.iter().map(|s| write!(f, " {:?} ", s)).collect(),
             NodeKind::Block { .. } => write!(f, "block"),
             NodeKind::FunCall { name, .. } => write!(f, "function {}", name),
             NodeKind::Addr { .. } => write!(f, "address"),
@@ -406,8 +405,8 @@ pub trait TokenReader {
 /// ptr = "*"*
 /// funcargs = "(" typespec ptr ident ( "," typespec ptr ident)? ")"
 /// compound_stmt = (vardef | stmt)*
-/// vardef = typespec declarator ("," declarator)*;
-/// declarator = ptr ident ("[" num "]")* initializer
+/// vardef = typespec declarator initializer ("," declarator initializer)*;
+/// declarator = ptr ident ("[" num "]")*
 /// initializer = "=" (expr | array_init)
 /// array_init = "{" num ("," num)?"}"
 /// stmt = expr ";"  // expression statement (値を残さない)
@@ -438,6 +437,7 @@ pub trait CodeGen {
     fn funcdef(&mut self) -> Result<Option<Function>, ParseError>;
     fn type_suffix(&mut self, ty: Type) -> Result<Type, ParseError>;
     fn vardef(&mut self) -> Result<Vec<Node>, ParseError>;
+    fn declarator(&mut self, ty: Type) -> Result<(String, Type), ParseError>;
     fn initializer(&mut self) -> Result<Option<Node>, ParseError>;
     fn compound_stmt(&mut self, new_scope: bool) -> Result<Vec<Node>, ParseError>;
     fn stmt(&mut self) -> Result<Node, ParseError>;
@@ -552,13 +552,15 @@ impl TokenReader for Parser {
                 let mut offset = 0;
                 loop {
                     let ty = self.typespec()?;
-                    let size = ty.size();
-                    mems.push(Member {
-                        ty,
-                        name: self.expect_ident()?,
-                        offset,
-                    });
-                    offset += size;
+                    loop {
+                        let (name, ty) = self.declarator(ty.clone())?;
+                        let size = ty.size();
+                        mems.push(Member { ty, name, offset });
+                        offset += size;
+                        if !self.consume(",") {
+                            break;
+                        }
+                    }
                     self.expect(";")?;
                     if self.consume("}") {
                         break;
@@ -624,7 +626,7 @@ impl Parser {
             .or_else(|| self.globals.iter().find(|v| v.name == *name))
             .cloned()
     }
-    fn add_var(&mut self, name: &String, ty: Type) -> Result<Rc<Var>, ParseError> {
+    fn add_var(&mut self, name: &String, ty: Type) -> Rc<Var> {
         let var = Rc::new(Var {
             name: name.clone(),
             ty,
@@ -633,7 +635,7 @@ impl Parser {
         });
         self.locals.push(var.clone());
         self.scope_stack[0].push_front(var.clone()); // scopeにも追加
-        return Ok(var);
+        var
     }
     // グローバル変数は重複して宣言できない
     fn add_global(&mut self, name: &String, ty: Type) -> Result<Rc<Var>, ParseError> {
@@ -663,54 +665,6 @@ impl Parser {
         n
     }
 }
-// impl TokenReader for Parser {
-//     fn shift(&mut self) -> &mut Self {
-//         self.tklist.shift();
-//         self
-//     }
-//     fn peek_reserved(&self) -> Option<String> {
-//         self.tklist.peek_reserved()
-//     }
-//     fn peek(&mut self, s: &str) -> bool {
-//         self.tklist.peek(s)
-//     }
-//     fn consume(&mut self, s: &str) -> bool {
-//         self.tklist.consume(s)
-//     }
-//     fn consume_num(&mut self) -> Option<u32> {
-//         self.tklist.consume_num()
-//     }
-//     fn consume_ident(&mut self) -> Option<String> {
-//         self.tklist.consume_ident()
-//     }
-//     fn consume_string(&mut self) -> Option<Vec<u8>> {
-//         self.tklist.consume_string()
-//     }
-//     fn consume_reserved(&mut self) -> Option<String> {
-//         self.tklist.consume_reserved()
-//     }
-//     fn is_eof(&self) -> bool {
-//         self.tklist.is_eof()
-//     }
-//     fn expect(&mut self, s: &str) -> Result<(), ParseError> {
-//         self.tklist.expect(s)
-//     }
-//     fn expect_num(&mut self) -> Result<u32, ParseError> {
-//         self.tklist.expect_num()
-//     }
-//     fn expect_ident(&mut self) -> Result<String, ParseError> {
-//         self.tklist.expect_ident()
-//     }
-//     fn typespec(&mut self) -> Result<Type, ParseError> {
-//         self.tklist.typespec()
-//     }
-//     fn ptr(&mut self, ty: Type) -> Type {
-//         self.tklist.ptr(ty)
-//     }
-//     fn raise_err(&self, msg: &str) -> ParseError {
-//         self.tklist.raise_err(msg)
-//     }
-// }
 
 impl CodeGen for Parser {
     // コード生成
@@ -730,7 +684,7 @@ impl CodeGen for Parser {
                 let ty = self.typespec()?;
                 let ty = self.ptr(ty);
                 let name = self.expect_ident()?;
-                self.add_var(&name, ty)?;
+                self.add_var(&name, ty);
                 if !self.consume(",") {
                     self.expect(")")?;
                     break; // 宣言終了
@@ -767,9 +721,7 @@ impl CodeGen for Parser {
         if !self.consume(";") {
             loop {
                 self.expect(",")?;
-                let mut _ty = self.ptr(ty.clone());
-                let name = self.expect_ident()?;
-                _ty = self.type_suffix(_ty)?;
+                let (name, _ty) = self.declarator(ty.clone())?;
                 self.add_global(&name, _ty)?;
                 if self.consume(";") {
                     break;
@@ -777,6 +729,12 @@ impl CodeGen for Parser {
             }
         }
         Ok(None)
+    }
+    fn declarator(&mut self, mut ty: Type) -> Result<(String, Type), ParseError> {
+        ty = self.ptr(ty);
+        let name = self.expect_ident()?;
+        ty = self.type_suffix(ty)?;
+        Ok((name, ty))
     }
     fn type_suffix(&mut self, mut ty: Type) -> Result<Type, ParseError> {
         let mut array_dims = vec![];
@@ -793,18 +751,9 @@ impl CodeGen for Parser {
         let ty = self.typespec()?;
         let mut stmts = vec![];
         loop {
-            let mut _ty = self.ptr(ty.clone()); // "*"を数える
-            let name = self.expect_ident()?;
-            let mut array_dims = vec![];
-            while self.consume("[") {
-                array_dims.push(self.expect_num()? as usize);
-                self.expect("]")?;
-            }
-            while let Some(len) = array_dims.pop() {
-                _ty = _ty.to_array(len);
-            }
+            let (name, _ty) = self.declarator(ty.clone())?;
             // 初期化がなければ、コードには現れないので捨てられる
-            let var = self.add_var(&name, _ty).unwrap();
+            let var = self.add_var(&name, _ty);
             if let Some(init) = self.initializer()? {
                 stmts.push(Node::new_expr_stmt(
                     Node::new_assign(Node::new_lvar(var, self.tok()), init, self.tok()),
@@ -812,10 +761,10 @@ impl CodeGen for Parser {
                 ));
             }
             if !self.consume(",") {
-                self.expect(";")?; // コンマを見なかったら、セミコロンがあるはず
-                break; // そして宣言終了
+                break; // 宣言終了
             }
         }
+        self.expect(";")?;
         Ok(stmts)
     }
     fn initializer(&mut self) -> Result<Option<Node>, ParseError> {
