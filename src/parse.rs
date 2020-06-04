@@ -89,6 +89,10 @@ pub enum NodeKind {
         stmts: Box<Node>, // blockを持たせる
         expr: Box<Node>,
     },
+    Member {
+        obj: Box<Node>,
+        mem: Member,
+    },
     // 文(statement)
     ExprStmt {
         expr: Box<Node>,
@@ -115,7 +119,7 @@ impl fmt::Debug for NodeKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             NodeKind::Num { val } => write!(f, "Num {}", val),
-            NodeKind::Var { var } => write!(f, "{:?}", var),
+            NodeKind::Var { var } => write!(f, "Var {:?}", var),
             NodeKind::Return { .. } => write!(f, "return"),
             NodeKind::ExprStmt { .. } => write!(f, "expr stmt"),
             NodeKind::Bin { kind, .. } => write!(f, "Bin {:?}", kind),
@@ -129,6 +133,7 @@ impl fmt::Debug for NodeKind {
             NodeKind::Deref { .. } => write!(f, "deref"),
             NodeKind::Literal { ty, .. } => write!(f, "{:?} literal", ty),
             NodeKind::StmtExpr { .. } => write!(f, "stmt expr"),
+            NodeKind::Member { obj, .. } => write!(f, "mem of {:?}", obj.kind),
         }
     }
 }
@@ -191,6 +196,16 @@ impl Node {
                     expr: Box::new(node),
                 },
                 _ => unimplemented!(),
+            },
+            tok,
+        }
+    }
+    fn new_member_access(obj: Node, member: Member, tok: Option<Token>) -> Self {
+        Self {
+            ty: Some(member.ty.clone()),
+            kind: NodeKind::Member {
+                obj: Box::new(obj),
+                mem: member,
             },
             tok,
         }
@@ -387,7 +402,7 @@ pub trait TokenReader {
 ///
 /// program = (funcdef | global-var)*
 /// funcdef = typespec ptr ident funcargs "{" compound_stmt "}"
-/// typespec = "int"
+/// typespec = "int" | "char" | struct_decl
 /// ptr = "*"*
 /// funcargs = "(" typespec ptr ident ( "," typespec ptr ident)? ")"
 /// compound_stmt = (vardef | stmt)*
@@ -409,7 +424,7 @@ pub trait TokenReader {
 /// mul = primary (("*" | "/") primary)*
 /// unary = ("+" | "-" | "*" | "&") unary
 ///       | postfix
-/// postfix = primary ("[" expr "]")*
+/// postfix = primary ("[" expr "]" | "." ident )*
 /// primary = num
 ///     | str
 ///     | ident ("(" (expr ("," expr )*)? ")")?
@@ -531,6 +546,29 @@ impl TokenReader for Parser {
         match self.consume_reserved().as_deref() {
             Some("int") => Ok(Type::TyInt),
             Some("char") => Ok(Type::TyChar),
+            Some("struct") => {
+                self.expect("{")?;
+                let mut mems = Vec::new();
+                let mut offset = 0;
+                loop {
+                    let ty = self.typespec()?;
+                    let size = ty.size();
+                    mems.push(Member {
+                        ty,
+                        name: self.expect_ident()?,
+                        offset,
+                    });
+                    offset += size;
+                    self.expect(";")?;
+                    if self.consume("}") {
+                        break;
+                    }
+                }
+                Ok(Type::TyStruct {
+                    name: "no name".to_owned(),
+                    mem: Box::new(mems),
+                })
+            }
             _ => Err(self.raise_err("expected type")),
         }
     }
@@ -801,7 +839,7 @@ impl CodeGen for Parser {
         let mut block = vec![];
         while !self.consume("}") {
             match self.peek_reserved().as_deref() {
-                Some("int") | Some("char") => block.extend(self.vardef()?),
+                Some("int") | Some("char") | Some("struct") => block.extend(self.vardef()?),
                 _ => block.push(self.stmt()?),
             };
         }
@@ -943,15 +981,28 @@ impl CodeGen for Parser {
     fn postfix(&mut self) -> Result<Node, ParseError> {
         let mut node = self.primary()?;
         // x[y] は *(x+y)に同じ
-        while self.consume("[") {
-            node = Node::new_unary(
-                "deref",
-                Node::new_add(node, self.expr()?, self.tok()),
-                self.tok(),
-            );
-            self.expect("]")?;
+        loop {
+            if self.consume("[") {
+                node = Node::new_unary(
+                    "deref",
+                    Node::new_add(node, self.expr()?, self.tok()),
+                    self.tok(),
+                );
+                self.expect("]")?;
+            } else if self.consume(".") {
+                let name = self.expect_ident()?;
+                let mem = match match node.get_type() {
+                    Type::TyStruct { mem, .. } => mem.into_iter().filter(|m| m.name == name).next(),
+                    _ => Err(self.raise_err("not a struct!"))?,
+                } {
+                    Some(mem) => mem,
+                    _ => Err(self.raise_err(&format!("unknown member {}", name)))?,
+                };
+                node = Node::new_member_access(node, mem, self.tok());
+            } else {
+                return Ok(node);
+            }
         }
-        Ok(node)
     }
     fn primary(&mut self) -> Result<Node, ParseError> {
         if self.consume("(") {

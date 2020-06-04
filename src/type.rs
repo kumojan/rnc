@@ -6,6 +6,13 @@ pub struct TypeError {
     pub msg: String,
 }
 
+#[derive(Clone, PartialEq)]
+pub struct Member {
+    pub name: String,
+    pub ty: Type,
+    pub offset: usize,
+}
+
 #[allow(dead_code)]
 #[derive(Clone, PartialEq)]
 pub enum Type {
@@ -13,6 +20,7 @@ pub enum Type {
     TyChar,
     TyPtr(Box<Type>),
     TyArray { base: Box<Type>, len: usize },
+    TyStruct { name: String, mem: Box<Vec<Member>> },
     TyFunction { arg: Box<Vec<Type>>, ret: Box<Type> },
 }
 impl fmt::Debug for Type {
@@ -72,6 +80,7 @@ impl Type {
             Type::TyInt => 8,
             Type::TyPtr(..) => 8,
             Type::TyArray { base, len } => base.size() * len,
+            Type::TyStruct { mem, .. } => mem.iter().map(|m| m.ty.size()).sum(),
             _ => unimplemented!(),
         }
     }

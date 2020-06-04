@@ -51,8 +51,9 @@ fn store(ty: &Type) {
     }
     println!("  push rdi");
 }
+
 impl CodeGenerator {
-    fn gen_addr(&self, v: &Rc<Var>) {
+    fn gen_var_addr(&self, v: &Rc<Var>) {
         // println!("gen lval {:?}", &node);
         // rbpは関数の先頭アドレス
         // そこからoffset分引くと、目的の変数のアドレスを得る
@@ -67,6 +68,21 @@ impl CodeGenerator {
         } else {
             println!("  push offset {}", v.name);
         }
+    }
+    fn gen_addr(&mut self, node: &Node) -> Result<(), CodeGenError> {
+        match &node.kind {
+            NodeKind::Var { var } => self.gen_var_addr(var),
+            NodeKind::Deref { node } => self.gen_expr(node)?,
+            NodeKind::Member { obj, mem } => {
+                self.gen_addr(obj)?;
+                // 構造体の中でのoffsetだけずらす
+                println!("  pop rax\n  add rax, {}\n  push rax", mem.offset);
+            }
+            _ => Err(CodeGenError {
+                msg: format!("not a left value! {:?}", node.kind),
+            })?,
+        };
+        Ok(())
     }
     fn set_var_offset(&mut self, lvars: &Vec<Rc<Var>>) {
         // lvarsもvar_offsetもvar.idもあくまで出現順である
@@ -95,21 +111,13 @@ impl CodeGenerator {
                 println!("  push {}", val);
             }
             NodeKind::Var { var } => {
-                self.gen_addr(var); // まず変数のアドレスを取得する
+                self.gen_addr(&node)?; // まず変数のアドレスを取得する
                 load(&var.ty); // 配列型の場合は、値を取り出さず、アドレスをそのまま使う
             }
             NodeKind::Literal { id, .. } => {
                 println!("  push offset .L.data.{}", id);
             }
-            NodeKind::Addr { node } => match &node.kind {
-                NodeKind::Var { var } => self.gen_addr(var),
-                NodeKind::Deref { node } => self.gen_expr(node)?, // &*はスキップする
-                _ => {
-                    return Err(CodeGenError {
-                        msg: "invalid address expression!".to_owned(),
-                    })
-                }
-            },
+            NodeKind::Addr { node } => self.gen_addr(node)?,
             NodeKind::Deref { node } => {
                 // **x(2段回)だと、gen(x); load(); load();
                 // となる。つまりxの結果(xが変数ならば、その値)を取得し、
@@ -123,21 +131,7 @@ impl CodeGenerator {
             }
             NodeKind::Assign { lvar, rhs, .. } => {
                 println!("  #assign");
-                match &lvar.kind {
-                    NodeKind::Var { var } => {
-                        self.gen_addr(var);
-                    }
-                    NodeKind::Deref { node } => {
-                        self.gen_expr(node)?;
-                    }
-                    _ => {
-                        return Err(CodeGenError {
-                            msg: format!(
-                                "lhs of assignment must be var or deref (of some pointer)!"
-                            ),
-                        });
-                    }
-                }
+                self.gen_addr(lvar)?;
                 self.gen_expr(rhs)?;
                 store(&node.get_type());
             }
@@ -159,6 +153,10 @@ impl CodeGenerator {
             NodeKind::StmtExpr { stmts, expr } => {
                 self.gen_stmt(stmts)?;
                 self.gen_expr(expr)?;
+            }
+            NodeKind::Member { .. } => {
+                self.gen_addr(&node)?;
+                load(&node.get_type())
             }
             NodeKind::Bin { kind, lhs, rhs } => {
                 self.gen_expr(lhs)?;
@@ -439,6 +437,9 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
         NodeKind::StmtExpr { stmts, expr } => {
             s += &graph_gen(stmts, &nodename, 0, Some("statements"));
             s += &graph_gen(expr, &nodename, 0, Some("return"));
+        }
+        NodeKind::Member { obj, .. } => {
+            s += &graph_gen(obj, &nodename, 0, None);
         }
     }
     s

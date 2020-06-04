@@ -127,7 +127,7 @@ impl Lexer {
                 3 => ["for", "int"].contains(&&s[..]),
                 4 => ["else", "char"].contains(&&s[..]),
                 5 => ["while"].contains(&&s[..]),
-                6 => ["return", "sizeof"].contains(&&s[..]),
+                6 => ["return", "sizeof", "struct"].contains(&&s[..]),
                 _ => unimplemented!(),
             }
     }
@@ -190,7 +190,7 @@ impl Lexer {
         }
         // 1文字読み取り
         let c = self.peek_char(0);
-        if "+-*/(){}<>=;,*&[]".find(c).is_some() {
+        if "+-*/(){}<>=;,*&[].".find(c).is_some() {
             self.pos += 1;
             return Some(c.to_string());
         }
