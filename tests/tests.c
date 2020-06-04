@@ -162,6 +162,18 @@ int main() {
          }),
          "({ int x; if (2-1) x=2; else x=3; x; })");
 
+  assert(4, ({
+           int x;
+           if (0)
+             x = 2;
+           else if (0)
+             x = 3;
+           else
+             x = 4;
+           x;
+         }),
+         "({ int x; if (0) x=2; else if (0) x=3; else x=4; x; })");
+
   assert(55, ({
            int i = 0;
            int j = 0;
@@ -169,6 +181,17 @@ int main() {
            j;
          }),
          "({ int i=0; int j=0; for (i=0; i<=10; i=i+1) j=i+j; j; })");
+
+  assert(385, ({
+           int i;
+           int j;
+           int x = 0;
+           for (i = 1; i <= 10; i = i + 1)
+             for (j = i; j <= 10; j = j + 1)
+              x = x + j;
+           x;
+         }),
+         "({ int i; int j; int x=0; for (i=1; i<=10; i=i+1) for (j=i; j<=10; j=j+1) x =x+j; x; })");
 
   assert(10, ({
            int i = 0;
