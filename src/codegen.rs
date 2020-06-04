@@ -78,6 +78,11 @@ impl CodeGenerator {
                 // 構造体の中でのoffsetだけずらす
                 println!("  pop rax\n  add rax, {}\n  push rax", mem.offset);
             }
+            NodeKind::Comma { lhs, rhs } => {
+                self.gen_expr(lhs)?;
+                println!("  pop rax");
+                self.gen_addr(rhs)?;
+            }
             _ => Err(CodeGenError {
                 msg: format!("not a left value! {:?}", node.kind),
             })?,
@@ -134,6 +139,11 @@ impl CodeGenerator {
                 self.gen_addr(lvar)?;
                 self.gen_expr(rhs)?;
                 store(&node.get_type());
+            }
+            NodeKind::Comma { lhs, rhs } => {
+                self.gen_expr(lhs)?;
+                println!("  pop rax");
+                self.gen_expr(rhs)?;
             }
             NodeKind::FunCall { name, args } => {
                 if args.len() > ARGLEN {
@@ -377,6 +387,11 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
         NodeKind::Assign { lvar, rhs } => {
             s += &format!("{} [label=\"assign\"];\n", nodename);
             s += &graph_gen(lvar, &nodename, 0, None);
+            s += &graph_gen(rhs, &nodename, 1, None);
+        }
+        NodeKind::Comma { lhs, rhs } => {
+            s += &format!("{} [label=\"comma\"];\n", nodename);
+            s += &graph_gen(lhs, &nodename, 0, None);
             s += &graph_gen(rhs, &nodename, 1, None);
         }
         NodeKind::Return { returns } => {

@@ -89,6 +89,10 @@ pub enum NodeKind {
         stmts: Box<Node>, // blockを持たせる
         expr: Box<Node>,
     },
+    Comma {
+        lhs: Box<Node>,
+        rhs: Box<Node>,
+    },
     Member {
         obj: Box<Node>,
         mem: Member,
@@ -133,6 +137,7 @@ impl fmt::Debug for NodeKind {
             NodeKind::Literal { ty, .. } => write!(f, "{:?} literal", ty),
             NodeKind::StmtExpr { .. } => write!(f, "stmt expr"),
             NodeKind::Member { obj, .. } => write!(f, "mem of {:?}", obj.kind),
+            NodeKind::Comma { .. } => write!(f, "comma"),
         }
     }
 }
@@ -214,6 +219,16 @@ impl Node {
             ty: rhs.ty.clone(),
             kind: NodeKind::Assign {
                 lvar: Box::new(lvar),
+                rhs: Box::new(rhs),
+            },
+            tok,
+        }
+    }
+    fn new_comma(lhs: Node, rhs: Node, tok: Option<Token>) -> Self {
+        Self {
+            ty: rhs.ty.clone(),
+            kind: NodeKind::Comma {
+                lhs: Box::new(lhs),
                 rhs: Box::new(rhs),
             },
             tok,
@@ -407,7 +422,7 @@ pub trait TokenReader {
 /// compound_stmt = (vardef | stmt)*
 /// vardef = typespec declarator initializer ("," declarator initializer)*;
 /// declarator = ptr ident ("[" num "]")*
-/// initializer = "=" (expr | array_init)
+/// initializer = "=" (assign | array_init)
 /// array_init = "{" num ("," num)?"}"
 /// stmt = expr ";"  // expression statement (値を残さない)
 ///     | "return" expr ";"  
@@ -415,8 +430,8 @@ pub trait TokenReader {
 ///     | "if" "(" expr ")" stmt ( "else" stmt )?
 ///     | "while" "(" expr ")" stmt
 ///     | "for" "(" expr? ";" expr? ";" expr? ")" stmt
-/// expr = assign
-/// assign = equality ("=" assign)?
+/// expr = assign ("," expr )?   // exprはassignをコンマで連結している
+/// assign = equality ("=" assign)?  // assignでは括弧()の中以外ではコンマは出てこない
 /// equality = relational (("==" | "!=") relational)*
 /// relational = add (("<" | "<=" | ">" | ">=") add)*
 /// add = mul (("+" | "-") mul)*
@@ -426,7 +441,7 @@ pub trait TokenReader {
 /// postfix = primary ("[" expr "]" | "." ident )*
 /// primary = num
 ///     | str
-///     | ident ("(" (expr ("," expr )*)? ")")?
+///     | ident ("(" (assign ("," assign )*)? ")")?  // 関数の引数はassignにした。(コンマ演算子との兼ね合い)
 ///     | "(" expr ")"
 ///     | "sizeof" unary
 ///     | "(" "{" stmt* expr ";" "}" ")"
@@ -686,10 +701,10 @@ impl CodeGen for Parser {
                 let name = self.expect_ident()?;
                 self.add_var(&name, ty);
                 if !self.consume(",") {
-                    self.expect(")")?;
                     break; // 宣言終了
                 }
             }
+            self.expect(")")?;
         }
         Ok(())
     }
@@ -772,7 +787,7 @@ impl CodeGen for Parser {
             if self.peek("{") {
                 unimplemented!("array initiation not implemented");
             } else {
-                Some(self.expr()?)
+                Some(self.assign()?)
             }
         } else {
             None
@@ -850,7 +865,11 @@ impl CodeGen for Parser {
         Ok(node)
     }
     fn expr(&mut self) -> Result<Node, ParseError> {
-        self.assign()
+        let mut node = self.assign()?;
+        if self.consume(",") {
+            node = Node::new_comma(node, self.expr()?, self.tok());
+        }
+        Ok(node)
     }
     fn assign(&mut self) -> Result<Node, ParseError> {
         let mut node = self.equality()?;
@@ -984,7 +1003,7 @@ impl CodeGen for Parser {
             if self.consume("(") {
                 let mut args = Vec::new();
                 while !self.consume(")") {
-                    args.push(self.expr()?);
+                    args.push(self.assign()?);
                     if !self.consume(",") {
                         self.expect(")")?;
                         break;
