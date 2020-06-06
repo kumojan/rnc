@@ -7,6 +7,7 @@ mod err;
 mod parse;
 mod tokenize;
 mod r#type;
+mod util;
 use crate::codegen::{code_gen, print_graph};
 use crate::err::*;
 use crate::parse::*;

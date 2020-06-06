@@ -1,5 +1,6 @@
 use crate::parse::{BinOp, Function, Node, NodeKind, Var};
 use crate::r#type::Type;
+use crate::util::*;
 use std::rc::Rc;
 
 // 関数呼び出しのレジスタ 参考 https://en.wikipedia.org/wiki/X86_calling_conventions#x86-64_calling_conventions
@@ -98,14 +99,11 @@ impl CodeGenerator {
             offset += lvars[i].ty.size();
             self.var_offsets[i] = offset;
         }
-        // 以下、スタックサイズを16の倍数に揃える
-        self.func_stack_size = *self
+        let offset = *self
             .var_offsets
             .first()
-            .unwrap_or(&RESERVED_REGISTER_STACK_SIZE)
-            - 1;
-        self.func_stack_size -= self.func_stack_size % 16;
-        self.func_stack_size += 16;
+            .unwrap_or(&RESERVED_REGISTER_STACK_SIZE);
+        self.func_stack_size = align_to(offset, 16);
     }
     fn gen_expr(&mut self, node: &Node) -> Result<(), CodeGenError> {
         if let Some(tok) = &node.tok {
