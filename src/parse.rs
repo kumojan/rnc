@@ -411,13 +411,16 @@ pub trait TokenReader {
     // 型を取得する
     fn typespec(&mut self) -> Result<Type, ParseError>;
     fn ptr(&mut self, ty: Type) -> Type;
+    fn struct_decl(&mut self) -> Result<Type, ParseError>;
     // raise error
     fn raise_err(&self, msg: &str) -> ParseError;
 }
 ///
 /// program = (funcdef | global-var)*
 /// funcdef = typespec ptr ident funcargs "{" compound_stmt "}"
-/// typespec = "int" | "char" | struct_decl
+/// typespec = "int" | "char" | "struct" struct_decl
+/// struct_decl = ident? "{" struct_members "}"?
+/// struct_members = (typespec declarator (","  declarator)* ";")*
 /// ptr = "*"*
 /// funcargs = "(" typespec ptr ident ( "," typespec ptr ident)? ")"
 /// compound_stmt = (vardef | stmt)*
@@ -472,7 +475,8 @@ pub struct Parser {
     locals: Vec<Rc<Var>>, // Node::Varと共有する。
     globals: Vec<Rc<Var>>,
     string_literals: Vec<Vec<u8>>,
-    scope_stack: VecDeque<VecDeque<Rc<Var>>>, // 前に内側のスコープがある
+    var_scopes: VecDeque<VecDeque<Rc<Var>>>, // 前に内側のスコープがある
+    struct_tag_scopes: VecDeque<VecDeque<Type>>,
     cur_tok: Option<Token>,
 }
 
@@ -562,35 +566,7 @@ impl TokenReader for Parser {
         match self.consume_reserved().as_deref() {
             Some("int") => Ok(Type::new_int()),
             Some("char") => Ok(Type::new_char()),
-            Some("struct") => {
-                self.expect("{")?;
-                let mut mems = Vec::new();
-                let mut offset = 0;
-                loop {
-                    let ty = self.typespec()?;
-                    loop {
-                        let (name, ty) = self.declarator(ty.clone())?; // int *x[4]; のような型が確定する
-                        offset = align_to(offset, ty.align()); // その型のアラインメントにoffsetを合わせる
-                        let size = ty.size(); // その型のサイズ後にoffsetにたす
-                        mems.push(Member { ty, name, offset }); // オフセットをしていしてメンバを追加
-                        offset += size;
-                        if !self.consume(",") {
-                            break;
-                        }
-                    }
-                    self.expect(";")?;
-                    if self.consume("}") {
-                        break;
-                    }
-                }
-                let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
-                Ok(Type::TyStruct {
-                    name: "no name".to_owned(),
-                    mem: Box::new(mems),
-                    align,
-                    size: align_to(offset, align),
-                })
-            }
+            Some("struct") => self.struct_decl(),
             _ => Err(self.raise_err("expected type")),
         }
     }
@@ -600,6 +576,46 @@ impl TokenReader for Parser {
             depth += 1;
         }
         ty.to_ptr_recursive(depth)
+    }
+    fn struct_decl(&mut self) -> Result<Type, ParseError> {
+        let name = self.consume_ident();
+        if self.consume("{") {
+            let mut mems = Vec::new();
+            let mut offset = 0;
+            loop {
+                let ty = self.typespec()?;
+                loop {
+                    let (name, ty) = self.declarator(ty.clone())?; // int *x[4]; のような型が確定する
+                    offset = align_to(offset, ty.align()); // その型のアラインメントにoffsetを合わせる
+                    let size = ty.size(); // その型のサイズ後にoffsetにたす
+                    mems.push(Member { ty, name, offset }); // オフセットをしていしてメンバを追加
+                    offset += size;
+                    if !self.consume(",") {
+                        break;
+                    }
+                }
+                self.expect(";")?;
+                if self.consume("}") {
+                    break;
+                }
+            }
+            let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
+            let ty = Type::TyStruct {
+                name,
+                mem: Box::new(mems),
+                align,
+                size: align_to(offset, align),
+            };
+            self.struct_tag_scopes[0].push_front(ty.clone());
+            Ok(ty)
+        } else if let Some(name) = name {
+            match self.find_struct(&name) {
+                Some(ty) => Ok(ty),
+                None => Err(self.raise_err("unknown struct tag")),
+            }
+        } else {
+            Err(self.raise_err("expected identifier"))
+        }
     }
     fn raise_err(&self, msg: &str) -> ParseError {
         ParseError {
@@ -615,7 +631,8 @@ impl Parser {
             locals: Vec::new(),
             globals: Vec::new(),
             string_literals: Vec::new(),
-            scope_stack: Default::default(),
+            var_scopes: Default::default(),
+            struct_tag_scopes: Default::default(),
             cur_tok: None,
         }
     }
@@ -631,19 +648,36 @@ impl Parser {
     }
     /// 必ずleave_scopeと対にして使うこと
     fn enter_scope(&mut self) {
-        self.scope_stack.push_front(Default::default());
+        self.var_scopes.push_front(Default::default());
+        self.struct_tag_scopes.push_front(Default::default());
     }
     /// 必ずenter_scopeと対にして使うこと
     fn leave_scope(&mut self) {
-        self.scope_stack.pop_front();
+        self.var_scopes.pop_front();
+        self.struct_tag_scopes.pop_front();
     }
     fn find_var(&self, name: &String) -> Option<Rc<Var>> {
-        // println!("searching {} in {:?}", name, self.scope_stack);
-        self.scope_stack
+        // println!("searching {} in {:?}", name, self.var_scopes);
+        self.var_scopes
             .iter()
             .flat_map(|scope| scope.iter().find(|v| &v.name == name))
             .next()
             .or_else(|| self.globals.iter().find(|v| v.name == *name))
+            .cloned()
+    }
+    fn find_struct(&self, name: &String) -> Option<Type> {
+        // println!("searching {} in {:?}", name, self.var_scopes);
+        self.struct_tag_scopes
+            .iter()
+            .flat_map(|scope| {
+                scope.iter().find(|t| match &t {
+                    Type::TyStruct {
+                        name: Some(_name), ..
+                    } => _name == name,
+                    _ => false,
+                })
+            })
+            .next()
             .cloned()
     }
     fn add_var(&mut self, name: &String, ty: Type) -> Rc<Var> {
@@ -654,7 +688,7 @@ impl Parser {
             is_local: true,
         });
         self.locals.push(var.clone());
-        self.scope_stack[0].push_front(var.clone()); // scopeにも追加
+        self.var_scopes[0].push_front(var.clone()); // scopeにも追加
         var
     }
     // グローバル変数は重複して宣言できない
@@ -770,21 +804,24 @@ impl CodeGen for Parser {
     fn vardef(&mut self) -> Result<Vec<Node>, ParseError> {
         let ty = self.typespec()?;
         let mut stmts = vec![];
-        loop {
-            let (name, _ty) = self.declarator(ty.clone())?;
-            // 初期化がなければ、コードには現れないので捨てられる
-            let var = self.add_var(&name, _ty);
-            if let Some(init) = self.initializer()? {
-                stmts.push(Node::new_expr_stmt(
-                    Node::new_assign(Node::new_lvar(var, self.tok()), init, self.tok()),
-                    self.tok(),
-                ));
+        // 構造体宣言の後にすぐにセミコロンの場合、変数は設定せず、初期化もないのでstmts=vec![]のまま
+        if !self.consume(";") {
+            loop {
+                let (name, _ty) = self.declarator(ty.clone())?;
+                // 初期化がなければ、コードには現れないので捨てられる
+                let var = self.add_var(&name, _ty);
+                if let Some(init) = self.initializer()? {
+                    stmts.push(Node::new_expr_stmt(
+                        Node::new_assign(Node::new_lvar(var, self.tok()), init, self.tok()),
+                        self.tok(),
+                    ));
+                }
+                if !self.consume(",") {
+                    break; // 宣言終了
+                }
             }
-            if !self.consume(",") {
-                break; // 宣言終了
-            }
+            self.expect(";")?;
         }
-        self.expect(";")?;
         Ok(stmts)
     }
     fn initializer(&mut self) -> Result<Option<Node>, ParseError> {

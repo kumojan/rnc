@@ -24,7 +24,7 @@ pub enum Type {
         len: usize,
     },
     TyStruct {
-        name: String,
+        name: Option<String>,
         mem: Box<Vec<Member>>,
         size: usize,
         align: usize,
