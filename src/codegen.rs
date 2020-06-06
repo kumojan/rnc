@@ -32,7 +32,7 @@ fn load(ty: &Type) {
         return;
     }
     // アドレスを取り出し、値を取得してpushし直す
-    println!("  pop rax  #load");
+    println!("  pop rax");
     if ty.size() == 1 {
         println!("  movsx rax, byte ptr [rax]\n");
     } else {
@@ -43,7 +43,7 @@ fn load(ty: &Type) {
 fn store(ty: &Type) {
     // 下から 値 | アドレス と並んでいるときに、
     // 値をそのアドレスに格納し、その値をpush
-    println!("  pop rdi  #store");
+    println!("  pop rdi  # store");
     println!("  pop rax");
     if ty.size() == 1 {
         println!("  mov [rax], dil");
@@ -80,7 +80,10 @@ impl CodeGenerator {
             NodeKind::Member { obj, mem } => {
                 self.gen_addr(obj)?;
                 // 構造体の中でのoffsetだけずらす
-                println!("  pop rax\n  add rax, {}\n  push rax", mem.offset);
+                println!(
+                    "  pop rax  # load {}\n  add rax, {}\n  push rax",
+                    mem.name, mem.offset
+                );
             }
             NodeKind::Comma { lhs, rhs } => {
                 self.gen_expr(lhs)?;
@@ -137,10 +140,9 @@ impl CodeGenerator {
                 load(&node.get_type().get_base().unwrap());
             }
             NodeKind::Assign { lvar, rhs, .. } => {
-                println!("  #assign");
                 self.gen_addr(lvar)?;
                 self.gen_expr(rhs)?;
-                store(&node.get_type());
+                store(&lvar.get_type()); // どの型に代入するかによってコードが異なる
             }
             NodeKind::Comma { lhs, rhs } => {
                 self.gen_expr(lhs)?;

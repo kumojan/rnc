@@ -217,7 +217,7 @@ impl Node {
     }
     fn new_assign(lvar: Node, rhs: Node, tok: Option<Token>) -> Self {
         Self {
-            ty: rhs.ty.clone(),
+            ty: lvar.ty.clone(),
             kind: NodeKind::Assign {
                 lvar: Box::new(lvar),
                 rhs: Box::new(rhs),
@@ -391,30 +391,16 @@ impl fmt::Display for ParseError {
         write!(f, "parse failed at {}", self.pos)
     }
 }
-
-pub trait TokenReader {
-    fn shift(&mut self) -> &mut Self;
-    // 見るだけ、進まず、エラーなし
-    fn peek(&mut self, s: &str) -> bool;
-    fn peek_reserved(&self) -> Option<String>;
-    // 見て、存在したら消費してtrue、存在しなければfalse
-    fn consume(&mut self, s: &str) -> bool;
-    fn consume_num(&mut self) -> Option<u32>;
-    fn consume_string(&mut self) -> Option<Vec<u8>>;
-    fn consume_ident(&mut self) -> Option<String>;
-    fn consume_reserved(&mut self) -> Option<String>;
-    fn is_eof(&self) -> bool;
-    // 結果をもらい、違ったらエラーを出す
-    fn expect(&mut self, s: &str) -> Result<(), ParseError>;
-    fn expect_num(&mut self) -> Result<u32, ParseError>;
-    fn expect_ident(&mut self) -> Result<String, ParseError>;
-    // 型を取得する
-    fn typespec(&mut self) -> Result<Type, ParseError>;
-    fn ptr(&mut self, ty: Type) -> Type;
-    fn struct_decl(&mut self) -> Result<Type, ParseError>;
-    // raise error
-    fn raise_err(&self, msg: &str) -> ParseError;
+pub struct Parser {
+    tklist: VecDeque<Token>,
+    locals: Vec<Rc<Var>>, // Node::Varと共有する。
+    globals: Vec<Rc<Var>>,
+    string_literals: Vec<Vec<u8>>,
+    var_scopes: VecDeque<VecDeque<Rc<Var>>>, // 前に内側のスコープがある
+    struct_tag_scopes: VecDeque<VecDeque<Type>>,
+    cur_tok: Option<Token>,
 }
+
 ///
 /// program = (funcdef | global-var)*
 /// funcdef = typespec ptr ident funcargs "{" compound_stmt "}"
@@ -450,37 +436,18 @@ pub trait TokenReader {
 ///     | "sizeof" unary
 ///     | "(" "{" stmt* expr ";" "}" ")"
 ///
-pub trait CodeGen {
-    fn program(self) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<Vec<u8>>), ParseError>;
-    fn funcargs(&mut self) -> Result<(), ParseError>;
-    fn funcdef(&mut self) -> Result<Option<Function>, ParseError>;
-    fn type_suffix(&mut self, ty: Type) -> Result<Type, ParseError>;
-    fn vardef(&mut self) -> Result<Vec<Node>, ParseError>;
-    fn declarator(&mut self, ty: Type) -> Result<(String, Type), ParseError>;
-    fn initializer(&mut self) -> Result<Option<Node>, ParseError>;
-    fn compound_stmt(&mut self, new_scope: bool) -> Result<Vec<Node>, ParseError>;
-    fn stmt(&mut self) -> Result<Node, ParseError>;
-    fn expr(&mut self) -> Result<Node, ParseError>;
-    fn assign(&mut self) -> Result<Node, ParseError>;
-    fn equality(&mut self) -> Result<Node, ParseError>;
-    fn relational(&mut self) -> Result<Node, ParseError>;
-    fn add(&mut self) -> Result<Node, ParseError>;
-    fn mul(&mut self) -> Result<Node, ParseError>;
-    fn unary(&mut self) -> Result<Node, ParseError>;
-    fn postfix(&mut self) -> Result<Node, ParseError>;
-    fn primary(&mut self) -> Result<Node, ParseError>;
-}
-pub struct Parser {
-    tklist: VecDeque<Token>,
-    locals: Vec<Rc<Var>>, // Node::Varと共有する。
-    globals: Vec<Rc<Var>>,
-    string_literals: Vec<Vec<u8>>,
-    var_scopes: VecDeque<VecDeque<Rc<Var>>>, // 前に内側のスコープがある
-    struct_tag_scopes: VecDeque<VecDeque<Type>>,
-    cur_tok: Option<Token>,
-}
-
-impl TokenReader for Parser {
+impl Parser {
+    pub fn new(tklist: VecDeque<Token>) -> Self {
+        Self {
+            tklist,
+            locals: Vec::new(),
+            globals: Vec::new(),
+            string_literals: Vec::new(),
+            var_scopes: Default::default(),
+            struct_tag_scopes: Default::default(),
+            cur_tok: None,
+        }
+    }
     /// トークンを一つ読んで、すすむ
     /// 読んだトークンはcur_tokにいれる
     fn shift(&mut self) -> &mut Self {
@@ -623,19 +590,6 @@ impl TokenReader for Parser {
             msg: msg.to_owned(),
         }
     }
-}
-impl Parser {
-    pub fn new(tklist: VecDeque<Token>) -> Self {
-        Self {
-            tklist,
-            locals: Vec::new(),
-            globals: Vec::new(),
-            string_literals: Vec::new(),
-            var_scopes: Default::default(),
-            struct_tag_scopes: Default::default(),
-            cur_tok: None,
-        }
-    }
     fn head_kind(&self) -> &TokenKind {
         &self.tklist[0].kind
     }
@@ -718,11 +672,8 @@ impl Parser {
         self.string_literals.push(data);
         n
     }
-}
-
-impl CodeGen for Parser {
     // コード生成
-    fn program(mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<Vec<u8>>), ParseError> {
+    pub fn program(mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<Vec<u8>>), ParseError> {
         let mut code = vec![];
         while !self.is_eof() {
             if let Some(func) = self.funcdef()? {
@@ -988,10 +939,23 @@ impl CodeGen for Parser {
             _ => self.postfix(),
         }
     }
+    /// identを受けて構造体のメンバにアクセスする
+    fn struct_ref(&mut self, node: Node) -> Result<Node, ParseError> {
+        let name = self.expect_ident()?;
+        let mem = match match node.get_type() {
+            Type::TyStruct { mem, .. } => mem.into_iter().filter(|m| m.name == name).next(),
+            _ => Err(self.raise_err("not a struct!"))?,
+        } {
+            Some(mem) => mem,
+            _ => Err(self.raise_err(&format!("unknown member {}", name)))?,
+        };
+        Ok(Node::new_member_access(node, mem, self.tok()))
+    }
+    /// postfix = primary ("[" expr "]" | "." ident  | "->" ident)*
     fn postfix(&mut self) -> Result<Node, ParseError> {
         let mut node = self.primary()?;
-        // x[y] は *(x+y)に同じ
         loop {
+            // x[y] は *(x+y)に同じ
             if self.consume("[") {
                 node = Node::new_unary(
                     "deref",
@@ -1000,15 +964,11 @@ impl CodeGen for Parser {
                 );
                 self.expect("]")?;
             } else if self.consume(".") {
-                let name = self.expect_ident()?;
-                let mem = match match node.get_type() {
-                    Type::TyStruct { mem, .. } => mem.into_iter().filter(|m| m.name == name).next(),
-                    _ => Err(self.raise_err("not a struct!"))?,
-                } {
-                    Some(mem) => mem,
-                    _ => Err(self.raise_err(&format!("unknown member {}", name)))?,
-                };
-                node = Node::new_member_access(node, mem, self.tok());
+                node = self.struct_ref(node)?;
+            // x->yは(*x).yに同じ
+            } else if self.consume("->") {
+                node = Node::new_unary("deref", node, self.tok());
+                node = self.struct_ref(node)?;
             } else {
                 return Ok(node);
             }
