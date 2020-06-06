@@ -64,7 +64,10 @@ impl CodeGenerator {
         // gen_addrはoffsetにあるアドレスをpushする
         // 代入する場合と値を用いる場合で、その後の扱いを変えること
         if v.is_local {
-            println!("  lea rax, [rbp-{}]", self.var_offsets[v.id]);
+            println!(
+                "  lea rax, [rbp-{}]  # load {}",
+                self.var_offsets[v.id], v.name
+            );
             println!("  push rax");
         } else {
             println!("  push offset {}", v.name);
@@ -96,6 +99,7 @@ impl CodeGenerator {
         self.var_offsets = vec![0; var_num];
         let mut offset = RESERVED_REGISTER_STACK_SIZE;
         for i in (0..var_num).rev() {
+            offset = align_to(offset, lvars[i].ty.align());
             offset += lvars[i].ty.size();
             self.var_offsets[i] = offset;
         }

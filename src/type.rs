@@ -1,5 +1,4 @@
 // use crate::parse::ParseError;
-use crate::util::*;
 use std::fmt;
 
 #[derive(Debug, Default)]

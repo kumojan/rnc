@@ -881,6 +881,24 @@ int main() {
            sizeof(x);
          }),
          "({ struct {int a; struct {char c; int b} y;} x; sizeof(x); })");
+  assert(15, ({
+           int x;  // 32-39  // 0-31は非揮発性レジスタ
+           int y;  // 40-47  // 48-54は空(パディング)
+           char z; // 55  <- 変数のオフセットはコードの後方から順にに計算して行き、後からマイナスをつけるので、位置としては、直後の変数にくっついている
+           char *a = &y;  // 56-63
+           char *b = &z;  // 64-72  // この後79まで確保されている
+           b - a;
+         }),
+         "({ int x; int y; char z; char *a=&y; char *b=&z; b-a; })");
+  assert(1, ({
+           int x;
+           char y;
+           int z;
+           char *a = &y;
+           char *b = &z;
+           b - a;
+         }),
+         "({ int x; char y; int z; char *a=&y; char *b=&z; b-a; })");
 
   printf("OK\n");
   return 0;
