@@ -846,14 +846,6 @@ int main() {
            sizeof(x);
          }),
          "({ struct {char a; char b;} x; sizeof(x); })");
-  assert(9, ({
-           struct {
-             char a;
-             int b;
-           } x;
-           sizeof(x);
-         }),
-         "({ struct {char a; int b;} x; sizeof(x); })");
   assert(8, ({
            struct {
              char a;
@@ -862,6 +854,33 @@ int main() {
            sizeof(x);
          }),
          "({ struct {char a; int b;} *x; sizeof(x); })");
+  assert(16, ({
+           struct {
+             char a;
+             int b;
+           } x;
+           sizeof(x);
+         }),
+         "({ struct {char a; int b;} x; sizeof(x); })");
+  assert(16, ({
+           struct {
+             int a;
+             char b;
+           } x;
+           sizeof(x);
+         }),
+         "({ struct {int a; char b;} x; sizeof(x); })");
+  assert(24, ({
+           struct {
+             int a;
+             struct {
+               char c;
+               int b;
+             } y;
+           } x;
+           sizeof(x);
+         }),
+         "({ struct {int a; struct {char c; int b} y;} x; sizeof(x); })");
 
   printf("OK\n");
   return 0;

@@ -1,5 +1,6 @@
 use crate::r#type::*;
 use crate::tokenize::*;
+use crate::util::*;
 use std::collections::VecDeque;
 use std::fmt;
 use std::rc::Rc;
@@ -156,7 +157,7 @@ impl Node {
     fn new_num(val: u32, tok: Option<Token>) -> Self {
         Self {
             kind: NodeKind::Num { val },
-            ty: Some(Type::TyInt),
+            ty: Some(Type::new_int()),
             tok,
         }
     }
@@ -247,7 +248,7 @@ impl Node {
         Self {
             ty: match kind {
                 BinOp::Sub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => {
-                    Some(Type::TyInt)
+                    Some(Type::new_int())
                 } // ポインタ同士の引き算はint
                 _ => Some(lhs.get_type()),
             },
@@ -349,7 +350,7 @@ impl Node {
                 name,
                 args: Box::new(args),
             },
-            ty: Some(Type::TyInt),
+            ty: Some(Type::new_int()),
             tok,
         }
     }
@@ -559,8 +560,8 @@ impl TokenReader for Parser {
     }
     fn typespec(&mut self) -> Result<Type, ParseError> {
         match self.consume_reserved().as_deref() {
-            Some("int") => Ok(Type::TyInt),
-            Some("char") => Ok(Type::TyChar),
+            Some("int") => Ok(Type::new_int()),
+            Some("char") => Ok(Type::new_char()),
             Some("struct") => {
                 self.expect("{")?;
                 let mut mems = Vec::new();
@@ -568,9 +569,10 @@ impl TokenReader for Parser {
                 loop {
                     let ty = self.typespec()?;
                     loop {
-                        let (name, ty) = self.declarator(ty.clone())?;
-                        let size = ty.size();
-                        mems.push(Member { ty, name, offset });
+                        let (name, ty) = self.declarator(ty.clone())?; // int *x[4]; のような型が確定する
+                        offset = align_to(offset, ty.align()); // その型のアラインメントにoffsetを合わせる
+                        let size = ty.size(); // その型のサイズ後にoffsetにたす
+                        mems.push(Member { ty, name, offset }); // オフセットをしていしてメンバを追加
                         offset += size;
                         if !self.consume(",") {
                             break;
@@ -581,9 +583,12 @@ impl TokenReader for Parser {
                         break;
                     }
                 }
+                let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
                 Ok(Type::TyStruct {
                     name: "no name".to_owned(),
                     mem: Box::new(mems),
+                    align,
+                    size: align_to(offset, align),
                 })
             }
             _ => Err(self.raise_err("expected type")),
@@ -670,10 +675,10 @@ impl Parser {
     fn add_string_literal(&mut self, data: Vec<u8>) -> Node {
         let n = Node {
             kind: NodeKind::Literal {
-                ty: Type::TyChar.to_array(data.len() + 1), // string末尾の'\0'も大きさに含める
+                ty: Type::new_char().to_array(data.len() + 1), // string末尾の'\0'も大きさに含める
                 id: self.string_literals.len(),
             },
-            ty: Some(Type::TyChar.to_array(data.len() + 1)),
+            ty: Some(Type::new_char().to_array(data.len() + 1)),
             tok: self.tok(),
         };
         self.string_literals.push(data);
