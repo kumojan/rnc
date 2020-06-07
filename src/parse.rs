@@ -404,8 +404,9 @@ pub struct Parser {
 ///
 /// program = (funcdef | global-var)*
 /// funcdef = typespec ptr ident funcargs "{" compound_stmt "}"
-/// typespec = "int" | "char" | "struct" struct_decl
+/// typespec = "int" | "char" | "struct" struct_decl | "union" union_decl
 /// struct_decl = ident? "{" struct_members "}"?
+/// union_decl = ident? "{" struct_members "}"?
 /// struct_members = (typespec declarator (","  declarator)* ";")*
 /// ptr = "*"*
 /// funcargs = "(" typespec ptr ident ( "," typespec ptr ident)? ")"
@@ -534,6 +535,7 @@ impl Parser {
             Some("int") => Ok(Type::new_int()),
             Some("char") => Ok(Type::new_char()),
             Some("struct") => self.struct_decl(),
+            Some("union") => self.union_decl(),
             _ => Err(self.raise_err("expected type")),
         }
     }
@@ -572,6 +574,47 @@ impl Parser {
                 mem: Box::new(mems),
                 align,
                 size: align_to(offset, align),
+            };
+            self.struct_tag_scopes[0].push_front(ty.clone());
+            Ok(ty)
+        } else if let Some(name) = name {
+            match self.find_struct(&name) {
+                Some(ty) => Ok(ty),
+                None => Err(self.raise_err("unknown struct tag")),
+            }
+        } else {
+            Err(self.raise_err("expected identifier"))
+        }
+    }
+    fn union_decl(&mut self) -> Result<Type, ParseError> {
+        let name = self.consume_ident();
+        if self.consume("{") {
+            let mut mems = Vec::new();
+            loop {
+                let ty = self.typespec()?;
+                loop {
+                    let (name, ty) = self.declarator(ty.clone())?; // int *x[4]; のような型が確定する
+                    mems.push(Member {
+                        ty,
+                        name,
+                        offset: 0,
+                    });
+                    if !self.consume(",") {
+                        break;
+                    }
+                }
+                self.expect(";")?;
+                if self.consume("}") {
+                    break;
+                }
+            }
+            let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
+            let size = mems.iter().map(|m| m.ty.size()).max().unwrap_or(1);
+            let ty = Type::TyStruct {
+                name,
+                mem: Box::new(mems),
+                align,
+                size,
             };
             self.struct_tag_scopes[0].push_front(ty.clone());
             Ok(ty)
@@ -796,7 +839,9 @@ impl Parser {
         let mut block = vec![];
         while !self.consume("}") {
             match self.peek_reserved().as_deref() {
-                Some("int") | Some("char") | Some("struct") => block.extend(self.vardef()?),
+                Some("int") | Some("char") | Some("struct") | Some("union") => {
+                    block.extend(self.vardef()?)
+                }
                 _ => block.push(self.stmt()?),
             };
         }

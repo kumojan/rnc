@@ -126,7 +126,7 @@ impl Lexer {
                 2 => ["if"].contains(&&s[..]),
                 3 => ["for", "int"].contains(&&s[..]),
                 4 => ["else", "char"].contains(&&s[..]),
-                5 => ["while"].contains(&&s[..]),
+                5 => ["while", "union"].contains(&&s[..]),
                 6 => ["return", "sizeof", "struct"].contains(&&s[..]),
                 _ => unimplemented!(),
             }
