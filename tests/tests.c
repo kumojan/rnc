@@ -48,6 +48,7 @@ int sumcheck(int a, int b, int c, int d, int e, int f) {
 int _add(int a, int b) { return a + 2 * b; }
 
 int main() {
+  // 二項演算
   assert(0, 0, "0");
   assert(42, 42, "42");
   assert(21, 5 + 20 - 4, "5+20-4");
@@ -77,6 +78,7 @@ int main() {
   assert(1, 1 >= 1, "1>=1");
   assert(0, 1 >= 2, "1>=2");
 
+  // 変数への代入、変数の計算
   assert(3, ({ int a; a = 3; a; }), "({ int a; a=3; a; })");
   assert(3, ({ int a = 3; a; }), "({ int a=3; a; })");
   assert(8, ({ int a = 3; int z = 5; a + z; }), "({ int a=3; int z=5; a+z; })");
@@ -87,24 +89,24 @@ int main() {
   assert(3, ({ int foo = 3; foo; }), "({ int foo=3; foo; })");
   assert(8, ({ int foo123 = 3; int bar = 5; foo123 + bar; }), "({ int foo123=3; int bar=5; foo123+bar; })");
 
+  // if文
   assert(3, ({ int x; if (0) x = 2; else x = 3; x; }), "({ int x; if (0) x=2; else x=3; x; })");
   assert(3, ({ int x; if (1 - 1) x = 2; else x = 3; x; }), "({ int x; if (1-1) x=2; else x=3; x; })");
   assert(2, ({ int x; if (1) x = 2; else x = 3; x; }), "({ int x; if (1) x=2; else x=3; x; })");
   assert(2, ({ int x; if (2 - 1) x = 2; else x = 3; x; }), "({ int x; if (2-1) x=2; else x=3; x; })");
-
   assert(4, ({ int x; if (0) x = 2; else if (0) x = 3; else x = 4; x; }), "({ int x; if (0) x=2; else if (0) x=3; else x=4; x; })");
 
+  // for文
   assert(55, ({ int i = 0; int j = 0; for (i = 0; i <= 10; i = i + 1) j = i + j; j; }), "({ int i=0; int j=0; for (i=0; i<=10; i=i+1) j=i+j; j; })");
-
   assert(385, ({ int i; int j; int x = 0; for (i = 1; i <= 10; i = i + 1) for (j = i; j <= 10; j = j + 1) x = x + j; x; }), "({ int i; int j; int x=0; for (i=1; i<=10; i=i+1) for (j=i; j<=10; j=j+1) x =x+j; x; })");
 
+  // while文
   assert(10, ({ int i = 0; while (i < 10) i = i + 1; i; }), "({ int i=0; while(i<10) i=i+1; i; })");
-
   assert(3, ({ 1; { 2; } 3; }), "({ 1; {2;} 3; })");
-
   assert(10, ({ int i = 0; while (i < 10) i = i + 1; i; }), "({ int i=0; while(i<10) i=i+1; i; })");
   assert(55, ({ int i = 0; int j = 0; while (i <= 10) { j = i + j; i = i + 1; } j; }), "({ int i=0; int j=0; while(i<=10) {j=i+j; i=i+1;} j; })");
 
+  // ポインタ演算
   assert(3, ({ int x = 3; *&x; }), "({ int x=3; *&x; })");
   assert(3, ({ int x = 3; int *y = &x; int **z = &y; **z; }), "({ int x=3; int *y=&x; int **z=&y; **z; })");
   assert(5, ({ int x = 3; int y = 5; *(&x + 1); }), "({ int x=3; int y=5; *(&x+1); })");
@@ -116,11 +118,11 @@ int main() {
   assert(8, ({ int x, y; x = 3; y = 5; x + y; }), "({ int x, y; x=3; y=5; x+y; })");
   assert(8, ({ int x = 3, y = 5; x + y; }), "({ int x=3, y=5; x+y; })");
 
+  // 関数呼び出し
   assert(3, ret3(), "ret3()");
   assert(8, add2(3, 5), "add2(3, 5)");
   assert(2, sub2(5, 3), "sub2(5, 3)");
   assert(15, add5(1, 2, 3, 4, 5), "add5(1,2,3,4,5)");
-
   assert(7, add2(3, 4), "add2(3,4)");
   assert(1, sub2(4, 3), "sub2(4,3)");
   assert(55, fib(9), "fib(9)");
@@ -129,12 +131,11 @@ int main() {
   assert(192, sumcheck(1, 2, 4, 8, 16, 32), "sumcheck(1,2,4,8,16,32)");
   assert(18, 1 + _add(1, _add(2, 3)), "1 + _add(1, _add(2, 3))");
 
+  // 配列
   assert(3, ({ int x[2]; int *y = &x; *y = 3; *x; }), "({ int x[2]; int *y=&x; *y=3; *x; })");
-
   assert(3, ({ int x[3]; *x = 3; *(x + 1) = 4; *(x + 2) = 5; *x; }), "({ int x[3]; *x=3; *(x+1)=4; *(x+2)=5; *x; })");
   assert(4, ({ int x[3]; *x = 3; *(x + 1) = 4; *(x + 2) = 5; *(x + 1); }), "({ int x[3]; *x=3; *(x+1)=4; *(x+2)=5; *(x+1); })");
   assert(5, ({ int x[3]; *x = 3; *(x + 1) = 4; *(x + 2) = 5; *(x + 2); }), "({ int x[3]; *x=3; *(x+1)=4; *(x+2)=5; *(x+2); })");
-
   assert(0, ({ int x[2][3]; int *y = x; *y = 0; **x; }), "({ int x[2][3]; int *y=x; *y=0; **x; })");
   assert(1, ({ int x[2][3]; int *y = x; *(y + 1) = 1; *(*x + 1); }), "({ int x[2][3]; int *y=x; *(y+1)=1; *(*x+1); })");
   assert(2, ({ int x[2][3]; int *y = x; *(y + 2) = 2; *(*x + 2); }), "({ int x[2][3]; int *y=x; *(y+2)=2; *(*x+2); })");
@@ -142,12 +143,12 @@ int main() {
   assert(4, ({ int x[2][3]; int *y = x; *(y + 4) = 4; *(*(x + 1) + 1); }), "({ int x[2][3]; int *y=x; *(y+4)=4; *(*(x+1)+1); })");
   assert(5, ({ int x[2][3]; int *y = x; *(y + 5) = 5; *(*(x + 1) + 2); }), "({ int x[2][3]; int *y=x; *(y+5)=5; *(*(x+1)+2); })");
 
+  // 配列の[]演算子
   assert(3, ({ int x[3]; *x = 3; x[1] = 4; x[2] = 5; *x; }), "({ int x[3]; *x=3; x[1]=4; x[2]=5; *x; })");
   assert(4, ({ int x[3]; *x = 3; x[1] = 4; x[2] = 5; *(x + 1); }), "({ int x[3]; *x=3; x[1]=4; x[2]=5; *(x+1); })");
   assert(5, ({ int x[3]; *x = 3; x[1] = 4; x[2] = 5; *(x + 2); }), "({ int x[3]; *x=3; x[1]=4; x[2]=5; *(x+2); })");
   assert(5, ({ int x[3]; *x = 3; x[1] = 4; x[2] = 5; *(x + 2); }), "({ int x[3]; *x=3; x[1]=4; x[2]=5; *(x+2); })");
   assert(5, ({ int x[3]; *x = 3; x[1] = 4; 2 [x] = 5; *(x + 2); }), "({ int x[3]; *x=3; x[1]=4; 2[x]=5; *(x+2); })");
-
   assert(0, ({ int x[2][3]; int *y = x; y[0] = 0; x[0][0]; }), "({ int x[2][3]; int *y=x; y[0]=0; x[0][0]; })");
   assert(1, ({ int x[2][3]; int *y = x; y[1] = 1; x[0][1]; }), "({ int x[2][3]; int *y=x; y[1]=1; x[0][1]; })");
   assert(2, ({ int x[2][3]; int *y = x; y[2] = 2; x[0][2]; }), "({ int x[2][3]; int *y=x; y[2]=2; x[0][2]; })");
@@ -155,17 +156,18 @@ int main() {
   assert(4, ({ int x[2][3]; int *y = x; y[4] = 4; x[1][1]; }), "({ int x[2][3]; int *y=x; y[4]=4; x[1][1]; })");
   assert(5, ({ int x[2][3]; int *y = x; y[5] = 5; x[1][2]; }), "({ int x[2][3]; int *y=x; y[5]=5; x[1][2]; })");
 
-  assert(8, ({ int x; sizeof(x); }), "({ int x; sizeof(x); })");
-  assert(8, ({ int x; sizeof x; }), "({ int x; sizeof x; })");
+  // sizeof
+  assert(4, ({ int x; sizeof(x); }), "({ int x; sizeof(x); })");
+  assert(4, ({ int x; sizeof x; }), "({ int x; sizeof x; })");
   assert(8, ({ int *x; sizeof(x); }), "({ int *x; sizeof(x); })");
-  assert(32, ({ int x[4]; sizeof(x); }), "({ int x[4]; sizeof(x); })");
-  assert(96, ({ int x[3][4]; sizeof(x); }), "({ int x[3][4]; sizeof(x); })");
-  assert(32, ({ int x[3][4]; sizeof(*x); }), "({ int x[3][4]; sizeof(*x); })");
-  assert(8, ({ int x[3][4]; sizeof(**x); }), "({ int x[3][4]; sizeof(**x); })");
-  assert(9, ({ int x[3][4]; sizeof(**x) + 1; }), "({ int x[3][4]; sizeof(**x) + 1; })");
-  assert(9, ({ int x[3][4]; sizeof **x + 1; }), "({ int x[3][4]; sizeof **x + 1; })");
-  assert(8, ({ int x[3][4]; sizeof(**x + 1); }), "({ int x[3][4]; sizeof(**x + 1); })");
-  assert(8, ({ int x = 1; sizeof(x = 2); }), "({ int x=1; sizeof(x=2); })");
+  assert(16, ({ int x[4]; sizeof(x); }), "({ int x[4]; sizeof(x); })");
+  assert(48, ({ int x[3][4]; sizeof(x); }), "({ int x[3][4]; sizeof(x); })");
+  assert(16, ({ int x[3][4]; sizeof(*x); }), "({ int x[3][4]; sizeof(*x); })");
+  assert(4, ({ int x[3][4]; sizeof(**x); }), "({ int x[3][4]; sizeof(**x); })");
+  assert(5, ({ int x[3][4]; sizeof(**x) + 1; }), "({ int x[3][4]; sizeof(**x) + 1; })");
+  assert(5, ({ int x[3][4]; sizeof **x + 1; }), "({ int x[3][4]; sizeof **x + 1; })");
+  assert(4, ({ int x[3][4]; sizeof(**x + 1); }), "({ int x[3][4]; sizeof(**x + 1); })");
+  assert(4, ({ int x = 1; sizeof(x = 2); }), "({ int x=1; sizeof(x=2); })");
   assert(1, ({ int x = 1; sizeof(x = 2); x; }), "({ int x=1; sizeof(x=2); x; })");
 
   assert(0, g1, "g1");
@@ -175,8 +177,8 @@ int main() {
   assert(2, ({ g2[0] = 0; g2[1] = 1; g2[2] = 2; g2[3] = 3; g2[2]; }), "({ g2[0]=0; g2[1]=1; g2[2]=2; g2[3]=3; g2[2]; })");
   assert(3, ({ g2[0] = 0; g2[1] = 1; g2[2] = 2; g2[3] = 3; g2[3]; }), "({ g2[0]=0; g2[1]=1; g2[2]=2; g2[3]=3; g2[3]; })");
 
-  assert(8, sizeof(g1), "sizeof(g1)");
-  assert(32, sizeof(g2), "sizeof(g2)");
+  assert(4, sizeof(g1), "sizeof(g1)");
+  assert(16, sizeof(g2), "sizeof(g2)");
 
   assert(1, ({ char x = 1; x; }), "({ char x=1; x; })");
   assert(1, ({ char x = 1; char y = 2; x; }), "({ char x=1; char y=2; x; })");
@@ -217,54 +219,53 @@ int main() {
   assert(0, "\x00"[0], "\"\\x00\"[0]");
   assert(119, "\x77"[0], "\"\\x77\"[0]");
 
+  // 文式
   assert(2, ({ int x = 2; { int x = 3; } x; }), "({ int x=2; { int x=3; } x; })");
   assert(2, ({ int x = 2; { int x = 3; } int y = 4; x; }), "({ int x=2; { int x=3; } int y=4; x; })");
   assert(3, ({ int x = 2; { x = 3; } x; }), "({ int x=2; { x=3; } x; })");
   assert(2, ({ int x[5]; int *y = x + 2; y - x; }), "({ int x[5]; int *y=x+2; y-x; })");
 
+  // カンマ演算子
   assert(3, (1, 2, 3), "(1,2,3)");
   assert(5, ({ int i = 2, j = 3; (i = 5, j) = 6; i; }), "({ int i=2, j=3; (i=5,j)=6; i; })");
   assert(6, ({ int i = 2, j = 3; (i = 5, j) = 6; j; }), "({ int i=2, j=3; (i=5,j)=6; j; })");
 
+  // 構造体
   assert(1, ({ struct { int a; } x; x.a = 1; x.a; }), "({ struct {int a; int b;} x; x.a=1; x.b=2; x.a; })");
   assert(2, ({ struct { int a; int b; } x; x.a = 1; x.b = 2; x.b; }), "({ struct {int a; int b;} x; x.a=1; x.b=2; x.b; })");
   assert(1, ({ struct { char a; int b; char c; } x; x.a = 1; x.b = 2; x.c = 3; x.a; }), "({ struct {char a; int b; char c;} x; x.a=1; x.b=2; x.c=3; x.a; })");
   assert(2, ({ struct { char a; int b; char c; } x; x.b = 1; x.b = 2; x.c = 3; x.b; }), "({ struct {char a; int b; char c;} x; x.b=1; x.b=2; x.c=3; x.b; })");
   assert(3, ({ struct { char a; int b; char c; } x; x.a = 1; x.b = 2; x.c = 3; x.c; }), "({ struct {char a; int b; char c;} x; x.a=1; x.b=2; x.c=3; x.c; })");
-
   assert(0, ({ struct { int a; int b; } x[3]; int *p = x; p[0] = 0; x[0].a; }), "({ struct {int a; int b;} x[3]; int *p=x; p[0]=0; x[0].a; })");
   assert(1, ({ struct { int a; int b; } x[3]; int *p = x; p[1] = 1; x[0].b; }), "({ struct {int a; int b;} x[3]; int *p=x; p[1]=1; x[0].b; })");
   assert(2, ({ struct { int a; int b; } x[3]; int *p = x; p[2] = 2; x[1].a; }), "({ struct {int a; int b;} x[3]; int *p=x; p[2]=2; x[1].a; })");
   assert(3, ({ struct { int a; int b; } x[3]; int *p = x; p[3] = 3; x[1].b; }), "({ struct {int a; int b;} x[3]; int *p=x; p[3]=3; x[1].b; })");
-
   assert(6, ({ struct { int a[3]; int b[5]; } x; int *p = &x; x.a[0] = 6; p[0]; }), "({ struct {int a[3]; int b[5];} x; int *p=&x; x.a[0]=6; p[0]; })");
   assert(7, ({ struct { int a[3]; int b[5]; } x; int *p = &x; x.b[0] = 7; p[3]; }), "({ struct {int a[3]; int b[5];} x; int *p=&x; x.b[0]=7; p[3]; })");
-
   assert(6, ({ struct { struct { int b; } a; } x; x.a.b = 6; x.a.b; }), "({ struct { struct { int b; } a; } x; x.a.b=6; x.a.b; })");
 
-  assert(8, ({ struct { int a; } x; sizeof(x); }), "({ struct {int a;} x; sizeof(x); })");
-  assert(16, ({ struct { int a; int b; } x; sizeof(x); }), "({ struct {int a; int b;} x; sizeof(x); })");
-  assert(16, ({ struct { int a, b; } x; sizeof(x); }), "({ struct {int a, b;} x; sizeof(x); })");
-  assert(24, ({ struct { int a[3]; } x; sizeof(x); }), "({ struct {int a[3];} x; sizeof(x); })");
-  assert(32, ({ struct { int a; } x[4]; sizeof(x); }), "({ struct {int a;} x[4]; sizeof(x); })");
-  assert(48, ({ struct { int a[3]; } x[2]; sizeof(x); }), "({ struct {int a[3];} x[2]; sizeof(x); })");
+  // 構造体のsizeof
+  assert(4, ({ struct { int a; } x; sizeof(x); }), "({ struct {int a;} x; sizeof(x); })");
+  assert(8, ({ struct { int a; int b; } x; sizeof(x); }), "({ struct {int a; int b;} x; sizeof(x); })");
+  assert(8, ({ struct { int a, b; } x; sizeof(x); }), "({ struct {int a, b;} x; sizeof(x); })");
+  assert(12, ({ struct { int a[3]; } x; sizeof(x); }), "({ struct {int a[3];} x; sizeof(x); })");
+  assert(16, ({ struct { int a; } x[4]; sizeof(x); }), "({ struct {int a;} x[4]; sizeof(x); })");
+  assert(24, ({ struct { int a[3]; } x[2]; sizeof(x); }), "({ struct {int a[3];} x[2]; sizeof(x); })");
   assert(2, ({ struct { char a; char b; } x; sizeof(x); }), "({ struct {char a; char b;} x; sizeof(x); })");
   assert(8, ({ struct { char a; int b; } *x; sizeof(x); }), "({ struct {char a; int b;} *x; sizeof(x); })");
-  assert(16, ({ struct { char a; int b; } x; sizeof(x); }), "({ struct {char a; int b;} x; sizeof(x); })");
-  assert(16, ({ struct { int a; char b; } x; sizeof(x); }), "({ struct {int a; char b;} x; sizeof(x); })");
-  assert(24, ({ struct { int a; struct { char c; int b; } y; } x; sizeof(x); }), "({ struct {int a; struct {char c; int b} y;} x; sizeof(x); })");
-  assert(15, ({
-           int x;  // 32-39  // 0-31は非揮発性レジスタ
-           int y;  // 40-47  // 48-54は空(パディング)
-           char z; // 55  <- 変数のオフセットはコードの後方から順にに計算して行き、後からマイナスをつけるので、位置としては、直後の変数にくっついている
-           char *a = &y;  // 56-63
-           char *b = &z;  // 64-72  // この後79まで確保されている
+  assert(8, ({ struct { char a; int b; } x; sizeof(x); }), "({ struct {char a; int b;} x; sizeof(x); })");
+  assert(8, ({ struct { int a; char b; } x; sizeof(x); }), "({ struct {int a; char b;} x; sizeof(x); })");
+  assert(12, ({ struct { int a; struct { char c; int b; } y; } x; sizeof(x); }), "({ struct {int a; struct {char c; int b} y;} x; sizeof(x); })");
+  assert(7, ({
+           int x;  // 32-35  // 0-31は非揮発性レジスタ
+           int y;  // 36-39  // 48-54は空(パディング)
+           char z; // 43  <- 変数のオフセットはコードの後方から順にに計算して行き、後からマイナスをつけるので、位置としては、直後の変数にくっついている
+           char *a = &y;  // 44-51
+           char *b = &z;  // 52-59  // この後64まで確保されている
            b - a;
          }),
          "({ int x; int y; char z; char *a=&y; char *b=&z; b-a; })");
   assert(1, ({ int x; char y; int z; char *a = &y; char *b = &z; b - a; }), "({ int x; char y; int z; char *a=&y; char *b=&z; b-a; })");
-  assert(16, ({ struct t { int a; int b; } x; struct t y; sizeof(y); }), "({ struct t {int a; int b;} x; struct t y; sizeof(y); })");
-  assert(16, ({ struct t { int a; int b; }; struct t y; sizeof(y); }), "({ struct t {int a; int b;}; struct t y; sizeof(y); })");
   assert(20, ({ struct t { char a[20]; }; { struct t { char a[40]; }; } struct t y; sizeof(y); }), "({ struct t {char a[20];}; { struct t {char a[40];}; } struct t y; sizeof(y); })");
   assert(3, ({ struct t { int x; }; int t = 1; struct t y; y.x = 2; t + y.x; }), "({ struct t {int x;}; int t=1; struct t y; y.x=2; t+y.x; })");
   assert(3, ({ struct t { char a; } x; struct t *y = &x; x.a = 3; y->a; }), "({ struct t {char a;} x; struct t *y = &x; x.a=3; y->a; })");
@@ -280,6 +281,10 @@ int main() {
   assert(7, ({ struct t {int a,b;}; struct t x; x.a=7; struct t y; struct t *z=&y; *z=x; y.a; }), "({ struct t {int a,b;}; struct t x; x.a=7; struct t y; struct t *z=&y; *z=x; y.a; })");
   assert(7, ({ struct t {int a,b;}; struct t x; x.a=7; struct t y, *p=&x, *q=&y; *q=*p; y.a; }), "({ struct t {int a,b;}; struct t x; x.a=7; struct t y, *p=&x, *q=&y; *q=*p; y.a; })");
   assert(5, ({ struct t {char a, b;} x, y; x.a=5; y=x; y.a; }), "({ struct t {char a, b;} x, y; x.a=5; y=x; y.a; })");
+
+  assert(8, ({ struct t {int a; int b;} x; struct t y; sizeof(y); }), "({ struct t {int a; int b;} x; struct t y; sizeof(y); })");
+  assert(8, ({ struct t {int a; int b;}; struct t y; sizeof(y); }), "({ struct t {int a; int b;}; struct t y; sizeof(y); })");
+
   printf("OK\n");
   return 0;
 }

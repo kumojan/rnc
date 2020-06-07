@@ -94,7 +94,7 @@ impl Type {
     pub fn size(&self) -> usize {
         match self {
             Type::TyChar => 1,
-            Type::TyInt => 8,
+            Type::TyInt => 4,
             Type::TyPtr(..) => 8,
             Type::TyArray { base, len } => base.size() * len,
             Type::TyStruct { size, .. } => *size,
@@ -104,7 +104,7 @@ impl Type {
     pub fn align(&self) -> usize {
         match self {
             Type::TyChar => 1,
-            Type::TyInt => 8,
+            Type::TyInt => 4,
             Type::TyPtr(..) => 8,
             Type::TyArray { base, .. } => base.align(),
             Type::TyStruct { align, .. } => *align,

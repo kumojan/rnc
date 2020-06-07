@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 // 関数呼び出しのレジスタ 参考 https://en.wikipedia.org/wiki/X86_calling_conventions#x86-64_calling_conventions
 const ARGREG64: [&'static str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
+const ARGREG32: [&'static str; 6] = ["edi", "esi", "edx", "ecx", "r8d", "r9d"];
 const ARGREG8: [&'static str; 6] = ["dil", "sil", "dl", "cl", "r8b", "r9b"];
 const ARGLEN: usize = 6;
 const RESERVED_REGISTER_STACK_SIZE: usize = 32;
@@ -36,10 +37,10 @@ fn load(ty: &Type) {
     }
     // アドレスを取り出し、値を取得してpushし直す
     println!("  pop rax");
-    if ty.size() == 1 {
-        println!("  movsx rax, byte ptr [rax]\n");
-    } else {
-        println!("  mov rax, [rax]");
+    match ty.size() {
+        1 => println!("  movsx rax, byte ptr [rax]\n"),
+        4 => println!("  movsx rax, dword ptr [rax]\n"),
+        _ => println!("  mov rax, [rax]"),
     }
     println!("  push rax");
 }
@@ -48,9 +49,7 @@ fn store(ty: &Type) {
     // 値をそのアドレスに格納し、その値をpush
     println!("  pop rdi  # store {:?}", ty);
     println!("  pop rax");
-    if ty.size() == 1 {
-        println!("  mov [rax], dil");
-    } else if let Type::TyStruct { size, .. } = ty {
+    if let Type::TyStruct { size, .. } = ty {
         // この時rax, rdiはそれぞれ左辺、右辺のアドレス
         for i in 0..*size {
             println!("  mov dl, [rdi+{}]", i); // 右辺のアドレスから1バイト読み、
@@ -58,7 +57,12 @@ fn store(ty: &Type) {
         }
     } else {
         // この時rax, rdiはそれぞれ左辺のアドレスと、右辺の値
-        println!("  mov [rax], rdi");
+        let regname = match ty.size() {
+            1 => "dil",
+            4 => "edi",
+            _ => "rdi",
+        };
+        println!("  mov [rax], {}", regname);
     }
     println!("  push rdi");
 }
@@ -166,7 +170,7 @@ impl CodeGenerator {
                     });
                 }
                 for arg in &**args {
-                    self.gen_expr(arg)?;
+                    self.gen_expr(arg)?; // 生成されたexprが8バイトずつ格納されている (本来のサイズにかかわらず)
                 }
                 for i in (0..args.len()).rev() {
                     println!("  pop {}", ARGREG64[i])
@@ -331,11 +335,12 @@ pub fn code_gen(
         // となる
         // lvarsもvar_offsetもvar.idもあくまで出現順である
         for i in 0..func.params.len() {
-            if func.params[i].ty.size() == 1 {
-                println!("  mov [rbp-{}], {}", cg.var_offsets[i], ARGREG8[i])
-            } else {
-                println!("  mov [rbp-{}], {}", cg.var_offsets[i], ARGREG64[i])
-            }
+            let reg = match func.params[0].ty.size() {
+                1 => ARGREG8[i],
+                4 => ARGREG32[i],
+                _ => ARGREG64[i],
+            };
+            println!("  mov [rbp-{}], {}", cg.var_offsets[i], reg)
         }
         for node in &func.body {
             cg.gen_stmt(node)?;
