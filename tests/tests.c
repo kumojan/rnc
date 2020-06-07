@@ -309,6 +309,8 @@ int main() {
   assert(4, ({ int x[3]; int (*y)[3]=x; y[0][0]=4; y[0][0]; }), "({ int x[3]; int (*y)[3]=x; y[0][0]=4; y[0][0]; })");
   assert(8, sizeof g3, "sizeof g3");
   assert(10, sizeof *g3, "sizeof *g3");
+    { void *x; }
+
   printf("OK\n");
 
   return 0;

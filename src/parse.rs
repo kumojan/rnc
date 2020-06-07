@@ -537,6 +537,7 @@ impl Parser {
     }
     fn typespec(&mut self) -> Result<Type, ParseError> {
         match self.consume_reserved().as_deref() {
+            Some("void") => Ok(Type::TyVoid),
             Some("int") => Ok(Type::new_int()),
             Some("short") => Ok(Type::new_short()),
             Some("long") => Ok(Type::new_long()),
@@ -823,14 +824,17 @@ impl Parser {
         Ok((name, v))
     }
     fn vardef(&mut self) -> Result<Vec<Node>, ParseError> {
-        let ty = self.typespec()?;
+        let basety = self.typespec()?;
         let mut stmts = vec![];
         // 構造体宣言の後にすぐにセミコロンの場合、変数は設定せず、初期化もないのでstmts=vec![]のまま
         if !self.consume(";") {
             loop {
-                let (name, _ty) = self.declarator(ty.clone())?;
+                let (name, ty) = self.declarator(basety.clone())?;
+                if ty == Type::TyVoid {
+                    Err(self.raise_err("variable decleared void"))?
+                }
                 // 初期化がなければ、コードには現れないので捨てられる
-                let var = self.add_var(&name, _ty);
+                let var = self.add_var(&name, ty);
                 if let Some(init) = self.initializer()? {
                     stmts.push(Node::new_expr_stmt(
                         Node::new_assign(Node::new_lvar(var, self.tok()), init, self.tok()),
@@ -866,8 +870,8 @@ impl Parser {
         let mut block = vec![];
         while !self.consume("}") {
             match self.peek_reserved().as_deref() {
-                Some("short") | Some("int") | Some("long") | Some("char") | Some("struct")
-                | Some("union") => block.extend(self.vardef()?),
+                Some("void") | Some("short") | Some("int") | Some("long") | Some("char")
+                | Some("struct") | Some("union") => block.extend(self.vardef()?),
                 _ => block.push(self.stmt()?),
             };
         }

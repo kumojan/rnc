@@ -16,6 +16,7 @@ pub struct Member {
 #[allow(dead_code)]
 #[derive(Clone, PartialEq)]
 pub enum Type {
+    TyVoid,
     TyShort,
     TyInt,
     TyLong,
@@ -39,6 +40,7 @@ pub enum Type {
 impl fmt::Debug for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Type::TyVoid => write!(f, "void"),
             Type::TyChar => write!(f, "char"),
             Type::TyShort => write!(f, "short"),
             Type::TyInt => write!(f, "int"),
@@ -94,21 +96,27 @@ impl Type {
         self
     }
     pub fn get_base(&self) -> Result<Self, TypeError> {
-        match self {
-            Type::TyPtr(base) => Ok(*base.clone()),
-            Type::TyArray { base, .. } => Ok(*base.clone()),
+        let base = match self {
+            Type::TyPtr(base) => *base.clone(),
+            Type::TyArray { base, .. } => *base.clone(),
             _ => Err(TypeError {
                 msg: "cannot dereference".to_owned(),
-            }),
+            })?,
+        };
+        if base == Type::TyVoid {
+            Err(TypeError {
+                msg: "dereferencing void pointer".to_owned(),
+            })?;
         }
+        Ok(base)
     }
     pub fn size(&self) -> usize {
         match self {
+            Type::TyVoid => unimplemented!(),
             Type::TyChar => 1,
             Type::TyShort => 2,
             Type::TyInt => 4,
-            Type::TyLong => 8,
-            Type::TyPtr(..) => 8,
+            Type::TyLong | Type::TyPtr(..) => 8,
             Type::TyArray { base, len } => base.size() * len,
             Type::TyStruct { size, .. } => *size,
             _ => unimplemented!(),
@@ -116,11 +124,11 @@ impl Type {
     }
     pub fn align(&self) -> usize {
         match self {
+            Type::TyVoid => unimplemented!(),
             Type::TyChar => 1,
             Type::TyShort => 2,
             Type::TyInt => 4,
-            Type::TyLong => 8,
-            Type::TyPtr(..) => 8,
+            Type::TyLong | Type::TyPtr(..) => 8,
             Type::TyArray { base, .. } => base.align(),
             Type::TyStruct { align, .. } => *align,
             _ => unimplemented!(),
