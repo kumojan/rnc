@@ -408,13 +408,13 @@ enum PtrDim {
 
 ///
 /// program = (funcdef | global-var)*
-/// funcdef = typespec ptr ident funcargs "{" compound_stmt "}"
+/// funcdef = typespec declarator funcargs "{" compound_stmt "}"
 /// typespec = "int" | "char" | "struct" struct_decl | "union" union_decl
 /// struct_decl = ident? "{" struct_members "}"?
 /// union_decl = ident? "{" struct_members "}"?
 /// struct_members = (typespec declarator (","  declarator)* ";")*
 /// ptr = "*"*
-/// funcargs = "(" typespec ptr ident ( "," typespec ptr ident)? ")"
+/// funcargs = "(" typespec declarator ( "," typespec declarator)? ")"
 /// compound_stmt = (vardef | stmt)*
 /// vardef = typespec declarator initializer ("," declarator initializer)*;
 /// declarator = ptr ("(" declarator ")" | ident) ("[" num "]")*
@@ -545,13 +545,6 @@ impl Parser {
             Some("union") => self.union_decl(),
             _ => Err(self.raise_err("expected type")),
         }
-    }
-    fn ptr(&mut self, ty: Type) -> Type {
-        let mut depth = 0;
-        while self.consume("*") {
-            depth += 1;
-        }
-        ty.to_ptr_recursive(depth)
     }
     fn struct_decl(&mut self) -> Result<Type, ParseError> {
         let name = self.consume_ident();
@@ -742,9 +735,9 @@ impl Parser {
         self.expect("(")?;
         if !self.consume(")") {
             loop {
+                // TODO: 関数の引数では配列は本当には配列にならない
                 let ty = self.typespec()?;
-                let ty = self.ptr(ty);
-                let name = self.expect_ident()?;
+                let (name, ty) = self.declarator(ty)?;
                 self.add_var(&name, ty);
                 if !self.consume(",") {
                     break; // 宣言終了
@@ -756,9 +749,8 @@ impl Parser {
     }
     fn funcdef(&mut self) -> Result<Option<Function>, ParseError> {
         // まず int *x まで見る
-        let ty = self.typespec()?;
-        let mut _ty = self.ptr(ty.clone());
-        let name = self.expect_ident()?;
+        let basety = self.typespec()?;
+        let (name, ty) = self.declarator(basety.clone())?;
         // 次に関数の有無を見る
         if self.peek("(") {
             // 関数の宣言
@@ -768,7 +760,7 @@ impl Parser {
             let stmts = self.compound_stmt(false)?;
             self.leave_scope();
             return Ok(Some(Function::new(
-                _ty,
+                ty,
                 name,
                 stmts,
                 params,
@@ -777,13 +769,12 @@ impl Parser {
         }
         // 関数でないとしたら、グローバル変数が続いている
         // TODO: グローバル変数の初期化
-        _ty = self.type_suffix(_ty)?;
-        self.add_global(&name, _ty)?;
+        self.add_global(&name, ty)?;
         if !self.consume(";") {
             loop {
                 self.expect(",")?;
-                let (name, _ty) = self.declarator(ty.clone())?;
-                self.add_global(&name, _ty)?;
+                let (name, ty) = self.declarator(basety.clone())?;
+                self.add_global(&name, ty)?;
                 if self.consume(";") {
                     break;
                 }
@@ -830,17 +821,6 @@ impl Parser {
         // push inner result to stack
         v.extend(inner);
         Ok((name, v))
-    }
-    fn type_suffix(&mut self, mut ty: Type) -> Result<Type, ParseError> {
-        let mut array_dims = vec![];
-        while self.consume("[") {
-            array_dims.push(self.expect_num()? as usize);
-            self.expect("]")?;
-        }
-        while let Some(len) = array_dims.pop() {
-            ty = ty.to_array(len);
-        }
-        return Ok(ty);
     }
     fn vardef(&mut self) -> Result<Vec<Node>, ParseError> {
         let ty = self.typespec()?;
