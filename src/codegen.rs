@@ -31,6 +31,9 @@ fn load(ty: &Type) {
     if ty.is_array() {
         return;
     }
+    if let Type::TyStruct { .. } = ty {
+        return; // 構造体のloadもアドレス
+    }
     // アドレスを取り出し、値を取得してpushし直す
     println!("  pop rax");
     if ty.size() == 1 {
@@ -43,11 +46,18 @@ fn load(ty: &Type) {
 fn store(ty: &Type) {
     // 下から 値 | アドレス と並んでいるときに、
     // 値をそのアドレスに格納し、その値をpush
-    println!("  pop rdi  # store");
+    println!("  pop rdi  # store {:?}", ty);
     println!("  pop rax");
     if ty.size() == 1 {
         println!("  mov [rax], dil");
+    } else if let Type::TyStruct { size, .. } = ty {
+        // この時rax, rdiはそれぞれ左辺、右辺のアドレス
+        for i in 0..*size {
+            println!("  mov dl, [rdi+{}]", i); // 右辺のアドレスから1バイト読み、
+            println!("  mov [rax+{}], dl", i); // 左辺のアドレスの位置に1バイト書き込む。dlは汎用8ビットレジスタ
+        }
     } else {
+        // この時rax, rdiはそれぞれ左辺のアドレスと、右辺の値
         println!("  mov [rax], rdi");
     }
     println!("  push rdi");

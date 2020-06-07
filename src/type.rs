@@ -40,6 +40,7 @@ impl fmt::Debug for Type {
             Type::TyInt => write!(f, "int"),
             Type::TyPtr(ty) => write!(f, "*{:?}", ty),
             Type::TyArray { base, len } => write!(f, "[{}]{:?}", len, base),
+            Type::TyStruct { .. } => write!(f, "struct"),
             _ => write!(f, "function"),
         }
     }
