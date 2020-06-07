@@ -2,6 +2,7 @@
 **/*.rs.bk
 *~
 *.o
+*.py
 tmp*
 a.out
 .vscode
