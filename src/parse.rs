@@ -550,15 +550,15 @@ impl Parser {
         let name = self.consume_ident();
         if self.consume("{") {
             let mut mems = Vec::new();
-            let mut offset = 0;
             loop {
                 let ty = self.typespec()?;
                 loop {
                     let (name, ty) = self.declarator(ty.clone())?; // int *x[4]; のような型が確定する
-                    offset = align_to(offset, ty.align()); // その型のアラインメントにoffsetを合わせる
-                    let size = ty.size(); // その型のサイズ後にoffsetにたす
-                    mems.push(Member { ty, name, offset }); // オフセットをしていしてメンバを追加
-                    offset += size;
+                    mems.push(Member {
+                        ty,
+                        name,
+                        offset: 0,
+                    });
                     if !self.consume(",") {
                         break;
                     }
@@ -567,6 +567,12 @@ impl Parser {
                 if self.consume("}") {
                     break;
                 }
+            }
+            let mut offset = 0;
+            for m in mems.iter_mut() {
+                offset = align_to(offset, m.ty.align()); // 新しく追加される型のアライメントにoffsetを合わせる
+                m.offset = offset; // メンバのoffsetを設定
+                offset += m.ty.size(); // メンバのサイズだけoffsetをずらす
             }
             let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
             let ty = Type::TyStruct {
@@ -614,14 +620,14 @@ impl Parser {
                 name,
                 mem: Box::new(mems),
                 align,
-                size,
+                size: align_to(size, align),
             };
             self.struct_tag_scopes[0].push_front(ty.clone());
             Ok(ty)
         } else if let Some(name) = name {
             match self.find_struct(&name) {
                 Some(ty) => Ok(ty),
-                None => Err(self.raise_err("unknown struct tag")),
+                None => Err(self.raise_err("unknown union tag")),
             }
         } else {
             Err(self.raise_err("expected identifier"))
