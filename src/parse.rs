@@ -401,6 +401,11 @@ pub struct Parser {
     cur_tok: Option<Token>,
 }
 
+enum PtrDim {
+    Ptr(usize),
+    Dim(usize),
+}
+
 ///
 /// program = (funcdef | global-var)*
 /// funcdef = typespec ptr ident funcargs "{" compound_stmt "}"
@@ -412,7 +417,7 @@ pub struct Parser {
 /// funcargs = "(" typespec ptr ident ( "," typespec ptr ident)? ")"
 /// compound_stmt = (vardef | stmt)*
 /// vardef = typespec declarator initializer ("," declarator initializer)*;
-/// declarator = ptr ident ("[" num "]")*
+/// declarator = ptr ("(" declarator ")" | ident) ("[" num "]")*
 /// initializer = "=" (assign | array_init)
 /// array_init = "{" num ("," num)?"}"
 /// stmt = expr ";"  // expression statement (値を残さない)
@@ -787,10 +792,44 @@ impl Parser {
         Ok(None)
     }
     fn declarator(&mut self, mut ty: Type) -> Result<(String, Type), ParseError> {
-        ty = self.ptr(ty);
-        let name = self.expect_ident()?;
-        ty = self.type_suffix(ty)?;
+        let (name, v) = self.get_name_ptr_dim()?;
+        for i in v {
+            ty = match i {
+                PtrDim::Ptr(depth) => ty.to_ptr_recursive(depth as u8),
+                PtrDim::Dim(dim) => ty.to_array(dim),
+            }
+        }
         Ok((name, ty))
+    }
+    fn get_name_ptr_dim(&mut self) -> Result<(String, Vec<PtrDim>), ParseError> {
+        let mut v = Vec::new();
+        // read pointer depth
+        let mut depth = 0;
+        while self.consume("*") {
+            depth += 1;
+        }
+        if depth > 0 {
+            v.push(PtrDim::Ptr(depth));
+        }
+        // recursive
+        let (name, inner) = if self.consume("(") {
+            let name_ty = self.get_name_ptr_dim()?;
+            self.expect(")")?;
+            name_ty
+        } else {
+            (self.expect_ident()?, Vec::new())
+        };
+        // read array dimension
+        let mut dims = Vec::new();
+        while self.consume("[") {
+            dims.push(PtrDim::Dim(self.expect_num()? as usize));
+            self.expect("]")?;
+        }
+        v.extend(dims.into_iter().rev());
+
+        // push inner result to stack
+        v.extend(inner);
+        Ok((name, v))
     }
     fn type_suffix(&mut self, mut ty: Type) -> Result<Type, ParseError> {
         let mut array_dims = vec![];
