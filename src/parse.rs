@@ -533,6 +533,8 @@ impl Parser {
     fn typespec(&mut self) -> Result<Type, ParseError> {
         match self.consume_reserved().as_deref() {
             Some("int") => Ok(Type::new_int()),
+            Some("short") => Ok(Type::new_short()),
+            Some("long") => Ok(Type::new_long()),
             Some("char") => Ok(Type::new_char()),
             Some("struct") => self.struct_decl(),
             Some("union") => self.union_decl(),
@@ -845,9 +847,8 @@ impl Parser {
         let mut block = vec![];
         while !self.consume("}") {
             match self.peek_reserved().as_deref() {
-                Some("int") | Some("char") | Some("struct") | Some("union") => {
-                    block.extend(self.vardef()?)
-                }
+                Some("short") | Some("int") | Some("long") | Some("char") | Some("struct")
+                | Some("union") => block.extend(self.vardef()?),
                 _ => block.push(self.stmt()?),
             };
         }

@@ -6,6 +6,7 @@ use std::rc::Rc;
 // 関数呼び出しのレジスタ 参考 https://en.wikipedia.org/wiki/X86_calling_conventions#x86-64_calling_conventions
 const ARGREG64: [&'static str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
 const ARGREG32: [&'static str; 6] = ["edi", "esi", "edx", "ecx", "r8d", "r9d"];
+const ARGREG16: [&'static str; 6] = ["di", "si", "dx", "cx", "r8w", "r9w"];
 const ARGREG8: [&'static str; 6] = ["dil", "sil", "dl", "cl", "r8b", "r9b"];
 const ARGLEN: usize = 6;
 const RESERVED_REGISTER_STACK_SIZE: usize = 32;
@@ -39,6 +40,7 @@ fn load(ty: &Type) {
     println!("  pop rax");
     match ty.size() {
         1 => println!("  movsx rax, byte ptr [rax]\n"),
+        2 => println!("  movsx rax, word ptr [rax]\n"),
         4 => println!("  movsx rax, dword ptr [rax]\n"),
         _ => println!("  mov rax, [rax]"),
     }
@@ -59,6 +61,7 @@ fn store(ty: &Type) {
         // この時rax, rdiはそれぞれ左辺のアドレスと、右辺の値
         let regname = match ty.size() {
             1 => "dil",
+            2 => "di",
             4 => "edi",
             _ => "rdi",
         };
@@ -337,6 +340,7 @@ pub fn code_gen(
         for i in 0..func.params.len() {
             let reg = match func.params[0].ty.size() {
                 1 => ARGREG8[i],
+                2 => ARGREG16[i],
                 4 => ARGREG32[i],
                 _ => ARGREG64[i],
             };

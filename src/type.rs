@@ -16,7 +16,9 @@ pub struct Member {
 #[allow(dead_code)]
 #[derive(Clone, PartialEq)]
 pub enum Type {
+    TyShort,
     TyInt,
+    TyLong,
     TyChar,
     TyPtr(Box<Type>),
     TyArray {
@@ -37,17 +39,26 @@ pub enum Type {
 impl fmt::Debug for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Type::TyChar => write!(f, "char"),
+            Type::TyShort => write!(f, "short"),
             Type::TyInt => write!(f, "int"),
+            Type::TyLong => write!(f, "long"),
             Type::TyPtr(ty) => write!(f, "*{:?}", ty),
             Type::TyArray { base, len } => write!(f, "[{}]{:?}", len, base),
             Type::TyStruct { .. } => write!(f, "struct"),
-            _ => write!(f, "function"),
+            Type::TyFunction { .. } => write!(f, "function"),
         }
     }
 }
 impl Type {
+    pub fn new_short() -> Self {
+        Self::TyShort
+    }
     pub fn new_int() -> Self {
         Self::TyInt
+    }
+    pub fn new_long() -> Self {
+        Self::TyLong
     }
     pub fn new_char() -> Self {
         Self::TyChar
@@ -94,7 +105,9 @@ impl Type {
     pub fn size(&self) -> usize {
         match self {
             Type::TyChar => 1,
+            Type::TyShort => 2,
             Type::TyInt => 4,
+            Type::TyLong => 8,
             Type::TyPtr(..) => 8,
             Type::TyArray { base, len } => base.size() * len,
             Type::TyStruct { size, .. } => *size,
@@ -104,7 +117,9 @@ impl Type {
     pub fn align(&self) -> usize {
         match self {
             Type::TyChar => 1,
+            Type::TyShort => 2,
             Type::TyInt => 4,
+            Type::TyLong => 8,
             Type::TyPtr(..) => 8,
             Type::TyArray { base, .. } => base.align(),
             Type::TyStruct { align, .. } => *align,
