@@ -391,32 +391,69 @@ impl fmt::Display for ParseError {
         write!(f, "parse failed at {}", self.pos)
     }
 }
+#[derive(Default)]
 pub struct Parser {
     tklist: VecDeque<Token>,
     locals: Vec<Rc<Var>>, // Node::Varと共有する。
-    globals: Vec<Rc<Var>>,
+    globals: Vec<VarScope>,
     string_literals: Vec<Vec<u8>>,
-    var_scopes: VecDeque<VecDeque<Rc<Var>>>, // 前に内側のスコープがある
-    struct_tag_scopes: VecDeque<VecDeque<Type>>,
+    var_scopes: Vec<Vec<VarScope>>, // 後方に内側のスコープがある(読むときはrevする)
+    struct_tag_scopes: VecDeque<VecDeque<Type>>, // 前方に内側のスコープがある
     cur_tok: Option<Token>,
+    // attr: VarAttr,
 }
 
 enum PtrDim {
     Ptr(usize),
     Dim(usize),
 }
+enum VarScope {
+    Var(Rc<Var>),
+    Type(String, Type),
+}
+
+/// typedef や externなど
+// struct VarAttr {
+//     is_typedef: bool,
+// }
+// impl Default for VarAttr {
+//     fn default() -> Self {
+//         Self { is_typedef: false }
+//     }
+// }
+impl VarScope {
+    fn name(&self) -> &String {
+        match self {
+            Self::Type(name, ..) => name,
+            Self::Var(var) => &var.name,
+        }
+    }
+    fn is_type(&self, name: &str) -> bool {
+        match self {
+            Self::Type(_name, ..) => _name == name,
+            _ => false,
+        }
+    }
+    fn get_type(&self, name: &str) -> Option<Type> {
+        match self {
+            Self::Type(_name, ty) if _name == name => Some(ty.clone()),
+            _ => None,
+        }
+    }
+}
 
 ///
 /// program = (funcdef | global-var)*
 /// funcdef = typespec declarator funcargs "{" compound_stmt "}"
 /// typespec = typename+
-/// typename = "void" | "char" | "short" | "int" | "long" | "struct" struct_decl | "union" union_decl
+/// typename = "void" | "char" | "short" | "int" | "long" | "struct" struct_decl | "union" union_decl | typedef_name
 /// struct_decl = ident? "{" struct_members "}"?
 /// union_decl = ident? "{" struct_members "}"?
 /// struct_members = (typespec declarator (","  declarator)* ";")*
 /// ptr = "*"*
 /// funcargs = "(" typespec declarator ( "," typespec declarator)? ")"
-/// compound_stmt = (vardef | stmt)*
+/// compound_stmt = (vardef | typedef | stmt)*
+/// typedef = "typedef" typespec declarator ("," declarator)*
 /// vardef = typespec declarator initializer ("," declarator initializer)*;
 /// declarator = ptr ("(" declarator ")" | ident) ("[" num "]")*
 /// initializer = "=" (assign | array_init)
@@ -447,12 +484,7 @@ impl Parser {
     pub fn new(tklist: VecDeque<Token>) -> Self {
         Self {
             tklist,
-            locals: Vec::new(),
-            globals: Vec::new(),
-            string_literals: Vec::new(),
-            var_scopes: Default::default(),
-            struct_tag_scopes: Default::default(),
-            cur_tok: None,
+            ..Self::default()
         }
     }
     /// トークンを一つ読んで、すすむ
@@ -473,12 +505,31 @@ impl Parser {
             _ => None,
         }
     }
-    /// 型名や"struct", "union"を見たときにtrue
-    fn peek_type(&self) -> bool {
+    fn peek_ident(&self) -> Option<String> {
+        match self.head_kind() {
+            TokenKind::TkIdent(s) => Some(s.clone()),
+            _ => None,
+        }
+    }
+    fn peek_base_type(&self) -> Option<String> {
         self.peek_reserved()
             .as_deref()
-            .map(|s| ["void", "char", "short", "int", "long", "struct", "union"].contains(&s))
-            .unwrap_or(false)
+            .filter(|s| ["void", "char", "short", "int", "long", "struct", "union"].contains(s))
+            .map(str::to_owned)
+    }
+    /// 型名や"struct", "union"を見たときにtrue
+    fn peek_type(&self) -> bool {
+        let is_basic = self.peek_base_type().is_some();
+        let is_other = match self.peek_ident().as_deref() {
+            Some(s) => {
+                self.var_scopes
+                    .iter()
+                    .any(|scope| scope.iter().any(|v| v.is_type(s)))
+                    || self.globals.iter().any(|v| v.is_type(s))
+            }
+            _ => false,
+        };
+        is_basic || is_other
     }
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
     fn consume(&mut self, s: &str) -> bool {
@@ -549,26 +600,31 @@ impl Parser {
             Some("union") => return self.shift().union_decl(),
             _ => (),
         };
+        if let Some(ty) = self.peek_typedef() {
+            self.shift();
+            return Ok(ty);
+        }
         const VOID: usize = 1 << 0;
         const CHAR: usize = 1 << 2;
         const SHORT: usize = 1 << 4;
         const INT: usize = 1 << 6;
         const LONG: usize = 1 << 8;
         let mut counter = 0;
-        while self.peek_type() {
-            counter += match self.consume_reserved().as_deref() {
-                Some("void") => VOID,
-                Some("int") => INT,
-                Some("short") => SHORT,
-                Some("long") => LONG,
-                Some("char") => CHAR,
-                _ => Err(self.raise_err("invalid type!"))?,
+        while let Some(ty) = self.peek_base_type().as_deref() {
+            self.shift();
+            counter += match ty {
+                "void" => VOID,
+                "int" => INT,
+                "short" => SHORT,
+                "long" => LONG,
+                "char" => CHAR,
+                _ => Err(self.raise_err("invalid type!"))?, // structやunion
             };
         }
         Ok(match counter {
             VOID => Type::TyVoid,
             CHAR => Type::TyChar,
-            INT => Type::TyInt,
+            0 | INT => Type::TyInt,
             ref s if [SHORT, SHORT + INT].contains(s) => Type::TyShort,
             ref l if [LONG, LONG + INT, LONG + LONG, LONG + LONG + INT].contains(l) => Type::TyLong,
             _ => Err(self.raise_err("invalid type!"))?,
@@ -679,21 +735,29 @@ impl Parser {
     }
     /// 必ずleave_scopeと対にして使うこと
     fn enter_scope(&mut self) {
-        self.var_scopes.push_front(Default::default());
         self.struct_tag_scopes.push_front(Default::default());
+        self.var_scopes.push(Default::default());
     }
     /// 必ずenter_scopeと対にして使うこと
     fn leave_scope(&mut self) {
-        self.var_scopes.pop_front();
         self.struct_tag_scopes.pop_front();
+        self.var_scopes.pop();
     }
-    fn find_var(&self, name: &String) -> Option<Rc<Var>> {
+    fn find_var(&self, name: String) -> Option<Rc<Var>> {
         // println!("searching {} in {:?}", name, self.var_scopes);
         self.var_scopes
             .iter()
-            .flat_map(|scope| scope.iter().find(|v| &v.name == name))
+            .flat_map(|scope| {
+                scope.iter().flat_map(|v| match v {
+                    VarScope::Var(var) if var.name == name => Some(var),
+                    _ => None,
+                })
+            })
+            .chain(self.globals.iter().flat_map(|v| match v {
+                VarScope::Var(var) if var.name == name => Some(var),
+                _ => None,
+            }))
             .next()
-            .or_else(|| self.globals.iter().find(|v| v.name == *name))
             .cloned()
     }
     fn find_struct(&self, name: &String) -> Option<Type> {
@@ -711,6 +775,18 @@ impl Parser {
             .next()
             .cloned()
     }
+    fn peek_typedef(&mut self) -> Option<Type> {
+        if let Some(name) = self.peek_ident().as_deref() {
+            self.var_scopes
+                .iter()
+                .rev()
+                .flat_map(|scope| scope.iter().rev().flat_map(|v| v.get_type(name)))
+                .next()
+                .or_else(|| self.globals.iter().flat_map(|v| v.get_type(name)).next())
+        } else {
+            None
+        }
+    }
     fn add_var(&mut self, name: &String, ty: Type) -> Rc<Var> {
         let var = Rc::new(Var {
             name: name.clone(),
@@ -719,22 +795,35 @@ impl Parser {
             is_local: true,
         });
         self.locals.push(var.clone());
-        self.var_scopes[0].push_front(var.clone()); // scopeにも追加
+        let vs2l = self.var_scopes.len();
+        self.var_scopes[vs2l - 1].push(VarScope::Var(var.clone())); // scopeにも追加
         var
     }
+    fn add_typdef(&mut self, name: String, ty: Type) {
+        let vs2l = self.var_scopes.len();
+        self.var_scopes[vs2l - 1].push(VarScope::Type(name, ty));
+    }
     // グローバル変数は重複して宣言できない
-    fn add_global(&mut self, name: &String, ty: Type) -> Result<Rc<Var>, ParseError> {
-        if self.globals.iter().find(|v| v.name == *name).is_some() {
-            Err(self.raise_err("global var redefined!"))
+    fn add_global(&mut self, name: String, ty: Type) -> Result<Rc<Var>, ParseError> {
+        if self.globals.iter().find(|v| v.name() == &name).is_some() {
+            Err(self.raise_err("global var/type redefined!"))
         } else {
             let var = Rc::new(Var {
                 name: name.clone(),
                 ty,
-                id: self.globals.len(),
+                id: 0,
                 is_local: false,
             });
-            self.globals.push(var.clone());
-            return Ok(var);
+            self.globals.push(VarScope::Var(var.clone()));
+            Ok(var)
+        }
+    }
+    fn add_global_typedef(&mut self, name: String, ty: Type) -> Result<(), ParseError> {
+        if self.globals.iter().find(|v| v.name() == &name).is_some() {
+            Err(self.raise_err("global var/type redefined!"))
+        } else {
+            self.globals.push(VarScope::Type(name, ty));
+            Ok(())
         }
     }
     fn add_string_literal(&mut self, data: Vec<u8>) -> Node {
@@ -757,7 +846,15 @@ impl Parser {
                 code.push(func);
             }
         }
-        Ok((code, self.globals, self.string_literals))
+        let globals = self
+            .globals
+            .into_iter()
+            .flat_map(|v| match v {
+                VarScope::Var(var) => Some(var),
+                _ => None,
+            })
+            .collect();
+        Ok((code, globals, self.string_literals))
     }
     fn funcargs(&mut self) -> Result<(), ParseError> {
         self.expect("(")?;
@@ -776,6 +873,19 @@ impl Parser {
         Ok(())
     }
     fn funcdef(&mut self) -> Result<Option<Function>, ParseError> {
+        if self.consume("typedef") {
+            let basety = self.typespec()?;
+            if !self.consume(";") {
+                loop {
+                    let (name, ty) = self.declarator(basety.clone())?;
+                    self.add_global_typedef(name, ty)?;
+                    if self.consume(";") {
+                        return Ok(None);
+                    }
+                    self.expect(",")?;
+                }
+            }
+        }
         // まず int *x まで見る
         let basety = self.typespec()?;
         let (name, ty) = self.declarator(basety.clone())?;
@@ -797,12 +907,12 @@ impl Parser {
         }
         // 関数でないとしたら、グローバル変数が続いている
         // TODO: グローバル変数の初期化
-        self.add_global(&name, ty)?;
+        self.add_global(name, ty)?;
         if !self.consume(";") {
             loop {
                 self.expect(",")?;
                 let (name, ty) = self.declarator(basety.clone())?;
-                self.add_global(&name, ty)?;
+                self.add_global(name, ty)?;
                 if self.consume(";") {
                     break;
                 }
@@ -849,6 +959,21 @@ impl Parser {
         // push inner result to stack
         v.extend(inner);
         Ok((name, v))
+    }
+    fn typedef(&mut self) -> Result<(), ParseError> {
+        // self.attr.is_typedef = true;
+        let basety = self.typespec()?;
+        if !self.consume(";") {
+            loop {
+                let (name, ty) = self.declarator(basety.clone())?;
+                self.add_typdef(name, ty);
+                if !self.consume(",") {
+                    break; // 宣言終了
+                }
+            }
+            self.expect(";")?;
+        };
+        Ok(())
     }
     fn vardef(&mut self) -> Result<Vec<Node>, ParseError> {
         let basety = self.typespec()?;
@@ -898,6 +1023,8 @@ impl Parser {
         while !self.consume("}") {
             if self.peek_type() {
                 block.extend(self.vardef()?);
+            } else if self.consume("typedef") {
+                self.typedef()?;
             } else {
                 block.push(self.stmt()?);
             }
@@ -1116,12 +1243,9 @@ impl Parser {
                 Ok(Node::new_funcall(name, args, self.tok()))
             } else {
                 // ただの変数
-                match self.find_var(&name) {
+                match self.find_var(name) {
                     Some(var) => Ok(Node::new_lvar(var, self.tok())),
-                    _ => Err(ParseError {
-                        pos: 0,
-                        msg: "variable not found!".to_owned(),
-                    }),
+                    _ => Err(self.raise_err("variable not found!")),
                 }
             }
         }
