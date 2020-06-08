@@ -493,6 +493,12 @@ impl Parser {
         self.cur_tok = self.tklist.pop_front();
         self
     }
+    fn shift_back(&mut self) -> &mut Self {
+        if let Some(tok) = std::mem::replace(&mut self.cur_tok, None) {
+            self.tklist.push_front(tok);
+        }
+        self
+    }
     fn peek(&mut self, s: &str) -> bool {
         match self.head_kind() {
             TokenKind::TkReserved(_s) if _s == s => true,
@@ -718,6 +724,7 @@ impl Parser {
         }
     }
     fn raise_err(&self, msg: &str) -> ParseError {
+        // panic!();
         ParseError {
             pos: self.tklist[0].pos,
             msg: msg.to_owned(),
@@ -920,6 +927,7 @@ impl Parser {
         }
         Ok(None)
     }
+    /// declarator = ptr ("(" declarator ")" | ident) ("[" num "]")*
     fn declarator(&mut self, mut ty: Type) -> Result<(String, Type), ParseError> {
         let (name, v) = self.get_name_ptr_dim()?;
         for i in v {
@@ -928,9 +936,27 @@ impl Parser {
                 PtrDim::Dim(dim) => ty.to_array(dim),
             }
         }
+        let name = if let Some(name) = name {
+            name
+        } else {
+            return Err(self.raise_err("expected ident"));
+        };
         Ok((name, ty))
     }
-    fn get_name_ptr_dim(&mut self) -> Result<(String, Vec<PtrDim>), ParseError> {
+    fn abstruct_declarator(&mut self, mut ty: Type) -> Result<Type, ParseError> {
+        let (name, v) = self.get_name_ptr_dim()?;
+        for i in v {
+            ty = match i {
+                PtrDim::Ptr(depth) => ty.to_ptr_recursive(depth as u8),
+                PtrDim::Dim(dim) => ty.to_array(dim),
+            }
+        }
+        if name.is_some() {
+            return Err(self.raise_err("this has to be abstruct declarator"));
+        };
+        Ok(ty)
+    }
+    fn get_name_ptr_dim(&mut self) -> Result<(Option<String>, Vec<PtrDim>), ParseError> {
         let mut v = Vec::new();
         // read pointer depth
         let mut depth = 0;
@@ -946,7 +972,7 @@ impl Parser {
             self.expect(")")?;
             name_ty
         } else {
-            (self.expect_ident()?, Vec::new())
+            (self.consume_ident(), Vec::new())
         };
         // read array dimension
         let mut dims = Vec::new();
@@ -1223,6 +1249,16 @@ impl Parser {
         } else if let Some(s) = self.consume_string() {
             Ok(self.add_string_literal(s))
         } else if self.consume("sizeof") {
+            if self.consume("(") {
+                if self.peek_type() {
+                    let mut ty = self.typespec()?;
+                    ty = self.abstruct_declarator(ty)?;
+                    self.expect(")")?;
+                    return Ok(Node::new_num(ty.size() as u32, self.tok()));
+                } else {
+                    self.shift_back(); // "("を取り戻す 途中でNodeが生成されていなければ、取り戻せるはず
+                }
+            }
             // このnodeは型のサイズを取得するためのみに使われ、
             // 実際には評価されない
             let node = self.unary()?;
