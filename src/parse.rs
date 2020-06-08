@@ -569,8 +569,8 @@ impl Parser {
             VOID => Type::TyVoid,
             CHAR => Type::TyChar,
             INT => Type::TyInt,
-            s if s == SHORT || s == (SHORT + INT) => Type::TyShort,
-            l if l == LONG || l == (LONG + INT) => Type::TyLong,
+            ref s if [SHORT, SHORT + INT].contains(s) => Type::TyShort,
+            ref l if [LONG, LONG + INT, LONG + LONG, LONG + LONG + INT].contains(l) => Type::TyLong,
             _ => Err(self.raise_err("invalid type!"))?,
         })
     }
