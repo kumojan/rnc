@@ -58,7 +58,7 @@ impl fmt::Debug for BinOp {
 pub enum NodeKind {
     // 式(expression)
     Num {
-        val: u32,
+        val: usize,
     },
     Var {
         var: Rc<Var>,
@@ -69,6 +69,7 @@ pub enum NodeKind {
     Deref {
         node: Box<Node>,
     },
+    Cast(Box<Node>),
     Assign {
         lvar: Box<Node>,
         rhs: Box<Node>,
@@ -125,6 +126,7 @@ impl fmt::Debug for NodeKind {
         match self {
             NodeKind::Num { val } => write!(f, "Num {}", val),
             NodeKind::Var { var } => write!(f, "Var {:?}", var),
+            NodeKind::Cast(..) => write!(f, "cast"),
             NodeKind::Return { .. } => write!(f, "return"),
             NodeKind::ExprStmt { .. } => write!(f, "expr stmt"),
             NodeKind::Bin { kind, .. } => write!(f, "Bin {:?}", kind),
@@ -144,7 +146,7 @@ impl fmt::Debug for NodeKind {
 }
 pub struct Node {
     pub kind: NodeKind,
-    ty: Option<Type>,
+    pub ty: Option<Type>,
     pub tok: Option<Token>,
 }
 impl Node {
@@ -154,7 +156,7 @@ impl Node {
             _ => unimplemented!("called get_type for statements!"),
         }
     }
-    fn new_num(val: u32, tok: Option<Token>) -> Self {
+    fn new_num(val: usize, tok: Option<Token>) -> Self {
         Self {
             kind: NodeKind::Num { val },
             ty: Some(Type::TyInt),
@@ -165,6 +167,13 @@ impl Node {
         Self {
             ty: Some(var.ty.clone()),
             kind: NodeKind::Var { var },
+            tok,
+        }
+    }
+    fn new_cast(ty: Type, expr: Node, tok: Option<Token>) -> Self {
+        Self {
+            kind: NodeKind::Cast(Box::new(expr)),
+            ty: Some(ty),
             tok,
         }
     }
@@ -268,7 +277,7 @@ impl Node {
             (false, true) => Node::new_add(rhs, lhs, tok),
             // ポインタ + 値 は値だけずれたポインタを返す(型はlhsなのでポインタになる)
             (true, false) => {
-                let ty_size = lhs.get_type().get_base().unwrap().size() as u32;
+                let ty_size = lhs.get_type().get_base().unwrap().size();
                 Node::new_bin(
                     BinOp::Add,
                     lhs,
@@ -285,7 +294,7 @@ impl Node {
             (false, false) => Node::new_bin(BinOp::Sub, lhs, rhs, tok),
             // ポインタ - 値
             (true, false) => {
-                let ty_size = lhs.get_type().get_base().unwrap().size() as u32;
+                let ty_size = lhs.get_type().get_base().unwrap().size();
                 Node::new_bin(
                     BinOp::Sub,
                     lhs,
@@ -295,7 +304,7 @@ impl Node {
             }
             // ポインタ - ポインタ (ずれを返す int)
             (true, true) => {
-                let ty_size = lhs.get_type().get_base().unwrap().size() as u32;
+                let ty_size = lhs.get_type().get_base().unwrap().size();
                 Node::new_bin(
                     BinOp::Div,
                     Node::new_bin(BinOp::Sub, lhs, rhs, None),
@@ -469,7 +478,8 @@ impl VarScope {
 /// equality = relational (("==" | "!=") relational)*
 /// relational = add (("<" | "<=" | ">" | ">=") add)*
 /// add = mul (("+" | "-") mul)*
-/// mul = primary (("*" | "/") primary)*
+/// mul = cast ("*" cast | "/" cast)*
+/// cast = "(" type-name ")" cast | unary
 /// unary = ("+" | "-" | "*" | "&") unary
 ///       | postfix
 /// postfix = primary ("[" expr "]" | "." ident )*
@@ -493,9 +503,11 @@ impl Parser {
         self.cur_tok = self.tklist.pop_front();
         self
     }
-    fn shift_back(&mut self) -> &mut Self {
+    fn unshift(&mut self) -> &mut Self {
         if let Some(tok) = std::mem::replace(&mut self.cur_tok, None) {
             self.tklist.push_front(tok);
+        } else {
+            panic!("unshift called but token was none");
         }
         self
     }
@@ -547,7 +559,7 @@ impl Parser {
             _ => false,
         }
     }
-    fn consume_num(&mut self) -> Option<u32> {
+    fn consume_num(&mut self) -> Option<usize> {
         if let TokenKind::TkNum(ref val) = self.head_kind() {
             let val = *val;
             self.shift();
@@ -593,7 +605,7 @@ impl Parser {
             Ok(())
         }
     }
-    fn expect_num(&mut self) -> Result<u32, ParseError> {
+    fn expect_num(&mut self) -> Result<usize, ParseError> {
         self.consume_num().ok_or(self.raise_err("expected number"))
     }
     fn expect_ident(&mut self) -> Result<String, ParseError> {
@@ -977,7 +989,7 @@ impl Parser {
         // read array dimension
         let mut dims = Vec::new();
         while self.consume("[") {
-            dims.push(PtrDim::Dim(self.expect_num()? as usize));
+            dims.push(PtrDim::Dim(self.expect_num()?));
             self.expect("]")?;
         }
         v.extend(dims.into_iter().rev());
@@ -1166,31 +1178,47 @@ impl Parser {
             }
         }
     }
+    /// mul = cast ("*" cast | "/" cast)*
     fn mul(&mut self) -> Result<Node, ParseError> {
-        let mut node = self.unary()?;
+        let mut node = self.cast()?;
         loop {
             match self.peek_reserved().as_deref() {
                 Some("*") => {
-                    node = Node::new_bin(BinOp::Mul, node, self.shift().unary()?, self.tok())
+                    node = Node::new_bin(BinOp::Mul, node, self.shift().cast()?, self.tok())
                 }
                 Some("/") => {
-                    node = Node::new_bin(BinOp::Div, node, self.shift().unary()?, self.tok())
+                    node = Node::new_bin(BinOp::Div, node, self.shift().cast()?, self.tok())
                 }
                 _ => return Ok(node),
             }
         }
     }
+    /// cast = "(" type-name ")" cast | unary
+    fn cast(&mut self) -> Result<Node, ParseError> {
+        if self.consume("(") {
+            if self.peek_type() {
+                let mut ty = self.typespec()?;
+                ty = self.abstruct_declarator(ty)?;
+                self.expect(")")?;
+                return Ok(Node::new_cast(ty, self.cast()?, self.tok()));
+            } else {
+                self.unshift();
+            }
+        }
+        self.unary()
+    }
+    /// unary = ("+" | "-" | "*" | "&") cast | postfix
     fn unary(&mut self) -> Result<Node, ParseError> {
         match self.peek_reserved().as_deref() {
-            Some("+") => self.shift().unary(),
+            Some("+") => self.shift().cast(),
             Some("-") => Ok(Node::new_bin(
                 BinOp::Sub,
                 Node::new_num(0, self.tok()),
-                self.shift().unary()?,
+                self.shift().cast()?,
                 self.tok(),
             )),
-            Some("&") => Ok(Node::new_unary("addr", self.shift().unary()?, self.tok())),
-            Some("*") => Ok(Node::new_unary("deref", self.shift().unary()?, self.tok())),
+            Some("&") => Ok(Node::new_unary("addr", self.shift().cast()?, self.tok())),
+            Some("*") => Ok(Node::new_unary("deref", self.shift().cast()?, self.tok())),
             _ => self.postfix(),
         }
     }
@@ -1254,15 +1282,15 @@ impl Parser {
                     let mut ty = self.typespec()?;
                     ty = self.abstruct_declarator(ty)?;
                     self.expect(")")?;
-                    return Ok(Node::new_num(ty.size() as u32, self.tok()));
+                    return Ok(Node::new_num(ty.size(), self.tok()));
                 } else {
-                    self.shift_back(); // "("を取り戻す 途中でNodeが生成されていなければ、取り戻せるはず
+                    self.unshift(); // "("を取り戻す 途中でNodeが生成されていなければ、取り戻せるはず
                 }
             }
             // このnodeは型のサイズを取得するためのみに使われ、
             // 実際には評価されない
             let node = self.unary()?;
-            Ok(Node::new_num(node.get_type().size() as u32, self.tok()))
+            Ok(Node::new_num(node.get_type().size(), self.tok()))
         } else {
             let name = self.expect_ident()?;
             // 関数呼び出し

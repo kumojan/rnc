@@ -69,6 +69,19 @@ fn store(ty: &Type) {
     }
     println!("  push rdi");
 }
+fn cast(ty: &Type) {
+    if ty == &Type::TyVoid || ty.size() == 8 {
+        return;
+    }
+    println!("  pop rax");
+    match ty.size() {
+        1 => println!("  movsx rax, al"),
+        2 => println!("  movsx rax, ax"),
+        4 => println!("  movsx rax, eax"),
+        _ => unimplemented!(),
+    }
+    println!("  push rax");
+}
 
 impl CodeGenerator {
     fn gen_var_addr(&self, v: &Rc<Var>) {
@@ -135,7 +148,9 @@ impl CodeGenerator {
         }
         match &node.kind {
             NodeKind::Num { val, .. } => {
-                println!("  push {}", val);
+                // println!("  push {}", val);
+                println!("  mov rax, {}", val); // raxに一旦入れると、アセンブリに文句を言われず、cのintやlongと相性が良さそう。(あまり理解していない)
+                println!("  push rax");
             }
             NodeKind::Var { var } => {
                 self.gen_addr(&node)?; // まず変数のアドレスを取得する
@@ -143,6 +158,14 @@ impl CodeGenerator {
             }
             NodeKind::Literal { id, .. } => {
                 println!("  push offset .L.data.{}", id);
+            }
+            NodeKind::Cast(expr) => {
+                self.gen_expr(expr)?;
+                if let Some(ty) = &node.ty {
+                    cast(ty);
+                } else {
+                    unreachable!();
+                }
             }
             NodeKind::Addr { node } => self.gen_addr(node)?,
             NodeKind::Deref { node } => {
@@ -400,6 +423,10 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
     }
     match &node.kind {
         NodeKind::Num { val } => s += &format!("{} [label=\"num {}\"];\n", nodename, val),
+        NodeKind::Cast(expr) => {
+            s += &format!("{} [label=\"cast {:?}\"];\n", nodename, node.ty);
+            s += &graph_gen(expr, &nodename, 0, None);
+        }
         NodeKind::Var { var } => s += &format!("{} [label=\"{:?}\"];\n", nodename, var),
         NodeKind::Literal { id, .. } => s += &format!("{} [label=\"literal {}\"];\n", nodename, id),
         NodeKind::Bin { kind, lhs, rhs } => {

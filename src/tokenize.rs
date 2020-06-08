@@ -14,7 +14,7 @@ pub enum TokenKind {
     TkReserved(String),
     TkIdent(String),
     TkString(Vec<u8>),
-    TkNum(u32),
+    TkNum(usize),
     TkEOF,
 }
 impl fmt::Debug for TokenKind {
@@ -41,7 +41,7 @@ pub struct Token {
     pub line_no: usize,
 }
 impl Token {
-    fn new_num(val: u32, pos: usize, len: usize) -> Self {
+    fn new_num(val: usize, pos: usize, len: usize) -> Self {
         Self {
             kind: TkNum(val),
             pos,
@@ -155,7 +155,7 @@ impl Lexer {
             false
         }
     }
-    fn read_num(&mut self) -> Option<u32> {
+    fn read_num(&mut self) -> Option<usize> {
         let n: String = self.code[self.pos..]
             .iter()
             .take_while(|c| c.is_ascii_digit())
