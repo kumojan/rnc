@@ -309,9 +309,15 @@ int main() {
   assert(4, ({ int x[3]; int (*y)[3]=x; y[0][0]=4; y[0][0]; }), "({ int x[3]; int (*y)[3]=x; y[0][0]=4; y[0][0]; })");
   assert(8, sizeof g3, "sizeof g3");
   assert(10, sizeof *g3, "sizeof *g3");
-    { void *x; }
+  { void *x; }
 
+  // long int や int long
+  assert(1, ({ char x; sizeof(x); }), "({ char x; sizeof(x); })");
+  assert(2, ({ short int x; sizeof(x); }), "({ short int x; sizeof(x); })");
+  assert(2, ({ int short x; sizeof(x); }), "({ int short x; sizeof(x); })");
+  assert(4, ({ int x; sizeof(x); }), "({ int x; sizeof(x); })");
+  assert(8, ({ long int x; sizeof(x); }), "({ long int x; sizeof(x); })");
+  assert(8, ({ int long x; sizeof(x); }), "({ int long x; sizeof(x); })");
   printf("OK\n");
-
   return 0;
 }

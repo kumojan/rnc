@@ -157,7 +157,7 @@ impl Node {
     fn new_num(val: u32, tok: Option<Token>) -> Self {
         Self {
             kind: NodeKind::Num { val },
-            ty: Some(Type::new_int()),
+            ty: Some(Type::TyInt),
             tok,
         }
     }
@@ -248,7 +248,7 @@ impl Node {
         Self {
             ty: match kind {
                 BinOp::Sub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => {
-                    Some(Type::new_int())
+                    Some(Type::TyInt)
                 } // ポインタ同士の引き算はint
                 _ => Some(lhs.get_type()),
             },
@@ -350,7 +350,7 @@ impl Node {
                 name,
                 args: Box::new(args),
             },
-            ty: Some(Type::new_int()),
+            ty: Some(Type::TyInt),
             tok,
         }
     }
@@ -409,7 +409,8 @@ enum PtrDim {
 ///
 /// program = (funcdef | global-var)*
 /// funcdef = typespec declarator funcargs "{" compound_stmt "}"
-/// typespec = "int" | "char" | "struct" struct_decl | "union" union_decl
+/// typespec = typename+
+/// typename = "void" | "char" | "short" | "int" | "long" | "struct" struct_decl | "union" union_decl
 /// struct_decl = ident? "{" struct_members "}"?
 /// union_decl = ident? "{" struct_members "}"?
 /// struct_members = (typespec declarator (","  declarator)* ";")*
@@ -471,6 +472,13 @@ impl Parser {
             TokenKind::TkReserved(s) => Some(s.clone()),
             _ => None,
         }
+    }
+    /// 型名や"struct", "union"を見たときにtrue
+    fn peek_type(&self) -> bool {
+        self.peek_reserved()
+            .as_deref()
+            .map(|s| ["void", "char", "short", "int", "long", "struct", "union"].contains(&s))
+            .unwrap_or(false)
     }
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
     fn consume(&mut self, s: &str) -> bool {
@@ -536,16 +544,35 @@ impl Parser {
             .ok_or(self.raise_err("expected identifier"))
     }
     fn typespec(&mut self) -> Result<Type, ParseError> {
-        match self.consume_reserved().as_deref() {
-            Some("void") => Ok(Type::TyVoid),
-            Some("int") => Ok(Type::new_int()),
-            Some("short") => Ok(Type::new_short()),
-            Some("long") => Ok(Type::new_long()),
-            Some("char") => Ok(Type::new_char()),
-            Some("struct") => self.struct_decl(),
-            Some("union") => self.union_decl(),
-            _ => Err(self.raise_err("expected type")),
+        match self.peek_reserved().as_deref() {
+            Some("struct") => return self.shift().struct_decl(),
+            Some("union") => return self.shift().union_decl(),
+            _ => (),
+        };
+        const VOID: usize = 1 << 0;
+        const CHAR: usize = 1 << 2;
+        const SHORT: usize = 1 << 4;
+        const INT: usize = 1 << 6;
+        const LONG: usize = 1 << 8;
+        let mut counter = 0;
+        while self.peek_type() {
+            counter += match self.consume_reserved().as_deref() {
+                Some("void") => VOID,
+                Some("int") => INT,
+                Some("short") => SHORT,
+                Some("long") => LONG,
+                Some("char") => CHAR,
+                _ => Err(self.raise_err("invalid type!"))?,
+            };
         }
+        Ok(match counter {
+            VOID => Type::TyVoid,
+            CHAR => Type::TyChar,
+            INT => Type::TyInt,
+            s if s == SHORT || s == (SHORT + INT) => Type::TyShort,
+            l if l == LONG || l == (LONG + INT) => Type::TyLong,
+            _ => Err(self.raise_err("invalid type!"))?,
+        })
     }
     fn struct_decl(&mut self) -> Result<Type, ParseError> {
         let name = self.consume_ident();
@@ -713,10 +740,10 @@ impl Parser {
     fn add_string_literal(&mut self, data: Vec<u8>) -> Node {
         let n = Node {
             kind: NodeKind::Literal {
-                ty: Type::new_char().to_array(data.len() + 1), // string末尾の'\0'も大きさに含める
+                ty: Type::TyChar.to_array(data.len() + 1), // string末尾の'\0'も大きさに含める
                 id: self.string_literals.len(),
             },
-            ty: Some(Type::new_char().to_array(data.len() + 1)),
+            ty: Some(Type::TyChar.to_array(data.len() + 1)),
             tok: self.tok(),
         };
         self.string_literals.push(data);
@@ -869,11 +896,11 @@ impl Parser {
         }
         let mut block = vec![];
         while !self.consume("}") {
-            match self.peek_reserved().as_deref() {
-                Some("void") | Some("short") | Some("int") | Some("long") | Some("char")
-                | Some("struct") | Some("union") => block.extend(self.vardef()?),
-                _ => block.push(self.stmt()?),
-            };
+            if self.peek_type() {
+                block.extend(self.vardef()?);
+            } else {
+                block.push(self.stmt()?);
+            }
         }
         if enter_scope {
             self.leave_scope();

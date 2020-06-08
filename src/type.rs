@@ -53,18 +53,18 @@ impl fmt::Debug for Type {
     }
 }
 impl Type {
-    pub fn new_short() -> Self {
-        Self::TyShort
-    }
-    pub fn new_int() -> Self {
-        Self::TyInt
-    }
-    pub fn new_long() -> Self {
-        Self::TyLong
-    }
-    pub fn new_char() -> Self {
-        Self::TyChar
-    }
+    // pub fn new_short() -> Self {
+    //     Self::TyShort
+    // }
+    // pub fn new_int() -> Self {
+    //     Self::TyInt
+    // }
+    // pub fn new_long() -> Self {
+    //     Self::TyLong
+    // }
+    // pub fn new_char() -> Self {
+    //     Self::TyChar
+    // }
     pub fn is_ptr(&self) -> bool {
         match self {
             Type::TyPtr(..) => true,
