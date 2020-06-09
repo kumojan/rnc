@@ -449,6 +449,12 @@ impl VarScope {
             _ => None,
         }
     }
+    fn get_var(&self, name: &str) -> Option<Rc<Var>> {
+        match self {
+            Self::Var(var) if var.name == name => Some(var.clone()),
+            _ => None,
+        }
+    }
 }
 
 ///
@@ -538,15 +544,15 @@ impl Parser {
     /// 型名や"struct", "union"を見たときにtrue
     fn peek_type(&self) -> bool {
         let is_basic = self.peek_base_type().is_some();
-        let is_other = match self.peek_ident().as_deref() {
-            Some(s) => {
+        let is_other = self // typedefされた型であるかを調べる
+            .peek_ident()
+            .map_or(false, |s| {
                 self.var_scopes
                     .iter()
-                    .any(|scope| scope.iter().any(|v| v.is_type(s)))
-                    || self.globals.iter().any(|v| v.is_type(s))
-            }
-            _ => false,
-        };
+                    .flat_map(|scope| scope.iter())
+                    .chain(self.globals.iter())
+                    .any(|v| v.is_type(&s))
+            });
         is_basic || is_other
     }
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
@@ -766,45 +772,35 @@ impl Parser {
         // println!("searching {} in {:?}", name, self.var_scopes);
         self.var_scopes
             .iter()
-            .flat_map(|scope| {
-                scope.iter().flat_map(|v| match v {
-                    VarScope::Var(var) if var.name == name => Some(var),
-                    _ => None,
-                })
-            })
-            .chain(self.globals.iter().flat_map(|v| match v {
-                VarScope::Var(var) if var.name == name => Some(var),
-                _ => None,
-            }))
+            .rev()
+            .flat_map(|scope| scope.iter().rev()) // 後ろから順に走査する
+            .chain(self.globals.iter())
+            .flat_map(|v| v.get_var(&name))
             .next()
-            .cloned()
     }
     fn find_struct(&self, name: &String) -> Option<Type> {
         // println!("searching {} in {:?}", name, self.var_scopes);
         self.struct_tag_scopes
             .iter()
-            .flat_map(|scope| {
-                scope.iter().find(|t| match &t {
-                    Type::TyStruct {
-                        name: Some(_name), ..
-                    } => _name == name,
-                    _ => false,
-                })
+            .flat_map(|scope| scope.iter())
+            .find(|t| match &t {
+                Type::TyStruct {
+                    name: Some(_name), ..
+                } => _name == name,
+                _ => false,
             })
-            .next()
             .cloned()
     }
     fn peek_typedef(&mut self) -> Option<Type> {
-        if let Some(name) = self.peek_ident().as_deref() {
+        self.peek_ident().map_or(None, |name| {
             self.var_scopes
                 .iter()
                 .rev()
-                .flat_map(|scope| scope.iter().rev().flat_map(|v| v.get_type(name)))
+                .flat_map(|scope| scope.iter().rev()) // 後ろから順に走査する
+                .chain(self.globals.iter())
+                .flat_map(|v| v.get_type(&name))
                 .next()
-                .or_else(|| self.globals.iter().flat_map(|v| v.get_type(name)).next())
-        } else {
-            None
-        }
+        })
     }
     fn add_var(&mut self, name: &String, ty: Type) -> Rc<Var> {
         let var = Rc::new(Var {
@@ -814,13 +810,13 @@ impl Parser {
             is_local: true,
         });
         self.locals.push(var.clone());
-        let vs2l = self.var_scopes.len();
-        self.var_scopes[vs2l - 1].push(VarScope::Var(var.clone())); // scopeにも追加
+        let len = self.var_scopes.len();
+        self.var_scopes[len - 1].push(VarScope::Var(var.clone())); // scopeにも追加
         var
     }
     fn add_typdef(&mut self, name: String, ty: Type) {
-        let vs2l = self.var_scopes.len();
-        self.var_scopes[vs2l - 1].push(VarScope::Type(name, ty));
+        let len = self.var_scopes.len();
+        self.var_scopes[len - 1].push(VarScope::Type(name, ty));
     }
     // グローバル変数は重複して宣言できない
     fn add_global(&mut self, name: String, ty: Type) -> Result<Rc<Var>, ParseError> {

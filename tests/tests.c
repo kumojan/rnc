@@ -356,6 +356,9 @@ int main() {
   assert(513, ({ int x=512; *(char *)&x=1; x; }), "({ int x=512; *(char *)&x=1; x; })");
   assert(5, ({ int x=5; long y=(long)&x; *(int*)y; }), "({ int x=5; long y=(long)&x; *(int*)y; })");
   (void)1;
+
+  // ブロックスコープ
+  assert(2, ({int x = 1; ({int x = 2; x;}); }),  "({int x = 1; ({int x = 2; x;}) })");
   printf("OK\n");
   return 0;
 }
