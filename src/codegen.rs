@@ -75,6 +75,14 @@ fn cast(ty: &Type) {
     if ty == &Type::TyVoid || ty.size() == 8 {
         return;
     }
+    if ty == &Type::TyBool {
+        println!("  pop rax");
+        println!("  cmp rax, 0");
+        println!("  setne al");
+        println!("  movzx rax, al");
+        println!("  push rax");
+        return;
+    }
     println!("  pop rax");
     match ty.size() {
         1 => println!("  movsx rax, al"),

@@ -59,6 +59,8 @@ int sumcheck(int a, int b, int c, int d, int e, int f) {
   return 32 * a + 16 * b + 8 * c + 4 * d + 2 * e + f;
 }
 int _add(int a, int b) { return a + 2 * b; }
+_Bool bool_fn_add(_Bool x) { return x + 1; }
+_Bool bool_fn_sub(_Bool x) { return x - 1; }
 
 int main() {
   // 二項演算
@@ -362,6 +364,20 @@ int main() {
 
   // ブロックスコープ
   assert(2, ({int x = 1; ({int x = 2; x;}); }),  "({int x = 1; ({int x = 2; x;}) })");
+
+  // bool型
+  assert(0, ({ _Bool x=0; x; }), "({ _Bool x=0; x; })");
+  assert(1, ({ _Bool x=1; x; }), "({ _Bool x=1; x; })");
+  assert(1, ({ _Bool x=2; x; }), "({ _Bool x=2; x; })");
+  assert(1, (_Bool)1, "(_Bool)1");
+  assert(1, (_Bool)2, "(_Bool)2");
+  assert(0, (_Bool)(char)256, "(_Bool)(char)256");
+  assert(1, bool_fn_add(3), "bool_fn_add(3)");
+  assert(0, bool_fn_sub(3), "bool_fn_sub(3)");
+  assert(1, bool_fn_add(-3), "bool_fn_add(-3)");
+  assert(0, bool_fn_sub(-3), "bool_fn_sub(-3)");
+  assert(1, bool_fn_add(0), "bool_fn_add(0)");
+  assert(1, bool_fn_sub(0), "bool_fn_sub(0)");
   printf("OK\n");
   return 0;
 }

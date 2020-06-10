@@ -17,6 +17,7 @@ pub struct Member {
 #[derive(Clone, PartialEq)]
 pub enum Type {
     TyVoid,
+    TyBool,
     TyShort,
     TyInt,
     TyLong,
@@ -41,6 +42,7 @@ impl fmt::Debug for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Type::TyVoid => write!(f, "void"),
+            Type::TyBool => write!(f, "bool"),
             Type::TyChar => write!(f, "char"),
             Type::TyShort => write!(f, "short"),
             Type::TyInt => write!(f, "int"),
@@ -119,6 +121,7 @@ impl Type {
     pub fn size(&self) -> usize {
         match self {
             Type::TyVoid => unimplemented!(),
+            Type::TyBool => 1,
             Type::TyChar => 1,
             Type::TyShort => 2,
             Type::TyInt => 4,
@@ -131,6 +134,7 @@ impl Type {
     pub fn align(&self) -> usize {
         match self {
             Type::TyVoid => unimplemented!(),
+            Type::TyBool => 1,
             Type::TyChar => 1,
             Type::TyShort => 2,
             Type::TyInt => 4,

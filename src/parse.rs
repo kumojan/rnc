@@ -224,7 +224,10 @@ impl Node {
             tok,
         }
     }
-    fn new_assign(lvar: Node, rhs: Node, tok: Option<Token>) -> Self {
+    fn new_assign(lvar: Node, mut rhs: Node, tok: Option<Token>) -> Self {
+        if lvar.ty != rhs.ty {
+            rhs = Node::new_cast(lvar.get_type().clone(), rhs, None);
+        }
         Self {
             ty: lvar.ty.clone(),
             kind: NodeKind::Assign {
@@ -543,7 +546,12 @@ impl Parser {
     fn peek_base_type(&self) -> Option<String> {
         self.peek_reserved()
             .as_deref()
-            .filter(|s| ["void", "char", "short", "int", "long", "struct", "union"].contains(s))
+            .filter(|s| {
+                [
+                    "void", "char", "short", "int", "long", "struct", "union", "_Bool",
+                ]
+                .contains(s)
+            })
             .map(str::to_owned)
     }
     /// 型名や"struct", "union"を見たときにtrue
@@ -597,15 +605,15 @@ impl Parser {
             None
         }
     }
-    fn consume_reserved(&mut self) -> Option<String> {
-        if let TokenKind::TkReserved(ref s) = self.head_kind() {
-            let s = s.clone();
-            self.shift();
-            Some(s)
-        } else {
-            None
-        }
-    }
+    // fn consume_reserved(&mut self) -> Option<String> {
+    //     if let TokenKind::TkReserved(ref s) = self.head_kind() {
+    //         let s = s.clone();
+    //         self.shift();
+    //         Some(s)
+    //     } else {
+    //         None
+    //     }
+    // }
     fn is_eof(&self) -> bool {
         self.head_kind() == &TokenKind::TkEOF
     }
@@ -634,15 +642,17 @@ impl Parser {
             return Ok(ty);
         }
         const VOID: usize = 1 << 0;
-        const CHAR: usize = 1 << 2;
-        const SHORT: usize = 1 << 4;
-        const INT: usize = 1 << 6;
-        const LONG: usize = 1 << 8;
+        const BOOL: usize = 1 << 2;
+        const CHAR: usize = 1 << 4;
+        const SHORT: usize = 1 << 6;
+        const INT: usize = 1 << 8;
+        const LONG: usize = 1 << 10;
         let mut counter = 0;
         while let Some(ty) = self.peek_base_type().as_deref() {
             self.shift();
             counter += match ty {
                 "void" => VOID,
+                "_Bool" => BOOL,
                 "int" => INT,
                 "short" => SHORT,
                 "long" => LONG,
@@ -652,6 +662,7 @@ impl Parser {
         }
         Ok(match counter {
             VOID => Type::TyVoid,
+            BOOL => Type::TyBool,
             CHAR => Type::TyChar,
             0 | INT => Type::TyInt,
             ref s if [SHORT, SHORT + INT].contains(s) => Type::TyShort,
@@ -1330,19 +1341,30 @@ impl Parser {
             // 関数呼び出し
             if self.consume("(") {
                 // 関数呼び出しとわかったので、チェック
-                match self.find_func(&name) {
-                    Some(_) => (),
-                    None => Err(self.raise_err("function not defined"))?,
-                }
+                let (ret, mut arg_types) = match self.find_func(&name) {
+                    Some(Type::TyFunc { ret, arg }) => (*ret, *arg),
+                    _ => Err(self.raise_err("function not defined"))?,
+                };
                 let mut args = Vec::new();
                 while !self.consume(")") {
-                    args.push(self.assign()?);
+                    let mut arg = self.assign()?;
+                    if let Some(ty) = arg_types.pop() {
+                        // 足りない型は無視する(可変長引数未対応)
+                        if &ty != arg.get_type() {
+                            arg = Node::new_cast(ty, arg, self.tok());
+                        }
+                    }
+                    args.push(arg);
                     if !self.consume(",") {
                         self.expect(")")?;
                         break;
                     }
                 }
-                Ok(Node::new_funcall(name, args, self.tok()))
+                Ok(Node::new_cast(
+                    ret,
+                    Node::new_funcall(name, args, self.tok()),
+                    None,
+                ))
             } else {
                 // ただの変数
                 match self.find_var(name) {
