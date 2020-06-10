@@ -583,6 +583,10 @@ impl Parser {
             let val = *val;
             self.shift();
             Some(val)
+        } else if let TokenKind::TkChar(ref c) = self.head_kind() {
+            let c = *c as usize;
+            self.shift();
+            Some(c)
         } else {
             None
         }

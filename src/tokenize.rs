@@ -15,6 +15,7 @@ pub enum TokenKind {
     TkIdent(String),
     TkString(Vec<u8>),
     TkNum(usize),
+    TkChar(u8),
     TkEOF,
 }
 impl fmt::Debug for TokenKind {
@@ -25,6 +26,7 @@ impl fmt::Debug for TokenKind {
                 "TkString \"{}\"",
                 String::from_utf8_lossy(v).escape_debug()
             ), // これ以外はderiveして欲しいのだが...
+            Self::TkChar(c) => write!(f, "TkChar \"{}\"", String::from_utf8_lossy(&[*c])),
             Self::TkReserved(s) => write!(f, "TkReserved \"{}\"", s),
             Self::TkIdent(s) => write!(f, "TkIdent \"{}\"", s),
             Self::TkNum(n) => write!(f, "TkNum({})", n),
@@ -72,6 +74,14 @@ impl Token {
             kind: TkString(s),
             pos,
             len,
+            line_no: 0,
+        }
+    }
+    fn new_char(c: u8, pos: usize) -> Self {
+        Self {
+            kind: TkChar(c),
+            pos,
+            len: 1,
             line_no: 0,
         }
     }
@@ -191,7 +201,7 @@ impl Lexer {
         }
         // 1文字読み取り
         let c = self.peek_char(0);
-        if "+-*/(){}<>=;,*&[].".find(c).is_some() {
+        if "+-*/(){}<>=;,*&[].\'".find(c).is_some() {
             self.pos += 1;
             return Some(c.to_string());
         }
@@ -209,6 +219,49 @@ impl Lexer {
         }
         None
     }
+    fn read_escape_char(&mut self) -> Result<u8, TokenizeError> {
+        Ok(match self.consume() {
+            'a' => 7,
+            'b' => 8,
+            't' => 9,
+            'n' => 10,
+            'v' => 11,
+            'f' => 12,
+            'r' => 13,
+            'e' => 27,
+            'x' | 'X' => self.read_hexadecimal()?,
+            s => {
+                let c = s.to_string().as_bytes().to_owned();
+                if c.len() > 1 {
+                    Err(TokenizeError::new("unknown escape sequence", self.pos))?
+                }
+                c[0]
+            }
+        })
+    }
+    fn read_char(&mut self) -> Result<Option<u8>, TokenizeError> {
+        if self.peek_char(0) == '\'' {
+            self.pos += 1;
+            let c = self.consume().to_string().as_bytes().to_owned();
+            if !c.len() == 1 {
+                Err(TokenizeError::new(
+                    "char literal accepts only one byte chars",
+                    self.pos,
+                ))?;
+            }
+            let mut c = c[0];
+            if c == 92 {
+                c = self.read_escape_char()?;
+            }
+            if self.consume() != '\'' {
+                Err(TokenizeError::new("char literal too long", self.pos))?;
+            }
+            Ok(Some(c))
+        } else {
+            Ok(None)
+        }
+    }
+
     fn read_octal(&mut self) -> Option<u8> {
         let s: String = self.code[self.pos..]
             .iter()
@@ -260,18 +313,7 @@ impl Lexer {
                             if self.is_at_end() {
                                 break;
                             }
-                            match self.consume() {
-                                'a' => v.push(7),
-                                'b' => v.push(8),
-                                't' => v.push(9),
-                                'n' => v.push(10),
-                                'v' => v.push(11),
-                                'f' => v.push(12),
-                                'r' => v.push(13),
-                                'e' => v.push(27),
-                                'x' | 'X' => v.push(self.read_hexadecimal()?),
-                                c => v.extend_from_slice(c.to_string().as_bytes()), // _ => Err(TokenizeError::new("unknown char escape", self.pos - 1))?,
-                            }
+                            v.push(self.read_escape_char()?);
                         }
                     }
                     // charを直接bytesに変換できないのだろうか...。
@@ -315,6 +357,8 @@ impl Lexer {
             let tk_head = self.pos;
             if self.read_whitespace() || self.read_comment()? {
                 continue;
+            } else if let Some(c) = self.read_char()? {
+                list.push_back(Token::new_char(c, tk_head));
             } else if let Some(s) = self.read_punct() {
                 list.push_back(Token::new_reserved(s, tk_head));
             } else if let Some(s) = self.read_word() {

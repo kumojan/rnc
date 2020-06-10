@@ -378,6 +378,11 @@ int main() {
   assert(0, bool_fn_sub(-3), "bool_fn_sub(-3)");
   assert(1, bool_fn_add(0), "bool_fn_add(0)");
   assert(1, bool_fn_sub(0), "bool_fn_sub(0)");
+
+  assert(92, '\\', "'\\\\'");
+  assert(97, 'a', "'a'");
+  assert(10, '\n', "'\\n'");
+  assert(4, sizeof('a'), "sizeof('a')");
   printf("OK\n");
   return 0;
 }
