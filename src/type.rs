@@ -32,7 +32,7 @@ pub enum Type {
         size: usize,
         align: usize,
     },
-    TyFunction {
+    TyFunc {
         arg: Box<Vec<Type>>,
         ret: Box<Type>,
     },
@@ -48,7 +48,7 @@ impl fmt::Debug for Type {
             Type::TyPtr(ty) => write!(f, "*{:?}", ty),
             Type::TyArray { base, len } => write!(f, "[{}]{:?}", len, base),
             Type::TyStruct { .. } => write!(f, "struct"),
-            Type::TyFunction { .. } => write!(f, "function"),
+            Type::TyFunc { .. } => write!(f, "func"),
         }
     }
 }
@@ -77,6 +77,12 @@ impl Type {
     pub fn is_array(&self) -> bool {
         match self {
             Type::TyArray { .. } => true,
+            _ => false,
+        }
+    }
+    pub fn is_func(&self) -> bool {
+        match self {
+            Type::TyFunc { .. } => true,
             _ => false,
         }
     }

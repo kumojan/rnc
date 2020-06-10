@@ -340,8 +340,11 @@ pub fn code_gen(
 
     println!(".data");
     for v in &globals {
-        println!("{}:", v.name);
-        println!("  .zero {}", v.ty.size());
+        if !v.ty.is_func() {
+            // 関数はここでは宣言しない
+            println!("{}:", v.name);
+            println!("  .zero {}", v.ty.size());
+        }
     }
     for (i, s) in string_literals.iter().enumerate() {
         println!(".L.data.{}:", i);

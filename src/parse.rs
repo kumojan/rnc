@@ -394,6 +394,7 @@ impl Function {
 pub struct ParseError {
     pub pos: usize,
     pub msg: String,
+    pub is_warning: bool,
 }
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -750,6 +751,7 @@ impl Parser {
         ParseError {
             pos: self.tklist[0].pos,
             msg: msg.to_owned(),
+            is_warning: false,
         }
     }
     fn head_kind(&self) -> &TokenKind {
@@ -795,6 +797,16 @@ impl Parser {
             })
             .cloned()
     }
+    fn find_func(&self, name: &String) -> Option<Type> {
+        self.globals
+            .iter()
+            .flat_map(|v| v.get_var(&name))
+            .flat_map(|v| match v.ty {
+                Type::TyFunc { .. } => Some(v.ty.clone()),
+                _ => None,
+            })
+            .next()
+    }
     fn peek_typedef(&mut self) -> Option<Type> {
         self.peek_ident().map_or(None, |name| {
             self.var_scopes
@@ -825,7 +837,7 @@ impl Parser {
     // グローバル変数は重複して宣言できない
     fn add_global(&mut self, name: String, ty: Type) -> Result<Rc<Var>, ParseError> {
         if self.globals.iter().find(|v| v.name() == &name).is_some() {
-            Err(self.raise_err("global var/type redefined!"))
+            Err(self.raise_err("global var/type or func redefined!"))
         } else {
             let var = Rc::new(Var {
                 name: name.clone(),
@@ -839,7 +851,7 @@ impl Parser {
     }
     fn add_global_typedef(&mut self, name: String, ty: Type) -> Result<(), ParseError> {
         if self.globals.iter().find(|v| v.name() == &name).is_some() {
-            Err(self.raise_err("global var/type redefined!"))
+            Err(self.raise_err("global var/type or func redefined!"))
         } else {
             self.globals.push(VarScope::Type(name, ty));
             Ok(())
@@ -861,8 +873,11 @@ impl Parser {
     pub fn program(mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<Vec<u8>>), ParseError> {
         let mut code = vec![];
         while !self.is_eof() {
+            if self.consume("typedef") {
+                self.typedef(true)?; // is_global=true
+            }
             if let Some(func) = self.funcdef()? {
-                code.push(func);
+                code.push(func); // グローバル変数か関数
             }
         }
         let globals = self
@@ -892,19 +907,6 @@ impl Parser {
         Ok(())
     }
     fn funcdef(&mut self) -> Result<Option<Function>, ParseError> {
-        if self.consume("typedef") {
-            let basety = self.typespec()?;
-            if !self.consume(";") {
-                loop {
-                    let (name, ty) = self.declarator(basety.clone())?;
-                    self.add_global_typedef(name, ty)?;
-                    if self.consume(";") {
-                        return Ok(None);
-                    }
-                    self.expect(",")?;
-                }
-            }
-        }
         // まず int *x まで見る
         let basety = self.typespec()?;
         let (name, ty) = self.declarator(basety.clone())?;
@@ -914,6 +916,17 @@ impl Parser {
             self.enter_scope();
             self.funcargs()?;
             let params: Vec<_> = self.locals.iter().cloned().collect();
+            let arg = params.iter().map(|p| p.ty.clone()).collect();
+            let ty = Type::TyFunc {
+                arg: Box::new(arg),
+                ret: Box::new(ty),
+            };
+            self.add_global(name.clone(), ty.clone())?;
+            if self.consume(";") {
+                // int func();のよに関数の宣言のみの場合
+                self.leave_scope(); // スコープは全く使わずに捨てる
+                return Ok(None);
+            }
             let stmts = self.compound_stmt(false)?;
             self.leave_scope();
             return Ok(Some(Function::new(
@@ -998,13 +1011,16 @@ impl Parser {
         v.extend(inner);
         Ok((name, v))
     }
-    fn typedef(&mut self) -> Result<(), ParseError> {
-        // self.attr.is_typedef = true;
+    fn typedef(&mut self, is_global: bool) -> Result<(), ParseError> {
         let basety = self.typespec()?;
         if !self.consume(";") {
             loop {
                 let (name, ty) = self.declarator(basety.clone())?;
-                self.add_typdef(name, ty);
+                if is_global {
+                    self.add_global_typedef(name, ty)?;
+                } else {
+                    self.add_typdef(name, ty);
+                }
                 if !self.consume(",") {
                     break; // 宣言終了
                 }
@@ -1062,7 +1078,7 @@ impl Parser {
             if self.peek_type() {
                 block.extend(self.vardef()?);
             } else if self.consume("typedef") {
-                self.typedef()?;
+                self.typedef(false)?;
             } else {
                 block.push(self.stmt()?);
             }
@@ -1312,8 +1328,12 @@ impl Parser {
         } else {
             let name = self.expect_ident()?;
             // 関数呼び出し
-            // TODO: 呼び出しがわで関数の型を把握すべし
             if self.consume("(") {
+                // 関数呼び出しとわかったので、チェック
+                match self.find_func(&name) {
+                    Some(_) => (),
+                    None => Err(self.raise_err("function not defined"))?,
+                }
                 let mut args = Vec::new();
                 while !self.consume(")") {
                     args.push(self.assign()?);

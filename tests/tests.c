@@ -8,6 +8,9 @@
  * This is a block comment.
  */
 
+int printf();
+int exit();
+
 int g1, g2[4];
 short (*g3)[5];
 typedef int MyInt, MyInt2[4];
