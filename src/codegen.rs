@@ -14,6 +14,7 @@ const RESERVED_REGISTER_STACK_SIZE: usize = 32;
 #[derive(Debug, Default)]
 pub struct CodeGenError {
     pub msg: String,
+    pub pos: usize,
 }
 // impl CodeGenError {
 //     fn new(node: &Node) -> Self {
@@ -28,6 +29,7 @@ struct CodeGenerator {
     func_name: String,
     var_offsets: Vec<usize>,
     func_stack_size: usize,
+    pos: usize,
 }
 fn load(ty: &Type) {
     if ty.is_array() {
@@ -104,6 +106,10 @@ impl CodeGenerator {
         }
     }
     fn gen_addr(&mut self, node: &Node) -> Result<(), CodeGenError> {
+        if let Some(tok) = &node.tok {
+            self.pos = tok.pos;
+            println!(".loc 1 {}", tok.line_no);
+        }
         match &node.kind {
             NodeKind::Var { var } => self.gen_var_addr(var),
             NodeKind::Deref { node } => self.gen_expr(node)?,
@@ -121,6 +127,7 @@ impl CodeGenerator {
                 self.gen_addr(rhs)?;
             }
             _ => Err(CodeGenError {
+                pos: self.pos,
                 msg: format!("not a left value! {:?}", node.kind),
             })?,
         };
@@ -144,6 +151,7 @@ impl CodeGenerator {
     }
     fn gen_expr(&mut self, node: &Node) -> Result<(), CodeGenError> {
         if let Some(tok) = &node.tok {
+            self.pos = tok.pos;
             println!(".loc 1 {}", tok.line_no);
         }
         match &node.kind {
@@ -192,6 +200,7 @@ impl CodeGenerator {
             NodeKind::FunCall { name, args } => {
                 if args.len() > ARGLEN {
                     return Err(CodeGenError {
+                        pos: self.pos,
                         msg: format!("too many arguments for func {} (must be less than 7)", name),
                     });
                 }
@@ -232,6 +241,7 @@ impl CodeGenerator {
             }
             _ => {
                 return Err(CodeGenError {
+                    pos: self.pos,
                     msg: "invalid expression!".to_owned(),
                 })
             }
@@ -240,6 +250,7 @@ impl CodeGenerator {
     }
     fn gen_stmt(&mut self, node: &Node) -> Result<(), CodeGenError> {
         if let Some(tok) = &node.tok {
+            self.pos = tok.pos;
             println!(".loc 1 {}", tok.line_no);
         }
         match &node.kind {
@@ -311,6 +322,7 @@ impl CodeGenerator {
             }
             _ => {
                 return Err(CodeGenError {
+                    pos: self.pos,
                     msg: "invalid expression!".to_owned(),
                 })
             }

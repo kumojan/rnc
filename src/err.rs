@@ -9,7 +9,7 @@ use std::borrow::Borrow;
 pub enum CompileError {
     Tokenize { pos: usize, msg: String },
     Parse { pos: usize, msg: String },
-    CodeGen { msg: String },
+    CodeGen { pos: usize, msg: String },
 }
 impl From<ParseError> for CompileError {
     fn from(err: ParseError) -> Self {
@@ -29,7 +29,10 @@ impl From<TokenizeError> for CompileError {
 }
 impl From<CodeGenError> for CompileError {
     fn from(err: CodeGenError) -> Self {
-        Self::CodeGen { msg: err.msg }
+        Self::CodeGen {
+            pos: err.pos,
+            msg: err.msg,
+        }
     }
 }
 /// posが属する行番号(0始まり)と、その行内でのpos(0始まり)

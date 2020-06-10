@@ -150,9 +150,9 @@ pub struct Node {
     pub tok: Option<Token>,
 }
 impl Node {
-    pub fn get_type(&self) -> Type {
+    pub fn get_type(&self) -> &Type {
         match &self.ty {
-            Some(ty) => ty.clone(),
+            Some(ty) => ty,
             _ => unimplemented!("called get_type for statements!"),
         }
     }
@@ -259,7 +259,7 @@ impl Node {
                 BinOp::Sub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => {
                     Some(Type::TyInt)
                 } // ポインタ同士の引き算はint
-                _ => Some(lhs.get_type()),
+                _ => Some(lhs.get_type().clone()),
             },
             kind: NodeKind::Bin {
                 kind,
@@ -345,7 +345,7 @@ impl Node {
     }
     fn new_stmt_expr(stmts: Vec<Node>, expr: Node, tok: Option<Token>) -> Self {
         Node {
-            ty: Some(expr.get_type()),
+            ty: Some(expr.get_type().clone()),
             kind: NodeKind::StmtExpr {
                 stmts: Box::new(Node::new_block(stmts, None)),
                 expr: Box::new(expr),
@@ -409,6 +409,7 @@ pub struct Parser {
     var_scopes: Vec<Vec<VarScope>>, // 後方に内側のスコープがある(読むときはrevする)
     struct_tag_scopes: VecDeque<VecDeque<Type>>, // 前方に内側のスコープがある
     cur_tok: Option<Token>,
+    line_no: usize,
     // attr: VarAttr,
 }
 
@@ -507,6 +508,9 @@ impl Parser {
     /// 読んだトークンはcur_tokにいれる
     fn shift(&mut self) -> &mut Self {
         self.cur_tok = self.tklist.pop_front();
+        if let Some(tok) = &self.cur_tok {
+            self.line_no = tok.line_no;
+        }
         self
     }
     fn unshift(&mut self) -> &mut Self {
@@ -1213,16 +1217,34 @@ impl Parser {
                 self.shift().cast()?,
                 self.tok(),
             )),
+            Some("*") => {
+                let addr = self.shift().cast()?;
+                self.check_deref(addr)
+            }
             Some("&") => Ok(Node::new_unary("addr", self.shift().cast()?, self.tok())),
-            Some("*") => Ok(Node::new_unary("deref", self.shift().cast()?, self.tok())),
             _ => self.postfix(),
         }
+    }
+    fn check_deref(&self, addr: Node) -> Result<Node, ParseError> {
+        let ty = if let Ok(ty) = addr.get_type().get_base() {
+            ty
+        } else {
+            println!("kind:{:?} type:{:?}", addr.kind, addr.get_type());
+            return Err(self.raise_err("cannot dereference"));
+        };
+        Ok(Node {
+            kind: NodeKind::Deref {
+                node: Box::new(addr),
+            },
+            ty: Some(ty),
+            tok: None,
+        })
     }
     /// identを受けて構造体のメンバにアクセスする
     fn struct_ref(&mut self, node: Node) -> Result<Node, ParseError> {
         let name = self.expect_ident()?;
         let mem = match match node.get_type() {
-            Type::TyStruct { mem, .. } => mem.into_iter().filter(|m| m.name == name).next(),
+            Type::TyStruct { mem, .. } => mem.clone().into_iter().filter(|m| m.name == name).next(),
             _ => Err(self.raise_err("not a struct!"))?,
         } {
             Some(mem) => mem,

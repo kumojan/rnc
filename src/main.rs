@@ -42,8 +42,8 @@ fn main() -> Result<(), String> {
                 Err(CompileError::Parse { pos, msg }) => {
                     error_at(&code, pos, format!("parse failed: {}", msg,), &filename)
                 }
-                Err(CompileError::CodeGen { msg }) => {
-                    error(format!("codegen failed with node: {}", msg))
+                Err(CompileError::CodeGen { msg, pos }) => {
+                    error_at(&code, pos, format!("codegen failed: {}", msg,), &filename)
                 }
                 _ => Ok(()),
             }
