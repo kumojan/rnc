@@ -1251,19 +1251,25 @@ impl Parser<'_> {
     }
     fn assign(&mut self) -> Result<Node, ParseError> {
         let node = self.equality()?;
-        match self.peek_reserved().as_deref() {
-            Some("=") => Ok(Node::new_assign(node, self.shift().assign()?, self.tok())),
-            Some("+=") => self.shift().new_assign_op(BinOp::Add, node),
-            Some("-=") => self.shift().new_assign_op(BinOp::Sub, node),
-            Some("*=") => self.shift().new_assign_op(BinOp::Mul, node),
-            Some("/=") => self.shift().new_assign_op(BinOp::Div, node),
-            _ => return Ok(node),
+        let rhs: Node;
+        macro_rules! assign_op {
+            ($op:expr) => {{
+                rhs = self.shift().assign()?;
+                self.assign_op($op, node, rhs)
+            }};
         }
+        Ok(match self.peek_reserved().as_deref() {
+            Some("=") => Node::new_assign(node, self.shift().assign()?, self.tok()),
+            Some("+=") => assign_op!(BinOp::Add),
+            Some("-=") => assign_op!(BinOp::Sub),
+            Some("*=") => assign_op!(BinOp::Mul),
+            Some("/=") => assign_op!(BinOp::Div),
+            _ => node,
+        })
     }
     /// A op= B を tmp = &A; *tmp = *tmp op B; にコンパイルする
     /// A = A op B で本当にうまくいかないのかはよくわからん。
-    fn new_assign_op(&mut self, op: BinOp, lhs: Node) -> Result<Node, ParseError> {
-        let rhs = self.assign()?;
+    fn assign_op(&mut self, op: BinOp, lhs: Node, rhs: Node) -> Node {
         // 変数tmpとそのNode, Deref Nodeを作る
         let ty = lhs.get_type().clone().to_ptr();
         let tmp = self.add_var(&"".to_owned(), ty);
@@ -1274,7 +1280,18 @@ impl Parser<'_> {
         let line1 = Node::new_assign(tmp_node(), Node::new_unary("addr", lhs, None), None);
         // *tmp = *tmp op B
         let line2 = Node::new_assign(tmp_deref(), Node::new_bin(op, tmp_deref(), rhs, None), None);
-        Ok(Node::new_comma(line1, line2, self.tok()))
+        Node::new_comma(line1, line2, self.tok())
+    }
+    fn to_assign(&mut self, binop: Node) -> Node {
+        if let Node {
+            kind: NodeKind::Bin { kind, lhs, rhs },
+            ..
+        } = binop
+        {
+            self.assign_op(kind, *lhs, *rhs)
+        } else {
+            unimplemented!("expected binop!")
+        }
     }
     fn equality(&mut self) -> Result<Node, ParseError> {
         let mut node = self.relational()?;
@@ -1345,7 +1362,9 @@ impl Parser<'_> {
         }
         self.unary()
     }
-    /// unary = ("+" | "-" | "*" | "&") cast | postfix
+    /// unary = ("+" | "-" | "*" | "&") cast
+    ///         | ("++" | "--") unary
+    ///         | postfix
     fn unary(&mut self) -> Result<Node, ParseError> {
         match self.peek_reserved().as_deref() {
             Some("+") => self.shift().cast(),
@@ -1360,6 +1379,18 @@ impl Parser<'_> {
                 self.check_deref(addr)
             }
             Some("&") => Ok(Node::new_unary("addr", self.shift().cast()?, self.tok())),
+            Some("++") => {
+                // ++i => i+=1
+                let cast = self.shift().cast()?;
+                let tok = self.tok();
+                Ok(self.to_assign(Node::new_add(cast, Node::new_num(1, None), tok)))
+            }
+            Some("--") => {
+                // --i => i-=1
+                let cast = self.shift().cast()?;
+                let tok = self.tok();
+                Ok(self.to_assign(Node::new_sub(cast, Node::new_num(1, None), tok)))
+            }
             _ => self.postfix(),
         }
     }
