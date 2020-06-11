@@ -34,13 +34,19 @@ impl fmt::Debug for TokenKind {
         }
     }
 }
+impl Default for TokenKind {
+    fn default() -> Self {
+        Self::TkEOF
+    }
+}
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Token {
     pub kind: TokenKind,
     pub pos: usize,
     pub len: usize,
     pub line_no: usize,
+    pub byte_len: usize,
 }
 impl Token {
     fn new_num(val: usize, pos: usize, len: usize) -> Self {
@@ -48,7 +54,7 @@ impl Token {
             kind: TkNum(val),
             pos,
             len,
-            line_no: 0,
+            ..Default::default()
         }
     }
     fn new_ident(s: String, pos: usize) -> Self {
@@ -56,8 +62,8 @@ impl Token {
         Self {
             kind: TkIdent(s),
             pos,
-            line_no: 0,
             len,
+            ..Default::default()
         }
     }
     fn new_reserved(s: String, pos: usize) -> Self {
@@ -65,8 +71,8 @@ impl Token {
         Self {
             kind: TkReserved(s),
             pos,
-            line_no: 0,
             len,
+            ..Default::default()
         }
     }
     fn new_string(s: Vec<u8>, pos: usize, len: usize) -> Self {
@@ -74,7 +80,7 @@ impl Token {
             kind: TkString(s),
             pos,
             len,
-            line_no: 0,
+            ..Default::default()
         }
     }
     fn new_char(c: u8, pos: usize) -> Self {
@@ -82,7 +88,7 @@ impl Token {
             kind: TkChar(c),
             pos,
             len: 1,
-            line_no: 0,
+            ..Default::default()
         }
     }
 }
@@ -135,7 +141,7 @@ impl Lexer {
             && match l {
                 2 => ["if"].contains(&&s[..]),
                 3 => ["for", "int"].contains(&&s[..]),
-                4 => ["else", "char", "long", "void"].contains(&&s[..]),
+                4 => ["else", "char", "long", "void", "enum"].contains(&&s[..]),
                 5 => ["while", "union", "short", "_Bool"].contains(&&s[..]),
                 6 => ["return", "sizeof", "struct"].contains(&&s[..]),
                 7 => ["typedef"].contains(&&s[..]),
@@ -376,18 +382,23 @@ impl Lexer {
         list.push_back(Token {
             kind: TkEOF,
             pos: self.code.len(),
-            len: 0,
-            line_no: 0,
+            ..Default::default()
         });
         // 行番号を計算してトークンに付加
         let mut head = 0;
         let mut line_no = 0;
+        let mut byte_len = 0;
         for mut tk in list.iter_mut() {
+            byte_len += self.code[head..tk.pos]
+                .iter()
+                .map(|c| c.len_utf8())
+                .sum::<usize>();
             line_no += self.code[head..tk.pos]
                 .iter()
                 .filter(|c| **c == '\n')
                 .count();
             tk.line_no = line_no;
+            tk.byte_len = byte_len;
             head = tk.pos;
         }
         Ok(list)

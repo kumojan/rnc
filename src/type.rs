@@ -1,5 +1,6 @@
 // use crate::parse::ParseError;
 use std::fmt;
+use std::rc::Rc;
 
 #[derive(Debug, Default)]
 pub struct TypeError {
@@ -11,6 +12,12 @@ pub struct Member {
     pub name: String,
     pub ty: Type,
     pub offset: usize,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct EnumMem {
+    pub name: String,
+    pub val: usize,
 }
 
 #[allow(dead_code)]
@@ -28,10 +35,13 @@ pub enum Type {
         len: usize,
     },
     TyStruct {
-        name: Option<String>,
-        mem: Box<Vec<Member>>,
+        mems: Box<Vec<Member>>,
         size: usize,
         align: usize,
+        is_union: bool,
+    },
+    TyEnum {
+        mems: Rc<Vec<EnumMem>>,
     },
     TyFunc {
         arg: Box<Vec<Type>>,
@@ -50,6 +60,7 @@ impl fmt::Debug for Type {
             Type::TyPtr(ty) => write!(f, "*{:?}", ty),
             Type::TyArray { base, len } => write!(f, "[{}]{:?}", len, base),
             Type::TyStruct { .. } => write!(f, "struct"),
+            Type::TyEnum { .. } => write!(f, "enum"),
             Type::TyFunc { .. } => write!(f, "func"),
         }
     }
@@ -103,6 +114,11 @@ impl Type {
         }
         self
     }
+    pub fn new_enum(mems: Vec<EnumMem>) -> Self {
+        Self::TyEnum {
+            mems: Rc::new(mems),
+        }
+    }
     pub fn get_base(&self) -> Result<Self, TypeError> {
         let base = match self {
             Type::TyPtr(base) => *base.clone(),
@@ -125,6 +141,7 @@ impl Type {
             Type::TyChar => 1,
             Type::TyShort => 2,
             Type::TyInt => 4,
+            Type::TyEnum { .. } => 4,
             Type::TyLong | Type::TyPtr(..) => 8,
             Type::TyArray { base, len } => base.size() * len,
             Type::TyStruct { size, .. } => *size,
@@ -138,6 +155,7 @@ impl Type {
             Type::TyChar => 1,
             Type::TyShort => 2,
             Type::TyInt => 4,
+            Type::TyEnum { .. } => 4,
             Type::TyLong | Type::TyPtr(..) => 8,
             Type::TyArray { base, .. } => base.align(),
             Type::TyStruct { align, .. } => *align,

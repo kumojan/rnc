@@ -405,16 +405,18 @@ impl fmt::Display for ParseError {
     }
 }
 #[derive(Default)]
-pub struct Parser {
+pub struct Parser<'a> {
+    cur_line: (usize, &'a str),
+    cur_pos: &'a str,
     tklist: VecDeque<Token>,
     locals: Vec<Rc<Var>>, // Node::Varと共有する。
     globals: Vec<VarScope>,
     string_literals: Vec<Vec<u8>>,
     var_scopes: Vec<Vec<VarScope>>, // 後方に内側のスコープがある(読むときはrevする)
-    struct_tag_scopes: VecDeque<VecDeque<Type>>, // 前方に内側のスコープがある
+    tag_scopes: VecDeque<VecDeque<(String, Type)>>, // 前方に内側のスコープがある
     cur_tok: Option<Token>,
-    line_no: usize,
-    // attr: VarAttr,
+    pub code: &'a str,            // debug用
+    pub code_lines: Vec<&'a str>, // debug用
 }
 
 enum PtrDim {
@@ -424,6 +426,7 @@ enum PtrDim {
 enum VarScope {
     Var(Rc<Var>),
     Type(String, Type),
+    Enum(String, usize),
 }
 
 /// typedef や externなど
@@ -439,6 +442,7 @@ impl VarScope {
     fn name(&self) -> &String {
         match self {
             Self::Type(name, ..) => name,
+            Self::Enum(name, ..) => name,
             Self::Var(var) => &var.name,
         }
     }
@@ -460,15 +464,23 @@ impl VarScope {
             _ => None,
         }
     }
+    fn get_union(&self, name: &str) -> Option<usize> {
+        match self {
+            Self::Enum(_name, val) if _name == name => Some(*val),
+            _ => None,
+        }
+    }
 }
 
 ///
 /// program = (funcdef | global-var)*
 /// funcdef = typespec declarator funcargs "{" compound_stmt "}"
 /// typespec = typename+
-/// typename = "void" | "char" | "short" | "int" | "long" | "struct" struct_decl | "union" union_decl | typedef_name
+/// typename = "void" | "char" | "short" | "int" | "long" | "struct" struct_decl | "union" union_decl | "enum" enum_decl | typedef_name
 /// struct_decl = ident? "{" struct_members "}"?
 /// union_decl = ident? "{" struct_members "}"?
+/// enum_decl = ident? "{" enum_list "}" | ident ("{" enum_list "}")?
+/// enum_list = ident ("=" num)? ("," ident ("=" num)?)*
 /// struct_members = (typespec declarator (","  declarator)* ";")*
 /// ptr = "*"*
 /// funcargs = "(" typespec declarator ( "," typespec declarator)? ")"
@@ -501,7 +513,7 @@ impl VarScope {
 ///     | "sizeof" unary
 ///     | "(" "{" stmt* expr ";" "}" ")"
 ///
-impl Parser {
+impl Parser<'_> {
     pub fn new(tklist: VecDeque<Token>) -> Self {
         Self {
             tklist,
@@ -512,8 +524,10 @@ impl Parser {
     /// 読んだトークンはcur_tokにいれる
     fn shift(&mut self) -> &mut Self {
         self.cur_tok = self.tklist.pop_front();
-        if let Some(tok) = &self.cur_tok {
-            self.line_no = tok.line_no;
+        if self.tklist.len() > 0 {
+            let head = &self.tklist[0];
+            self.cur_line = (head.line_no + 1, self.code_lines[head.line_no]);
+            self.cur_pos = &self.code[head.byte_len..head.byte_len + head.len];
         }
         self
     }
@@ -548,7 +562,7 @@ impl Parser {
             .as_deref()
             .filter(|s| {
                 [
-                    "void", "char", "short", "int", "long", "struct", "union", "_Bool",
+                    "void", "char", "short", "int", "long", "struct", "union", "_Bool", "enum",
                 ]
                 .contains(s)
             })
@@ -556,17 +570,16 @@ impl Parser {
     }
     /// 型名や"struct", "union"を見たときにtrue
     fn peek_type(&self) -> bool {
-        let is_basic = self.peek_base_type().is_some();
-        let is_other = self // typedefされた型であるかを調べる
-            .peek_ident()
-            .map_or(false, |s| {
-                self.var_scopes
-                    .iter()
-                    .flat_map(|scope| scope.iter())
-                    .chain(self.globals.iter())
-                    .any(|v| v.is_type(&s))
-            });
-        is_basic || is_other
+        return self.peek_base_type().is_some()
+            || self // typedefされた型であるかを調べる
+                .peek_ident()
+                .map_or(false, |s| {
+                    self.var_scopes
+                        .iter()
+                        .flat_map(|scope| scope.iter())
+                        .chain(self.globals.iter())
+                        .any(|v| v.is_type(&s))
+                });
     }
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
     fn consume(&mut self, s: &str) -> bool {
@@ -639,6 +652,7 @@ impl Parser {
         match self.peek_reserved().as_deref() {
             Some("struct") => return self.shift().struct_decl(),
             Some("union") => return self.shift().union_decl(),
+            Some("enum") => return self.shift().enum_decl(),
             _ => (),
         };
         if let Some(ty) = self.peek_typedef() {
@@ -674,28 +688,32 @@ impl Parser {
             _ => Err(self.raise_err("invalid type!"))?,
         })
     }
-    fn struct_decl(&mut self) -> Result<Type, ParseError> {
-        let name = self.consume_ident();
-        if self.consume("{") {
-            let mut mems = Vec::new();
+    fn struct_list(&mut self) -> Result<Vec<Member>, ParseError> {
+        let mut mems = Vec::new();
+        loop {
+            let ty = self.typespec()?;
             loop {
-                let ty = self.typespec()?;
-                loop {
-                    let (name, ty) = self.declarator(ty.clone())?; // int *x[4]; のような型が確定する
-                    mems.push(Member {
-                        ty,
-                        name,
-                        offset: 0,
-                    });
-                    if !self.consume(",") {
-                        break;
-                    }
-                }
-                self.expect(";")?;
-                if self.consume("}") {
+                let (name, ty) = self.declarator(ty.clone())?; // int *x[4]; のような型が確定する
+                mems.push(Member {
+                    ty,
+                    name,
+                    offset: 0,
+                });
+                if !self.consume(",") {
                     break;
                 }
             }
+            self.expect(";")?;
+            if self.consume("}") {
+                break;
+            }
+        }
+        Ok(mems)
+    }
+    fn struct_decl(&mut self) -> Result<Type, ParseError> {
+        let name = self.consume_ident();
+        if self.consume("{") {
+            let mut mems = self.struct_list()?;
             let mut offset = 0;
             for m in mems.iter_mut() {
                 offset = align_to(offset, m.ty.align()); // 新しく追加される型のアライメントにoffsetを合わせる
@@ -704,15 +722,15 @@ impl Parser {
             }
             let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
             let ty = Type::TyStruct {
-                name,
-                mem: Box::new(mems),
+                mems: Box::new(mems),
                 align,
                 size: align_to(offset, align),
+                is_union: false,
             };
-            self.struct_tag_scopes[0].push_front(ty.clone());
+            self.add_tag(name, ty.clone());
             Ok(ty)
         } else if let Some(name) = name {
-            match self.find_struct(&name) {
+            match self.find_struct_tag(&name) {
                 Some(ty) => Ok(ty),
                 None => Err(self.raise_err("unknown struct tag")),
             }
@@ -723,39 +741,53 @@ impl Parser {
     fn union_decl(&mut self) -> Result<Type, ParseError> {
         let name = self.consume_ident();
         if self.consume("{") {
-            let mut mems = Vec::new();
-            loop {
-                let ty = self.typespec()?;
-                loop {
-                    let (name, ty) = self.declarator(ty.clone())?; // int *x[4]; のような型が確定する
-                    mems.push(Member {
-                        ty,
-                        name,
-                        offset: 0,
-                    });
-                    if !self.consume(",") {
-                        break;
-                    }
-                }
-                self.expect(";")?;
-                if self.consume("}") {
-                    break;
-                }
-            }
+            let mems = self.struct_list()?;
             let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
             let size = mems.iter().map(|m| m.ty.size()).max().unwrap_or(1);
             let ty = Type::TyStruct {
-                name,
-                mem: Box::new(mems),
+                mems: Box::new(mems),
                 align,
                 size: align_to(size, align),
+                is_union: true,
             };
-            self.struct_tag_scopes[0].push_front(ty.clone());
+            self.add_tag(name, ty.clone());
             Ok(ty)
         } else if let Some(name) = name {
-            match self.find_struct(&name) {
+            match self.find_union_tag(&name) {
                 Some(ty) => Ok(ty),
                 None => Err(self.raise_err("unknown union tag")),
+            }
+        } else {
+            Err(self.raise_err("expected identifier"))
+        }
+    }
+    fn enum_decl(&mut self) -> Result<Type, ParseError> {
+        let name = self.consume_ident();
+        if self.consume("{") {
+            let mut val = 0;
+            let mut mems = Vec::new();
+            loop {
+                let name = self.expect_ident()?;
+                if self.consume("=") {
+                    val = self.expect_num()?; // 実際は負の数とかも定義できるっぽいが...
+                }
+                mems.push(EnumMem { name, val });
+                val += 1;
+                if !self.consume(",") {
+                    break;
+                }
+            }
+            self.expect("}")?;
+            for EnumMem { name, val } in &mems {
+                self.add_enum(name.clone(), *val);
+            }
+            let ty = Type::new_enum(mems);
+            self.add_tag(name, ty.clone());
+            Ok(ty)
+        } else if let Some(name) = name {
+            match self.find_enum_tag(&name) {
+                Some(ty) => Ok(ty),
+                None => Err(self.raise_err("unknown enum tag")),
             }
         } else {
             Err(self.raise_err("expected identifier"))
@@ -781,36 +813,70 @@ impl Parser {
     }
     /// 必ずleave_scopeと対にして使うこと
     fn enter_scope(&mut self) {
-        self.struct_tag_scopes.push_front(Default::default());
+        self.tag_scopes.push_front(Default::default());
         self.var_scopes.push(Default::default());
     }
     /// 必ずenter_scopeと対にして使うこと
     fn leave_scope(&mut self) {
-        self.struct_tag_scopes.pop_front();
+        self.tag_scopes.pop_front();
         self.var_scopes.pop();
     }
-    fn find_var(&self, name: String) -> Option<Rc<Var>> {
+    fn find_var(&self, name: &String) -> Option<Rc<Var>> {
         // println!("searching {} in {:?}", name, self.var_scopes);
         self.var_scopes
             .iter()
             .rev()
             .flat_map(|scope| scope.iter().rev()) // 後ろから順に走査する
             .chain(self.globals.iter())
-            .flat_map(|v| v.get_var(&name))
+            .flat_map(|v| v.get_var(name))
             .next()
     }
-    fn find_struct(&self, name: &String) -> Option<Type> {
-        // println!("searching {} in {:?}", name, self.var_scopes);
-        self.struct_tag_scopes
+    fn find_enum(&self, name: &String) -> Option<usize> {
+        self.var_scopes
+            .iter()
+            .rev()
+            .flat_map(|scope| scope.iter().rev()) // 後ろから順に走査する
+            .chain(self.globals.iter())
+            .flat_map(|v| v.get_union(name))
+            .next()
+    }
+    fn add_tag(&mut self, name: Option<String>, ty: Type) {
+        self.tag_scopes[0].push_front((name.unwrap_or("noname".to_owned()), ty));
+    }
+    fn find_tag(&self, name: &String) -> Option<Type> {
+        self.tag_scopes
             .iter()
             .flat_map(|scope| scope.iter())
-            .find(|t| match &t {
-                Type::TyStruct {
-                    name: Some(_name), ..
-                } => _name == name,
-                _ => false,
-            })
+            .find(|(_name, _)| name == _name)
             .cloned()
+            .map(|(_, ty)| ty)
+    }
+    fn find_struct_tag(&self, name: &String) -> Option<Type> {
+        let ty = self.find_tag(name);
+        if let Some(Type::TyStruct {
+            is_union: false, ..
+        }) = ty
+        {
+            ty
+        } else {
+            None
+        }
+    }
+    fn find_union_tag(&self, name: &String) -> Option<Type> {
+        let ty = self.find_tag(name);
+        if let Some(Type::TyStruct { is_union: true, .. }) = ty {
+            ty
+        } else {
+            None
+        }
+    }
+    fn find_enum_tag(&self, name: &String) -> Option<Type> {
+        let ty = self.find_tag(name);
+        if let Some(Type::TyEnum { .. }) = ty {
+            ty
+        } else {
+            None
+        }
     }
     fn find_func(&self, name: &String) -> Option<Type> {
         self.globals
@@ -848,6 +914,10 @@ impl Parser {
     fn add_typdef(&mut self, name: String, ty: Type) {
         let len = self.var_scopes.len();
         self.var_scopes[len - 1].push(VarScope::Type(name, ty));
+    }
+    fn add_enum(&mut self, name: String, num: usize) {
+        let len = self.var_scopes.len();
+        self.var_scopes[len - 1].push(VarScope::Enum(name, num));
     }
     // グローバル変数は重複して宣言できない
     fn add_global(&mut self, name: String, ty: Type) -> Result<Rc<Var>, ParseError> {
@@ -938,7 +1008,7 @@ impl Parser {
             };
             self.add_global(name.clone(), ty.clone())?;
             if self.consume(";") {
-                // int func();のよに関数の宣言のみの場合
+                // int func();のように関数の宣言のみの場合
                 self.leave_scope(); // スコープは全く使わずに捨てる
                 return Ok(None);
             }
@@ -1275,8 +1345,10 @@ impl Parser {
     fn struct_ref(&mut self, node: Node) -> Result<Node, ParseError> {
         let name = self.expect_ident()?;
         let mem = match match node.get_type() {
-            Type::TyStruct { mem, .. } => mem.clone().into_iter().filter(|m| m.name == name).next(),
-            _ => Err(self.raise_err("not a struct!"))?,
+            Type::TyStruct { mems, .. } => {
+                mems.clone().into_iter().filter(|m| m.name == name).next()
+            }
+            _ => Err(self.raise_err("not a struct/union!"))?,
         } {
             Some(mem) => mem,
             _ => Err(self.raise_err(&format!("unknown member {}", name)))?,
@@ -1370,10 +1442,13 @@ impl Parser {
                     None,
                 ))
             } else {
-                // ただの変数
-                match self.find_var(name) {
-                    Some(var) => Ok(Node::new_lvar(var, self.tok())),
-                    _ => Err(self.raise_err("variable not found!")),
+                // 変数、またはenum定数
+                if let Some(var) = self.find_var(&name) {
+                    Ok(Node::new_lvar(var, self.tok()))
+                } else if let Some(val) = self.find_enum(&name) {
+                    Ok(Node::new_num(val, self.tok()))
+                } else {
+                    Err(self.raise_err("variable not found!"))
                 }
             }
         }
