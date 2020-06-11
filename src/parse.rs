@@ -427,6 +427,7 @@ enum PtrDim {
     Ptr(usize),
     Dim(usize),
 }
+#[derive(Debug)]
 enum VarScope {
     Var(Rc<Var>),
     Type(String, Type),
@@ -966,6 +967,12 @@ impl Parser<'_> {
             if let Some(func) = self.funcdef()? {
                 code.push(func); // グローバル変数か関数
             }
+        }
+        if self.var_scopes.len() > 0 {
+            return Err(self.raise_err("varscope remains!"));
+        }
+        if self.tag_scopes.len() > 0 {
+            return Err(self.raise_err("tagscopes remains!"));
         }
         let globals = self
             .globals
