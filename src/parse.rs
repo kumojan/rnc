@@ -374,6 +374,7 @@ pub struct Function {
     pub body: Vec<Node>,
     pub params: Vec<Rc<Var>>,
     pub locals: Vec<Rc<Var>>,
+    pub is_static: bool,
 }
 impl Function {
     fn new(
@@ -382,6 +383,7 @@ impl Function {
         body: Vec<Node>,
         params: Vec<Rc<Var>>,
         locals: Vec<Rc<Var>>,
+        is_static: bool,
     ) -> Self {
         Self {
             ty,
@@ -389,6 +391,7 @@ impl Function {
             body,
             params,
             locals,
+            is_static,
         }
     }
 }
@@ -415,6 +418,7 @@ pub struct Parser<'a> {
     var_scopes: Vec<Vec<VarScope>>, // 後方に内側のスコープがある(読むときはrevする)
     tag_scopes: VecDeque<VecDeque<(String, Type)>>, // 前方に内側のスコープがある
     cur_tok: Option<Token>,
+    // var_attr: VarAttr,
     pub code: &'a str,            // debug用
     pub code_lines: Vec<&'a str>, // debug用
 }
@@ -429,15 +433,13 @@ enum VarScope {
     Enum(String, usize),
 }
 
-/// typedef や externなど
+// typedef, static, externなど
+// #[derive(Default)]
 // struct VarAttr {
 //     is_typedef: bool,
+//     is_static: bool,
 // }
-// impl Default for VarAttr {
-//     fn default() -> Self {
-//         Self { is_typedef: false }
-//     }
-// }
+
 impl VarScope {
     fn name(&self) -> &String {
         match self {
@@ -474,7 +476,7 @@ impl VarScope {
 
 ///
 /// program = (funcdef | global-var)*
-/// funcdef = typespec declarator funcargs "{" compound_stmt "}"
+/// funcdef = "static"? typespec declarator funcargs "{" compound_stmt "}"
 /// typespec = typename+
 /// typename = "void" | "char" | "short" | "int" | "long" | "struct" struct_decl | "union" union_decl | "enum" enum_decl | typedef_name
 /// struct_decl = ident? "{" struct_members "}"?
@@ -562,7 +564,7 @@ impl Parser<'_> {
             .as_deref()
             .filter(|s| {
                 [
-                    "void", "char", "short", "int", "long", "struct", "union", "_Bool", "enum",
+                    "void", "char", "short", "int", "long", "_Bool", "struct", "union", "enum",
                 ]
                 .contains(s)
             })
@@ -993,6 +995,7 @@ impl Parser<'_> {
     }
     fn funcdef(&mut self) -> Result<Option<Function>, ParseError> {
         // まず int *x まで見る
+        let is_static = self.consume("static");
         let basety = self.typespec()?;
         let (name, ty) = self.declarator(basety.clone())?;
         // 次に関数の有無を見る
@@ -1020,6 +1023,7 @@ impl Parser<'_> {
                 stmts,
                 params,
                 std::mem::replace(&mut self.locals, vec![]),
+                is_static,
             )));
         }
         // 関数でないとしたら、グローバル変数が続いている

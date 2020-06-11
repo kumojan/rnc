@@ -15,6 +15,8 @@ int g1, g2[4];
 short (*g3)[5];
 typedef int MyInt, MyInt2[4];
 
+static int static_fn() { return 3; }
+
 // codeをactualに入れて評価して、expectedと比較する
 int assert(int expected, int actual, char *code) {
   if (expected == actual) {
@@ -398,6 +400,9 @@ int main() {
   assert(5, ({ enum { zero, five=5, three=3, four, five2 }; five2; }), "({ enum { zero, five=5, three=3, four, five2 }; five2; })");
   assert(4, ({ enum { zero, one, two } x; sizeof(x); }), "({ enum { zero, one, two } x; sizeof(x); })");
   assert(4, ({ enum t { zero, one, two }; enum t y; sizeof(y); }), "({ enum t { zero, one, two }; enum t y; sizeof(y); })");
+  
+  // static関数
+  assert(3, static_fn(), "static_fn()");
   printf("OK\n");
   return 0;
 }

@@ -365,7 +365,9 @@ pub fn code_gen(
     for func in program {
         cg.func_name = func.name;
         cg.set_var_offset(&func.locals);
-        println!(".globl {}", cg.func_name);
+        if !func.is_static {
+            println!(".globl {}", cg.func_name);
+        }
         println!("{}:", cg.func_name);
 
         println!("  push rbp"); // まず現在の関数のrbpをスタックにpush(戻る場所?)
