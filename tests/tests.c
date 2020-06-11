@@ -400,9 +400,12 @@ int main() {
   assert(5, ({ enum { zero, five=5, three=3, four, five2 }; five2; }), "({ enum { zero, five=5, three=3, four, five2 }; five2; })");
   assert(4, ({ enum { zero, one, two } x; sizeof(x); }), "({ enum { zero, one, two } x; sizeof(x); })");
   assert(4, ({ enum t { zero, one, two }; enum t y; sizeof(y); }), "({ enum t { zero, one, two }; enum t y; sizeof(y); })");
-  
+
   // static関数
   assert(3, static_fn(), "static_fn()");
+   // for文の中で変数宣言
+  assert(55, ({ int j=0; for (int i=0; i<=10; i=i+1) j=j+i; j; }), "({ int j=0; for (int i=0; i<=10; i=i+1) j=j+i; j; })");
+   assert(3, ({ int i=3; int j=0; for (int i=0; i<=10; i=i+1) j=j+i; i; }), "({ int i=3; int j=0; for (int i=0; i<=10; i=i+1) j=j+i; i; })");
   printf("OK\n");
   return 0;
 }

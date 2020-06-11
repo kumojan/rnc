@@ -488,7 +488,7 @@ impl VarScope {
 /// funcargs = "(" typespec declarator ( "," typespec declarator)? ")"
 /// compound_stmt = (vardef | typedef | stmt)*
 /// typedef = "typedef" typespec declarator ("," declarator)*
-/// vardef = typespec declarator initializer ("," declarator initializer)*;
+/// vardef = typespec declarator initializer ("," declarator initializer)* ";"
 /// declarator = ptr ("(" declarator ")" | ident) ("[" num "]")*
 /// initializer = "=" (assign | array_init)
 /// array_init = "{" num ("," num)?"}"
@@ -497,7 +497,7 @@ impl VarScope {
 ///     | "{" compound_stmt "}"
 ///     | "if" "(" expr ")" stmt ( "else" stmt )?
 ///     | "while" "(" expr ")" stmt
-///     | "for" "(" expr? ";" expr? ";" expr? ")" stmt
+///     | "for" "(" expr? ";" | vardef )  expr? ";" expr? ")" stmt  // vardefはセミコロンまで含む
 /// expr = assign ("," expr )?   // exprはassignをコンマで連結している
 /// assign = equality ("=" assign)?  // assignでは括弧()の中以外ではコンマは出てこない
 /// equality = relational (("==" | "!=") relational)*
@@ -1185,6 +1185,15 @@ impl Parser<'_> {
                 n
             })
         };
+        let maybe_null_expr = |self_: &mut Self, s: &str| {
+            Ok(if self_.consume(s) {
+                None
+            } else {
+                let n = Some((self_.expr()?, self_.tok()));
+                self_.expect(s)?;
+                n
+            })
+        };
         let node = if self.peek("{") {
             Node::new_block(self.compound_stmt(true)?, self.tok())
         } else if self.consume("if") {
@@ -1207,20 +1216,17 @@ impl Parser<'_> {
                 self.tok(),
             )
         } else if self.consume("for") {
+            self.enter_scope();
             self.expect("(")?;
-            let mut maybe_null_expr = |s: &str| {
-                Ok(if self.consume(s) {
-                    None
-                } else {
-                    let n = Some((self.expr()?, self.tok()));
-                    self.expect(s)?;
-                    n
-                })
+            let start = if self.peek_type() {
+                Some(Node::new_block(self.vardef()?, self.tok()))
+            } else {
+                maybe_null_expr(self, ";")?.map(|(e, t)| Node::new_expr_stmt(e, t))
             };
-            let start = maybe_null_expr(";")?.map(|(e, t)| Node::new_expr_stmt(e, t));
-            let condi = maybe_null_expr(";")?.map(|(e, _)| e);
-            let end = maybe_null_expr(")")?.map(|(e, t)| Node::new_expr_stmt(e, t));
+            let condi = maybe_null_expr(self, ";")?.map(|(e, _)| e);
+            let end = maybe_null_expr(self, ")")?.map(|(e, t)| Node::new_expr_stmt(e, t));
             let loop_ = self.stmt()?;
+            self.leave_scope();
             Node::new_for(start, condi, end, loop_, self.tok())
         } else if self.consume("return") {
             Node::new_unary("return", read_until(self, ";")?, self.tok())
