@@ -200,7 +200,7 @@ impl Lexer {
         // 2文字
         if self.pos < self.code.len() - 1 {
             let s = self.peek_str(2);
-            if ["==", "!=", "<=", ">=", "->"].contains(&&s[..]) {
+            if ["==", "!=", "<=", ">=", "->", "+=", "-=", "*=", "/="].contains(&&s[..]) {
                 self.pos += 2;
                 return Some(s);
             }

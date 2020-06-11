@@ -71,7 +71,7 @@ pub enum NodeKind {
     },
     Cast(Box<Node>),
     Assign {
-        lvar: Box<Node>,
+        lhs: Box<Node>,
         rhs: Box<Node>,
     },
     Bin {
@@ -163,7 +163,7 @@ impl Node {
             tok,
         }
     }
-    fn new_lvar(var: Rc<Var>, tok: Option<Token>) -> Self {
+    fn new_var(var: Rc<Var>, tok: Option<Token>) -> Self {
         Self {
             ty: Some(var.ty.clone()),
             kind: NodeKind::Var { var },
@@ -224,14 +224,14 @@ impl Node {
             tok,
         }
     }
-    fn new_assign(lvar: Node, mut rhs: Node, tok: Option<Token>) -> Self {
-        if lvar.ty != rhs.ty {
-            rhs = Node::new_cast(lvar.get_type().clone(), rhs, None);
+    fn new_assign(var: Node, mut rhs: Node, tok: Option<Token>) -> Self {
+        if var.ty != rhs.ty {
+            rhs = Node::new_cast(var.get_type().clone(), rhs, None);
         }
         Self {
-            ty: lvar.ty.clone(),
+            ty: var.ty.clone(),
             kind: NodeKind::Assign {
-                lvar: Box::new(lvar),
+                lhs: Box::new(var),
                 rhs: Box::new(rhs),
             },
             tok,
@@ -1139,7 +1139,7 @@ impl Parser<'_> {
                 let var = self.add_var(&name, ty);
                 if let Some(init) = self.initializer()? {
                     stmts.push(Node::new_expr_stmt(
-                        Node::new_assign(Node::new_lvar(var, self.tok()), init, self.tok()),
+                        Node::new_assign(Node::new_var(var, self.tok()), init, self.tok()),
                         self.tok(),
                     ));
                 }
@@ -1250,11 +1250,31 @@ impl Parser<'_> {
         Ok(node)
     }
     fn assign(&mut self) -> Result<Node, ParseError> {
-        let mut node = self.equality()?;
-        if self.consume("=") {
-            node = Node::new_assign(node, self.assign()?, self.tok());
+        let node = self.equality()?;
+        match self.peek_reserved().as_deref() {
+            Some("=") => Ok(Node::new_assign(node, self.shift().assign()?, self.tok())),
+            Some("+=") => self.shift().new_assign_op(BinOp::Add, node),
+            Some("-=") => self.shift().new_assign_op(BinOp::Sub, node),
+            Some("*=") => self.shift().new_assign_op(BinOp::Mul, node),
+            Some("/=") => self.shift().new_assign_op(BinOp::Div, node),
+            _ => return Ok(node),
         }
-        Ok(node)
+    }
+    /// A op= B を tmp = &A; *tmp = *tmp op B; にコンパイルする
+    /// A = A op B で本当にうまくいかないのかはよくわからん。
+    fn new_assign_op(&mut self, op: BinOp, lhs: Node) -> Result<Node, ParseError> {
+        let rhs = self.assign()?;
+        // 変数tmpとそのNode, Deref Nodeを作る
+        let ty = lhs.get_type().clone().to_ptr();
+        let tmp = self.add_var(&"".to_owned(), ty);
+        let tmp_node = || Node::new_var(tmp.clone(), None);
+        let tmp_deref = || Node::new_unary("deref", tmp_node(), None);
+
+        // tmp = &A
+        let line1 = Node::new_assign(tmp_node(), Node::new_unary("addr", lhs, None), None);
+        // *tmp = *tmp op B
+        let line2 = Node::new_assign(tmp_deref(), Node::new_bin(op, tmp_deref(), rhs, None), None);
+        Ok(Node::new_comma(line1, line2, self.tok()))
     }
     fn equality(&mut self) -> Result<Node, ParseError> {
         let mut node = self.relational()?;
@@ -1461,7 +1481,7 @@ impl Parser<'_> {
             } else {
                 // 変数、またはenum定数
                 if let Some(var) = self.find_var(&name) {
-                    Ok(Node::new_lvar(var, self.tok()))
+                    Ok(Node::new_var(var, self.tok()))
                 } else if let Some(val) = self.find_enum(&name) {
                     Ok(Node::new_num(val, self.tok()))
                 } else {

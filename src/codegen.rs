@@ -195,10 +195,10 @@ impl CodeGenerator {
                 // TODO: 型エラーの処理
                 load(&node.get_type().get_base().unwrap());
             }
-            NodeKind::Assign { lvar, rhs, .. } => {
-                self.gen_addr(lvar)?;
+            NodeKind::Assign { lhs, rhs, .. } => {
+                self.gen_addr(lhs)?;
                 self.gen_expr(rhs)?;
-                store(&lvar.get_type()); // どの型に代入するかによってコードが異なる
+                store(&lhs.get_type()); // どの型に代入するかによってコードが異なる
             }
             NodeKind::Comma { lhs, rhs } => {
                 self.gen_expr(lhs)?;
@@ -459,9 +459,9 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
             s += &graph_gen(lhs, &nodename, 0, None);
             s += &graph_gen(rhs, &nodename, 1, None);
         }
-        NodeKind::Assign { lvar, rhs } => {
+        NodeKind::Assign { lhs, rhs } => {
             s += &format!("{} [label=\"assign\"];\n", nodename);
-            s += &graph_gen(lvar, &nodename, 0, None);
+            s += &graph_gen(lhs, &nodename, 0, None);
             s += &graph_gen(rhs, &nodename, 1, None);
         }
         NodeKind::Comma { lhs, rhs } => {
