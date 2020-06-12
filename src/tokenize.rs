@@ -171,16 +171,44 @@ impl Lexer {
             false
         }
     }
-    fn read_num(&mut self) -> Option<usize> {
-        let n: String = self.code[self.pos..]
-            .iter()
-            .take_while(|c| c.is_ascii_digit())
-            .collect();
-        if n.len() > 0 {
-            self.pos += n.len();
-            Some(n.parse().unwrap())
+    fn read_num(&mut self) -> Result<Option<usize>, TokenizeError> {
+        let mut base = 0;
+        if self.pos < self.code.len() - 1 {
+            base = match &self.peek_str(2)[..] {
+                "0b" | "0B" => 2,
+                "0x" | "0X" => 16,
+                _ => 0,
+            };
+        }
+        if base != 0 {
+            self.pos += 2;
         } else {
-            None
+            if self.peek_char(0) == '0' {
+                self.pos += 1;
+                base = 8;
+            } else if ('1'..='9').contains(&self.peek_char(0)) {
+                base = 10;
+            }
+        }
+        if base > 0 {
+            let n: String = self.code[self.pos..]
+                .iter()
+                .take_while(|c| {
+                    ('a'..='z').contains(c) || ('A'..='Z').contains(c) || ('0'..='9').contains(c)
+                })
+                .collect();
+            let num = if n.len() > 0 {
+                self.pos += n.len();
+                usize::from_str_radix(&n, base).ok() // ここでNoneならerror
+            } else if base == 8 {
+                Some(0)
+            } else {
+                None // error
+            };
+            num.ok_or(TokenizeError::new("invalid digit", self.pos))
+                .map(|num| Some(num))
+        } else {
+            Ok(None)
         }
     }
     fn read_ident(&mut self) -> Option<String> {
@@ -373,7 +401,7 @@ impl Lexer {
                 list.push_back(Token::new_reserved(s, tk_head));
             } else if let Some(s) = self.read_word() {
                 list.push_back(Token::new_reserved(s, tk_head));
-            } else if let Some(n) = self.read_num() {
+            } else if let Some(n) = self.read_num()? {
                 list.push_back(Token::new_num(n, tk_head, self.pos - tk_head));
             } else if let Some(s) = self.read_ident() {
                 list.push_back(Token::new_ident(s, tk_head));
