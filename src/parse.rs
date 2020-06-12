@@ -70,6 +70,7 @@ pub enum NodeKind {
         node: Box<Node>,
     },
     Cast(Box<Node>),
+    BitNot(Box<Node>),
     Assign {
         lhs: Box<Node>,
         rhs: Box<Node>,
@@ -127,6 +128,7 @@ impl fmt::Debug for NodeKind {
             NodeKind::Num { val } => write!(f, "Num {}", val),
             NodeKind::Var { var } => write!(f, "Var {:?}", var),
             NodeKind::Cast(..) => write!(f, "cast"),
+            NodeKind::BitNot(node) => write!(f, "bitnot of {:?}", node),
             NodeKind::Return { .. } => write!(f, "return"),
             NodeKind::ExprStmt { .. } => write!(f, "expr stmt"),
             NodeKind::Bin { kind, .. } => write!(f, "Bin {:?}", kind),
@@ -202,6 +204,7 @@ impl Node {
                     t.get_base()
                         .unwrap_or_else(|_| panic!("deref failed! at:{:?}", tok))
                 }),
+                "bitnot" => node.ty.as_ref().map(|t| t.cast_int()),
                 _ => unimplemented!(),
             },
             kind: match t {
@@ -217,6 +220,7 @@ impl Node {
                 "expr_stmt" => NodeKind::ExprStmt {
                     expr: Box::new(node),
                 },
+                "bitnot" => NodeKind::BitNot(Box::new(node)),
                 _ => unimplemented!(),
             },
             tok,
@@ -1386,7 +1390,7 @@ impl Parser<'_> {
         }
         self.unary()
     }
-    /// unary = ("+" | "-" | "*" | "&" | "!") cast
+    /// unary = ("+" | "-" | "*" | "&" | "!" | "~") cast
     ///         | ("++" | "--") unary
     ///         | postfix
     fn unary(&mut self) -> Result<Node, ParseError> {
@@ -1403,6 +1407,7 @@ impl Parser<'_> {
                 self.check_deref(addr)
             }
             Some("&") => Ok(Node::new_unary("addr", self.shift().cast()?, self.tok())),
+            Some("~") => Ok(Node::new_unary("bitnot", self.shift().cast()?, self.tok())),
             Some("!") => Ok(Node::new_bin(
                 BinOp::_Eq,
                 self.shift().cast()?,

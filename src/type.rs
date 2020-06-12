@@ -162,4 +162,13 @@ impl Type {
             _ => unimplemented!(),
         }
     }
+    pub fn cast_int(&self) -> Self {
+        match self {
+            Type::TyBool | Type::TyChar | Type::TyShort | Type::TyInt | Type::TyEnum { .. } => {
+                Type::TyInt
+            }
+            Type::TyLong => Type::TyLong,
+            _ => unimplemented!(),
+        }
+    }
 }

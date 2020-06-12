@@ -195,6 +195,10 @@ impl CodeGenerator {
                 // TODO: 型エラーの処理
                 load(&node.get_type().get_base().unwrap());
             }
+            NodeKind::BitNot(node) => {
+                self.gen_expr(node)?;
+                println!("  pop rax\n  not rax\n  push rax");
+            }
             NodeKind::Assign { lhs, rhs, .. } => {
                 self.gen_addr(lhs)?;
                 self.gen_expr(rhs)?;
@@ -450,6 +454,10 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
         NodeKind::Num { val } => s += &format!("{} [label=\"num {}\"];\n", nodename, val),
         NodeKind::Cast(expr) => {
             s += &format!("{} [label=\"cast {:?}\"];\n", nodename, node.ty);
+            s += &graph_gen(expr, &nodename, 0, None);
+        }
+        NodeKind::BitNot(expr) => {
+            s += &format!("{} [label=\"bitnot {:?}\"];\n", nodename, node.ty);
             s += &graph_gen(expr, &nodename, 0, None);
         }
         NodeKind::Var { var } => s += &format!("{} [label=\"{:?}\"];\n", nodename, var),

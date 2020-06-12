@@ -461,6 +461,10 @@ int main() {
   assert(0, !(long)3, "!(long)3");
   assert(4, sizeof(!(char)0), "sizeof(!(char)0)");
   assert(4, sizeof(!(long)0), "sizeof(!(long)0)");
+  assert(-1, ~0, "~0");
+  assert(0, ~-1, "~-1");
+  assert(-2, ({short x=1; ~x; }), "({short x=1; ~x; })");
+  assert(-1, ({enum {A, B}; ~A;}), "({enum {A, B}; ~A;})");
 
   printf("OK\n");
   return 0;
