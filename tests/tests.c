@@ -421,6 +421,7 @@ int main() {
   assert(3, ({ int i=2; ++i; }), "({ int i=2; ++i; })");
   assert(11, ({ int a[3]; a[0]=0; a[1]=10; a[2]=20; int *p=a+1; ++*p; }), "({ int a[3]; a[0]=0; a[1]=10; a[2]=20; int *p=a+1; ++*p; })");
   assert(9, ({ int a[3]; a[0]=-1; a[1]=10; a[2]=2; int *p=a+1; --*p; }), "({ int a[3]; a[0]=-1; a[1]=1; a[2]=2; int *p=a+1; --*p; })");
+  assert(3, ({ int x=2, y=3, z=5, *p=&x; *(++p); }), "({ int i=2; ++i; })");
 
   printf("OK\n");
   return 0;
