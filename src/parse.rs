@@ -193,7 +193,10 @@ impl Node {
             ty: match t {
                 "return" | "expr_stmt" => None,
                 "addr" => node.ty.clone().map(|t| t.to_ptr()),
-                "deref" => node.ty.clone().map(|t| t.get_base().unwrap()),
+                "deref" => node.ty.clone().map(|t| {
+                    t.get_base()
+                        .unwrap_or_else(|_| panic!("deref failed! at:{:?}", tok))
+                }),
                 _ => unimplemented!(),
             },
             kind: match t {
@@ -1438,7 +1441,7 @@ impl Parser<'_> {
         };
         Ok(Node::new_member_access(node, mem, self.tok()))
     }
-    /// postfix = primary ("[" expr "]" | "." ident  | "->" ident)*
+    /// postfix = primary ("[" expr "]" | "." ident  | "->" ident | "++" | "--")*
     fn postfix(&mut self) -> Result<Node, ParseError> {
         let mut node = self.primary()?;
         loop {
@@ -1456,10 +1459,32 @@ impl Parser<'_> {
             } else if self.consume("->") {
                 node = Node::new_unary("deref", node, self.tok());
                 node = self.struct_ref(node)?;
+            } else if self.consume("++") {
+                node = self.new_inc_dec(node, "+");
+            } else if self.consume("--") {
+                node = self.new_inc_dec(node, "-");
             } else {
                 return Ok(node);
             }
         }
+    }
+    /// A++ は (tmp = &A, *tmp = *tmp + 1, *tmp - 1) になる
+    /// ++Aと違って、A+=1としたあと、A-1という単なる値が返ることに注意
+    fn new_inc_dec(&mut self, node: Node, op: &str) -> Node {
+        let tmp = self.add_var("", node.get_type().clone().to_ptr());
+        let tmp_node = || Node::new_var(tmp.clone(), None);
+        let tmp_deref = || Node::new_unary("deref", tmp_node(), None);
+        let n1 = Node::new_assign(tmp_node(), Node::new_unary("addr", node, None), None);
+        let n2: Node;
+        let n3: Node;
+        if op == "+" {
+            n2 = self.to_assign(Node::new_add(tmp_deref(), Node::new_num(1, None), None));
+            n3 = Node::new_sub(tmp_deref(), Node::new_num(1, None), None);
+        } else {
+            n2 = self.to_assign(Node::new_sub(tmp_deref(), Node::new_num(1, None), None));
+            n3 = Node::new_add(tmp_deref(), Node::new_num(1, None), None);
+        }
+        Node::new_comma(n1, Node::new_comma(n2, n3, None), self.tok())
     }
     fn primary(&mut self) -> Result<Node, ParseError> {
         if self.consume("(") {
