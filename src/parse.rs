@@ -149,6 +149,11 @@ pub struct Node {
     pub ty: Option<Type>,
     pub tok: Option<Token>,
 }
+impl fmt::Debug for Node {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "kind:({:?}) type:({:?})", self.kind, self.ty)
+    }
+}
 impl Node {
     pub fn get_type(&self) -> &Type {
         match &self.ty {
@@ -265,6 +270,7 @@ impl Node {
                 BinOp::Sub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => {
                     Some(Type::TyInt)
                 } // ポインタ同士の引き算はint
+                BinOp::_Eq | BinOp::Neq | BinOp::Le | BinOp::Lt => Some(Type::TyInt), // 論理演算の結果はint?
                 _ => Some(lhs.get_type().clone()),
             },
             kind: NodeKind::Bin {
@@ -1380,7 +1386,7 @@ impl Parser<'_> {
         }
         self.unary()
     }
-    /// unary = ("+" | "-" | "*" | "&") cast
+    /// unary = ("+" | "-" | "*" | "&" | "!") cast
     ///         | ("++" | "--") unary
     ///         | postfix
     fn unary(&mut self) -> Result<Node, ParseError> {
@@ -1397,6 +1403,12 @@ impl Parser<'_> {
                 self.check_deref(addr)
             }
             Some("&") => Ok(Node::new_unary("addr", self.shift().cast()?, self.tok())),
+            Some("!") => Ok(Node::new_bin(
+                BinOp::_Eq,
+                self.shift().cast()?,
+                Node::new_num(0, None),
+                self.tok(),
+            )),
             Some("++") => {
                 // ++i => i+=1
                 let cast = self.shift().cast()?;
