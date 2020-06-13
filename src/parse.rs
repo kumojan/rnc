@@ -39,6 +39,9 @@ pub enum BinOp {
     Neq,
     Lt,
     Le,
+    Or,
+    And,
+    Xor,
 }
 impl fmt::Debug for BinOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -52,6 +55,9 @@ impl fmt::Debug for BinOp {
             BinOp::Neq => write!(f, "!="),
             BinOp::Lt => write!(f, "<"),
             BinOp::Le => write!(f, "<="),
+            BinOp::Or => write!(f, "|"),
+            BinOp::And => write!(f, "&"),
+            BinOp::Xor => write!(f, "^"),
         }
     }
 }
@@ -515,7 +521,10 @@ impl VarScope {
 ///     | "while" "(" expr ")" stmt
 ///     | "for" "(" expr? ";" | vardef )  expr? ";" expr? ")" stmt  // vardefはセミコロンまで含む
 /// expr = assign ("," expr )?   // exprはassignをコンマで連結している
-/// assign = equality ("=" assign)?  // assignでは括弧()の中以外ではコンマは出てこない
+/// assign = bitor (assign-op assign)?  // assignでは括弧()の中以外ではコンマは出てこない    
+/// bitor = bitxor ("|" bitxor)*
+/// bitxor = bitand ("^" bitand)*
+/// bitand = equality ("&" equality)*
 /// equality = relational (("==" | "!=") relational)*
 /// relational = add (("<" | "<=" | ">" | ">=") add)*
 /// add = mul (("+" | "-") mul)*
@@ -1257,6 +1266,8 @@ impl Parser<'_> {
         };
         Ok(node)
     }
+    /// expr = assign ("," expr )?   
+    /// exprはassignをコンマで連結している
     fn expr(&mut self) -> Result<Node, ParseError> {
         let mut node = self.assign()?;
         if self.consume(",") {
@@ -1264,8 +1275,11 @@ impl Parser<'_> {
         }
         Ok(node)
     }
+    /// assign = bitor (assign-op assign)?
+    /// assignでは丸括弧の中以外ではコンマは出てこない
+    /// assgin-op = "=", "+=", "-=", "*=", "/=", "%=", "|=", "&=", "^="
     fn assign(&mut self) -> Result<Node, ParseError> {
-        let node = self.equality()?;
+        let node = self.bitor()?;
         let binop: Node;
         macro_rules! to_assign {
             ($binop:expr) => {{
@@ -1273,28 +1287,21 @@ impl Parser<'_> {
                 self.to_assign(binop)
             }};
         }
+        macro_rules! to_assign_op {
+            ($op:expr) => {{
+                to_assign!(Node::new_bin($op, node, self.shift().assign()?, self.tok()))
+            }};
+        }
         Ok(match self.peek_reserved().as_deref() {
             Some("=") => Node::new_assign(node, self.shift().assign()?, self.tok()),
             Some("+=") => to_assign!(Node::new_add(node, self.shift().assign()?, self.tok())),
             Some("-=") => to_assign!(Node::new_sub(node, self.shift().assign()?, self.tok())),
-            Some("*=") => to_assign!(Node::new_bin(
-                BinOp::Mul,
-                node,
-                self.shift().assign()?,
-                self.tok()
-            )),
-            Some("/=") => to_assign!(Node::new_bin(
-                BinOp::Div,
-                node,
-                self.shift().assign()?,
-                self.tok()
-            )),
-            Some("%=") => to_assign!(Node::new_bin(
-                BinOp::Mod,
-                node,
-                self.shift().assign()?,
-                self.tok()
-            )),
+            Some("*=") => to_assign_op!(BinOp::Mul),
+            Some("/=") => to_assign_op!(BinOp::Div),
+            Some("%=") => to_assign_op!(BinOp::Mod),
+            Some("|=") => to_assign_op!(BinOp::Or),
+            Some("&=") => to_assign_op!(BinOp::And),
+            Some("^=") => to_assign_op!(BinOp::Xor),
             _ => node,
         })
     }
@@ -1328,6 +1335,30 @@ impl Parser<'_> {
             let msg = format!("line:{:?} at:{}", self.cur_line, self.cur_pos);
             unimplemented!("expected binop! {}", msg)
         }
+    }
+    /// bitor = bitxor ("|" bitxor)*
+    fn bitor(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.bitxor()?;
+        while self.consume("|") {
+            node = Node::new_bin(BinOp::Or, node, self.bitxor()?, self.tok())
+        }
+        Ok(node)
+    }
+    /// bitxor = bitand ("^" bitand)*
+    fn bitxor(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.bitand()?;
+        while self.consume("^") {
+            node = Node::new_bin(BinOp::Xor, node, self.bitand()?, self.tok())
+        }
+        Ok(node)
+    }
+    /// bitand = equality ("&" equality)*
+    fn bitand(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.equality()?;
+        while self.consume("&") {
+            node = Node::new_bin(BinOp::And, node, self.equality()?, self.tok())
+        }
+        Ok(node)
     }
     fn equality(&mut self) -> Result<Node, ParseError> {
         let mut node = self.relational()?;

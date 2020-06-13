@@ -229,7 +229,8 @@ impl Lexer {
         if self.pos < self.code.len() - 1 {
             let s = self.peek_str(2);
             if [
-                "==", "!=", "<=", ">=", "->", "+=", "-=", "*=", "/=", "++", "--", "%=",
+                "==", "!=", "<=", ">=", "->", "+=", "-=", "*=", "/=", "++", "--", "%=", "&=", "|=",
+                "^=",
             ]
             .contains(&&s[..])
             {
@@ -239,7 +240,7 @@ impl Lexer {
         }
         // 1文字読み取り
         let c = self.peek_char(0);
-        if "+-*/(){}<>=;,*&[].\'!~%".find(c).is_some() {
+        if "+-*/(){}<>=;,*&[].\'!~%|^".find(c).is_some() {
             self.pos += 1;
             return Some(c.to_string());
         }
