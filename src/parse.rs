@@ -79,6 +79,8 @@ pub enum NodeKind {
     },
     Cast(Box<Node>),
     BitNot(Box<Node>),
+    LogOr(Box<Node>, Box<Node>),
+    LogAnd(Box<Node>, Box<Node>),
     Assign {
         lhs: Box<Node>,
         rhs: Box<Node>,
@@ -137,6 +139,8 @@ impl fmt::Debug for NodeKind {
             NodeKind::Var { var } => write!(f, "Var {:?}", var),
             NodeKind::Cast(..) => write!(f, "cast"),
             NodeKind::BitNot(node) => write!(f, "bitnot of {:?}", node),
+            NodeKind::LogAnd(lhs, rhs) => write!(f, "[{:?} && {:?}]", lhs, rhs),
+            NodeKind::LogOr(lhs, rhs) => write!(f, "[{:?} || {:?}]", lhs, rhs),
             NodeKind::Return { .. } => write!(f, "return"),
             NodeKind::ExprStmt { .. } => write!(f, "expr stmt"),
             NodeKind::Bin { kind, lhs, rhs } => write!(f, "{:?} {:?} {:?}", lhs, kind, rhs),
@@ -338,6 +342,20 @@ impl Node {
             }
             // 値 - ポインタは意味をなさない
             (false, true) => unimplemented!(),
+        }
+    }
+    fn new_and(lhs: Node, rhs: Node, tok: Option<Token>) -> Self {
+        Self {
+            ty: Some(Type::TyBool),
+            kind: NodeKind::LogAnd(Box::new(lhs), Box::new(rhs)),
+            tok,
+        }
+    }
+    fn new_or(lhs: Node, rhs: Node, tok: Option<Token>) -> Self {
+        Self {
+            ty: Some(Type::TyBool),
+            kind: NodeKind::LogOr(Box::new(lhs), Box::new(rhs)),
+            tok,
         }
     }
     fn new_for(
@@ -1275,11 +1293,11 @@ impl Parser<'_> {
         }
         Ok(node)
     }
-    /// assign = bitor (assign-op assign)?
+    /// assign = logor (assign-op assign)?
     /// assignでは丸括弧の中以外ではコンマは出てこない
     /// assgin-op = "=", "+=", "-=", "*=", "/=", "%=", "|=", "&=", "^="
     fn assign(&mut self) -> Result<Node, ParseError> {
-        let node = self.bitor()?;
+        let node = self.logor()?;
         let binop: Node;
         macro_rules! to_assign {
             ($binop:expr) => {{
@@ -1335,6 +1353,22 @@ impl Parser<'_> {
             let msg = format!("line:{:?} at:{}", self.cur_line, self.cur_pos);
             unimplemented!("expected binop! {}", msg)
         }
+    }
+    /// logor = logand ("&&" logand)*
+    fn logor(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.logand()?;
+        while self.consume("||") {
+            node = Node::new_or(node, self.logand()?, self.tok())
+        }
+        Ok(node)
+    }
+    /// logand = bitor ("&&" bitor)*
+    fn logand(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.bitor()?;
+        while self.consume("&&") {
+            node = Node::new_and(node, self.logand()?, self.tok())
+        }
+        Ok(node)
     }
     /// bitor = bitxor ("|" bitxor)*
     fn bitor(&mut self) -> Result<Node, ParseError> {

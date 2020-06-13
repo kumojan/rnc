@@ -94,6 +94,11 @@ fn cast(ty: &Type) {
 }
 
 impl CodeGenerator {
+    fn new_label(&mut self) -> usize {
+        let label = self.label_count;
+        self.label_count += 1;
+        label
+    }
     fn gen_var_addr(&self, v: &Rc<Var>) {
         // println!("gen lval {:?}", &node);
         // rbpは関数の先頭アドレス
@@ -204,6 +209,40 @@ impl CodeGenerator {
                 self.gen_expr(rhs)?;
                 store(&lhs.get_type()); // どの型に代入するかによってコードが異なる
             }
+            NodeKind::LogAnd(lhs, rhs) => {
+                let label = self.new_label();
+                self.gen_expr(lhs)?;
+                println!("  pop rax");
+                println!("  cmp rax, 0");
+                println!("  je  .L.false.{}", label);
+                self.gen_expr(rhs)?;
+                println!("  pop rax");
+                println!("  cmp rax, 0");
+                println!("  je  .L.false.{}", label);
+                println!("  mov rax, 1");
+                println!("  jmp .L.end.{}", label);
+                println!(".L.false.{}:", label);
+                println!("  mov rax, 0");
+                println!(".L.end.{}:", label);
+                println!("  push rax");
+            }
+            NodeKind::LogOr(lhs, rhs) => {
+                let label = self.new_label();
+                self.gen_expr(lhs)?;
+                println!("  pop rax");
+                println!("  cmp rax, 0");
+                println!("  jne  .L.true.{}", label);
+                self.gen_expr(rhs)?;
+                println!("  pop rax");
+                println!("  cmp rax, 0");
+                println!("  jne  .L.true.{}", label);
+                println!("  mov rax, 0");
+                println!("  jmp .L.end.{}", label);
+                println!(".L.true.{}:", label);
+                println!("  mov rax, 1");
+                println!(".L.end.{}:", label);
+                println!("  push rax");
+            }
             NodeKind::Comma { lhs, rhs } => {
                 self.gen_expr(lhs)?;
                 println!("  pop rax");
@@ -289,8 +328,7 @@ impl CodeGenerator {
                 then_,
                 else_,
             } => {
-                let label = self.label_count;
-                self.label_count += 1;
+                let label = self.new_label();
                 // 左辺を計算して結果をpush
                 self.gen_expr(condi)?;
                 // condi結果取り出し
@@ -317,8 +355,7 @@ impl CodeGenerator {
                 end,
                 loop_,
             } => {
-                let label = self.label_count;
-                self.label_count += 1;
+                let label = self.new_label();
                 if let Some(start) = start {
                     self.gen_stmt(start)?;
                 }
@@ -478,6 +515,16 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
         }
         NodeKind::Comma { lhs, rhs } => {
             s += &format!("{} [label=\"comma\"];\n", nodename);
+            s += &graph_gen(lhs, &nodename, 0, None);
+            s += &graph_gen(rhs, &nodename, 1, None);
+        }
+        NodeKind::LogAnd(lhs, rhs) => {
+            s += &format!("{} [label=\"&&\"];\n", nodename);
+            s += &graph_gen(lhs, &nodename, 0, None);
+            s += &graph_gen(rhs, &nodename, 1, None);
+        }
+        NodeKind::LogOr(lhs, rhs) => {
+            s += &format!("{} [label=\"||\"];\n", nodename);
             s += &graph_gen(lhs, &nodename, 0, None);
             s += &graph_gen(rhs, &nodename, 1, None);
         }
