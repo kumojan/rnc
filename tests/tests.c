@@ -198,6 +198,7 @@ int main() {
   assert(16, sizeof(g2), "sizeof(g2)");
 
   assert(1, ({ char x = 1; x; }), "({ char x=1; x; })");
+  assert(-56, ({ char x = 200; x; }), "({ char x=200; x; })");  // charはsigned扱い。200は-56になる。
   assert(1, ({ char x = 1; char y = 2; x; }), "({ char x=1; char y=2; x; })");
   assert(2, ({ char x = 1; char y = 2; y; }), "({ char x=1; char y=2; y; })");
 
@@ -466,6 +467,11 @@ int main() {
   assert(-2, ({short x=1; ~x; }), "({short x=1; ~x; })");
   assert(-1, ({enum {A, B}; ~A;}), "({enum {A, B}; ~A;})");
 
+  // mod演算子
+  assert(5, 17%6, "17%6");
+  assert(5, ((long)17)%6, "((long)17)%6");
+  assert(2, ({ int i=10; i%=4; i; }), "({ int i=10; i%=4; i; })");
+  assert(2, ({ long i=10; i%=4; i; }), "({ long i=10; i%=4; i; })");
   printf("OK\n");
   return 0;
 }

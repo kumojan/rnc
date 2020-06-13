@@ -242,8 +242,9 @@ impl CodeGenerator {
                     BinOp::Add => "  add rax, rdi",
                     BinOp::Sub => "  sub rax, rdi",
                     BinOp::Mul => "  imul rax, rdi",
-                    BinOp::Div => "  cqo\n  idiv rdi",
-                    BinOp::_Eq => "  cmp rax, rdi\n  sete al\n  movzb rax, al", // 最後のmovzbは、raxの上位56を削除して、下位8ビットにalを入れるということだろう。
+                    BinOp::Div => "  cqo\n  idiv rdi", // cqoにより、raxをrdx:raxに符号拡張する(rdx, raxを連結して一つの128ビット用いる), idivでは(rdx:rax)/rdiを実施し、商をrax, あまりをrdxにいれる
+                    BinOp::Mod => "  cqo\n  idiv rdi\n  mov rax, rdx",
+                    BinOp::_Eq => "  cmp rax, rdi\n  sete al\n  movzb rax, al",
                     BinOp::Neq => "  cmp rax, rdi\n  setne al\n  movzb rax, al",
                     BinOp::Lt => "  cmp rax, rdi\n  setl al\n  movzb rax, al",
                     BinOp::Le => "  cmp rax, rdi\n  setle al\n  movzb rax, al",

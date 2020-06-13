@@ -34,6 +34,7 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Mod,
     _Eq,
     Neq,
     Lt,
@@ -46,6 +47,7 @@ impl fmt::Debug for BinOp {
             BinOp::Sub => write!(f, "-"),
             BinOp::Mul => write!(f, "*"),
             BinOp::Div => write!(f, "/"),
+            BinOp::Mod => write!(f, "%"),
             BinOp::_Eq => write!(f, "=="),
             BinOp::Neq => write!(f, "!="),
             BinOp::Lt => write!(f, "<"),
@@ -131,7 +133,7 @@ impl fmt::Debug for NodeKind {
             NodeKind::BitNot(node) => write!(f, "bitnot of {:?}", node),
             NodeKind::Return { .. } => write!(f, "return"),
             NodeKind::ExprStmt { .. } => write!(f, "expr stmt"),
-            NodeKind::Bin { kind, .. } => write!(f, "Bin {:?}", kind),
+            NodeKind::Bin { kind, lhs, rhs } => write!(f, "{:?} {:?} {:?}", lhs, kind, rhs),
             NodeKind::Assign { .. } => write!(f, "assign"),
             NodeKind::If { .. } => write!(f, "If"),
             NodeKind::For { .. } => write!(f, "for"),
@@ -1287,6 +1289,12 @@ impl Parser<'_> {
                 self.shift().assign()?,
                 self.tok()
             )),
+            Some("%=") => to_assign!(Node::new_bin(
+                BinOp::Mod,
+                node,
+                self.shift().assign()?,
+                self.tok()
+            )),
             _ => node,
         })
     }
@@ -1324,12 +1332,12 @@ impl Parser<'_> {
     fn equality(&mut self) -> Result<Node, ParseError> {
         let mut node = self.relational()?;
         loop {
-            match self.peek_reserved().as_deref() {
+            node = match self.peek_reserved().as_deref() {
                 Some("==") => {
-                    node = Node::new_bin(BinOp::_Eq, node, self.shift().relational()?, self.tok())
+                    Node::new_bin(BinOp::_Eq, node, self.shift().relational()?, self.tok())
                 }
                 Some("!=") => {
-                    node = Node::new_bin(BinOp::Neq, node, self.shift().relational()?, self.tok())
+                    Node::new_bin(BinOp::Neq, node, self.shift().relational()?, self.tok())
                 }
                 _ => return Ok(node),
             }
@@ -1338,15 +1346,11 @@ impl Parser<'_> {
     fn relational(&mut self) -> Result<Node, ParseError> {
         let mut node = self.add()?;
         loop {
-            match self.peek_reserved().as_deref() {
-                Some("<") => node = Node::new_bin(BinOp::Lt, node, self.shift().add()?, self.tok()),
-                Some("<=") => {
-                    node = Node::new_bin(BinOp::Le, node, self.shift().add()?, self.tok())
-                }
-                Some(">") => node = Node::new_bin(BinOp::Lt, self.shift().add()?, node, self.tok()),
-                Some(">=") => {
-                    node = Node::new_bin(BinOp::Le, self.shift().add()?, node, self.tok())
-                }
+            node = match self.peek_reserved().as_deref() {
+                Some("<") => Node::new_bin(BinOp::Lt, node, self.shift().add()?, self.tok()),
+                Some("<=") => Node::new_bin(BinOp::Le, node, self.shift().add()?, self.tok()),
+                Some(">") => Node::new_bin(BinOp::Lt, self.shift().add()?, node, self.tok()),
+                Some(">=") => Node::new_bin(BinOp::Le, self.shift().add()?, node, self.tok()),
                 _ => return Ok(node),
             }
         }
@@ -1354,26 +1358,23 @@ impl Parser<'_> {
     fn add(&mut self) -> Result<Node, ParseError> {
         let mut node = self.mul()?;
         loop {
-            match self.peek_reserved().as_deref() {
-                Some("+") => node = Node::new_add(node, self.shift().mul()?, self.tok()),
-                Some("-") => node = Node::new_sub(node, self.shift().mul()?, self.tok()),
+            node = match self.peek_reserved().as_deref() {
+                Some("+") => Node::new_add(node, self.shift().mul()?, self.tok()),
+                Some("-") => Node::new_sub(node, self.shift().mul()?, self.tok()),
                 _ => return Ok(node),
             }
         }
     }
-    /// mul = cast ("*" cast | "/" cast)*
+    /// mul = cast ("*" cast | "/" cast | "%" cast)*
     fn mul(&mut self) -> Result<Node, ParseError> {
         let mut node = self.cast()?;
         loop {
-            match self.peek_reserved().as_deref() {
-                Some("*") => {
-                    node = Node::new_bin(BinOp::Mul, node, self.shift().cast()?, self.tok())
-                }
-                Some("/") => {
-                    node = Node::new_bin(BinOp::Div, node, self.shift().cast()?, self.tok())
-                }
+            node = match self.peek_reserved().as_deref() {
+                Some("*") => Node::new_bin(BinOp::Mul, node, self.shift().cast()?, self.tok()),
+                Some("/") => Node::new_bin(BinOp::Div, node, self.shift().cast()?, self.tok()),
+                Some("%") => Node::new_bin(BinOp::Mod, node, self.shift().cast()?, self.tok()),
                 _ => return Ok(node),
-            }
+            };
         }
     }
     /// cast = "(" type-name ")" cast | unary
