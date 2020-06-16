@@ -112,6 +112,7 @@ pub enum NodeKind {
         mem: Member,
     },
     // 文(statement)
+    Break,
     ExprStmt {
         expr: Box<Node>,
     },
@@ -156,6 +157,7 @@ impl fmt::Debug for NodeKind {
             NodeKind::StmtExpr { .. } => write!(f, "stmt expr"),
             NodeKind::Member { obj, .. } => write!(f, "mem of {:?}", obj.kind),
             NodeKind::Comma { .. } => write!(f, "comma"),
+            NodeKind::Break => write!(f, "break"),
         }
     }
 }
@@ -1309,6 +1311,13 @@ impl Parser<'_> {
             Node::new_for(start, condi, end, loop_, self.tok())
         } else if self.consume("return") {
             Node::new_unary("return", read_until(self, ";")?, self.tok())
+        } else if self.consume("break") {
+            self.expect(";")?;
+            Node {
+                kind: NodeKind::Break,
+                ty: None,
+                tok: self.tok(),
+            }
         } else {
             Node::new_expr_stmt(read_until(self, ";")?, self.tok())
         };
