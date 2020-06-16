@@ -32,7 +32,7 @@ pub enum Type {
     TyPtr(Box<Type>),
     TyArray {
         base: Box<Type>,
-        len: usize,
+        len: Option<usize>,
     },
     TyStruct {
         mems: Box<Vec<Member>>,
@@ -58,7 +58,7 @@ impl fmt::Debug for Type {
             Type::TyInt => write!(f, "int"),
             Type::TyLong => write!(f, "long"),
             Type::TyPtr(ty) => write!(f, "*{:?}", ty),
-            Type::TyArray { base, len } => write!(f, "[{}]{:?}", len, base),
+            Type::TyArray { base, len } => write!(f, "[{:?}]{:?}", len, base),
             Type::TyStruct { .. } => write!(f, "struct"),
             Type::TyEnum { .. } => write!(f, "enum"),
             Type::TyFunc { .. } => write!(f, "func"),
@@ -102,7 +102,13 @@ impl Type {
     pub fn to_ptr(self) -> Self {
         Type::TyPtr(Box::new(self))
     }
-    pub fn to_array(self, len: usize) -> Self {
+    pub fn to_complete_array(self, len: usize) -> Self {
+        Type::TyArray {
+            len: Some(len),
+            base: Box::new(self),
+        }
+    }
+    pub fn to_array(self, len: Option<usize>) -> Self {
         Type::TyArray {
             len,
             base: Box::new(self),
@@ -143,7 +149,7 @@ impl Type {
             Type::TyInt => 4,
             Type::TyEnum { .. } => 4,
             Type::TyLong | Type::TyPtr(..) => 8,
-            Type::TyArray { base, len } => base.size() * len,
+            Type::TyArray { base, len } => base.size() * len.unwrap(),
             Type::TyStruct { size, .. } => *size,
             _ => unimplemented!(),
         }

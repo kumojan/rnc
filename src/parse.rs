@@ -464,7 +464,7 @@ pub struct Parser<'a> {
 
 enum PtrDim {
     Ptr(usize),
-    Dim(usize),
+    Dim(Option<usize>),
 }
 #[derive(Debug)]
 enum VarScope {
@@ -990,10 +990,10 @@ impl Parser<'_> {
     fn add_string_literal(&mut self, data: CString) -> Node {
         let n = Node {
             kind: NodeKind::Literal {
-                ty: Type::TyChar.to_array(data.0.len() + 1), // string末尾の'\0'も大きさに含める
+                ty: Type::TyChar.to_complete_array(data.0.len() + 1), // string末尾の'\0'も大きさに含める
                 id: self.string_literals.len(),
             },
-            ty: Some(Type::TyChar.to_array(data.0.len() + 1)),
+            ty: Some(Type::TyChar.to_complete_array(data.0.len() + 1)),
             tok: self.tok(),
         };
         self.string_literals.push(data);
@@ -1140,7 +1140,7 @@ impl Parser<'_> {
         // read array dimension
         let mut dims = Vec::new();
         while self.consume("[") {
-            dims.push(PtrDim::Dim(self.expect_num()?));
+            dims.push(PtrDim::Dim(self.consume_num()));
             self.expect("]")?;
         }
         v.extend(dims.into_iter().rev());
