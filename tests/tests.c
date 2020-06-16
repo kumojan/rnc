@@ -486,7 +486,6 @@ int main() {
   assert(2, ({ int i=6; i&=3; i; }), "({ int i=6; i&=3; i; })");
   assert(7, ({ int i=6; i|=3; i; }), "({ int i=6; i|=3; i; })");
   assert(10, ({ int i=15; i^=5; i; }), "({ int i=15; i^=5; i; })");
-  printf("OK\n");
 
   // 論理and, or
   assert(1, 0||1, "0||1");
@@ -496,5 +495,6 @@ int main() {
   assert(0, 0&&1, "0&&1");
   assert(0, (2-2)&&5, "(2-2)&&5");
   assert(1, 1&&5, "1&&5");
+  printf("OK\n");
   return 0;
 }

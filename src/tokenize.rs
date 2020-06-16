@@ -9,29 +9,20 @@ use std::fmt;
 /// トークン列に分けていく
 /// エラーメッセージとしては、予期せぬ記号のみ
 ///
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum TokenKind {
     TkReserved(String),
     TkIdent(String),
-    TkString(Vec<u8>),
+    TkString(CString),
     TkNum(usize),
     TkChar(u8),
     TkEOF,
 }
-impl fmt::Debug for TokenKind {
+#[derive(Clone, PartialEq)]
+pub struct CString(pub Vec<u8>); // Vec<u8>のエイリアス
+impl fmt::Debug for CString {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::TkString(v) => write!(
-                f,
-                "TkString \"{}\"",
-                String::from_utf8_lossy(v).escape_debug()
-            ), // これ以外はderiveして欲しいのだが...
-            Self::TkChar(c) => write!(f, "TkChar \"{}\"", String::from_utf8_lossy(&[*c])),
-            Self::TkReserved(s) => write!(f, "TkReserved \"{}\"", s),
-            Self::TkIdent(s) => write!(f, "TkIdent \"{}\"", s),
-            Self::TkNum(n) => write!(f, "TkNum({})", n),
-            Self::TkEOF => write!(f, "TkEOF"),
-        }
+        write!(f, "{}", String::from_utf8_lossy(&self.0).escape_debug())
     }
 }
 impl Default for TokenKind {
@@ -77,7 +68,7 @@ impl Token {
     }
     fn new_string(s: Vec<u8>, pos: usize, len: usize) -> Self {
         Self {
-            kind: TkString(s),
+            kind: TkString(CString(s)),
             pos,
             len,
             ..Default::default()
@@ -101,7 +92,6 @@ pub struct TokenizeError {
     pub msg: String,
     pub pos: usize,
 }
-// このformaterを書き換えてcodeを挿入したら、自動でメッセージ出力できそうな気がする。無理か...。
 impl fmt::Display for TokenizeError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "invalid token at {}", self.pos)
@@ -136,15 +126,15 @@ impl Lexer {
             pos: 0,
         }
     }
-    fn check_res_word(&self, s: &String, l: usize) -> bool {
+    fn check_res_word(&self, s: &str, l: usize) -> bool {
         !is_alnum(&self.peek_char(l))
             && match l {
-                2 => ["if"].contains(&&s[..]),
-                3 => ["for", "int"].contains(&&s[..]),
-                4 => ["else", "char", "long", "void", "enum"].contains(&&s[..]),
-                5 => ["while", "union", "short", "_Bool"].contains(&&s[..]),
-                6 => ["return", "sizeof", "struct", "static"].contains(&&s[..]),
-                7 => ["typedef"].contains(&&s[..]),
+                2 => ["if"].contains(&s),
+                3 => ["for", "int"].contains(&s),
+                4 => ["else", "char", "long", "void", "enum"].contains(&s),
+                5 => ["while", "union", "short", "_Bool"].contains(&s),
+                6 => ["return", "sizeof", "struct", "static"].contains(&s),
+                7 => ["typedef"].contains(&s),
                 _ => unimplemented!(),
             }
     }
@@ -156,6 +146,7 @@ impl Lexer {
         self.pos += 1;
         c
     }
+    /// 現在位置からn文字目の文字を読み取る
     fn peek_char(&self, n: usize) -> char {
         self.code[self.pos + n]
     }
@@ -171,45 +162,36 @@ impl Lexer {
             false
         }
     }
+    /// 読み取ったらSome(number), 読み取らなければNone
     fn read_num(&mut self) -> Result<Option<usize>, TokenizeError> {
-        let mut base = 0;
-        if self.pos < self.code.len() - 1 {
-            base = match &self.peek_str(2)[..] {
-                "0b" | "0B" => 2,
-                "0x" | "0X" => 16,
-                _ => 0,
-            };
-        }
-        if base != 0 {
+        let base = match self.peek_char(0) {
+            '0' => match self.peek_char(1) {
+                'b' | 'B' => 2,
+                'x' | 'X' => 16,
+                _ => 8,
+            },
+            '1'..='9' => 10,
+            _ => return Ok(None),
+        };
+        if base == 2 || base == 16 {
             self.pos += 2;
-        } else {
-            if self.peek_char(0) == '0' {
-                self.pos += 1;
-                base = 8;
-            } else if ('1'..='9').contains(&self.peek_char(0)) {
-                base = 10;
-            }
         }
-        if base > 0 {
-            let n: String = self.code[self.pos..]
-                .iter()
-                .take_while(|c| {
-                    ('a'..='z').contains(c) || ('A'..='Z').contains(c) || ('0'..='9').contains(c)
-                })
-                .collect();
-            let num = if n.len() > 0 {
-                self.pos += n.len();
-                usize::from_str_radix(&n, base).ok() // ここでNoneならerror
-            } else if base == 8 {
-                Some(0)
-            } else {
-                None // error
-            };
-            num.ok_or(TokenizeError::new("invalid digit", self.pos))
-                .map(|num| Some(num))
+        let n: String = self.code[self.pos..]
+            .iter()
+            .take_while(|c| {
+                ('a'..='z').contains(c) || ('A'..='Z').contains(c) || ('0'..='9').contains(c)
+            })
+            .collect();
+        if n.len() > 0 {
+            self.pos += n.len();
+            usize::from_str_radix(&n, base).map(Some).ok() // errorはNoneになる
         } else {
-            Ok(None)
+            None // error
         }
+        .ok_or(TokenizeError::new(
+            &format!("expected number of base {}", base),
+            self.pos,
+        ))
     }
     fn read_ident(&mut self) -> Option<String> {
         let s: String = self.code[self.pos..]
@@ -289,7 +271,7 @@ impl Lexer {
                 ))?;
             }
             let mut c = c[0];
-            if c == 92 {
+            if c as char == '\\' {
                 c = self.read_escape_char()?;
             }
             if self.consume() != '\'' {

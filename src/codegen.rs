@@ -1,5 +1,6 @@
 use crate::parse::{BinOp, Function, Node, NodeKind, Var};
 use crate::r#type::Type;
+use crate::tokenize::CString;
 use crate::util::*;
 use std::rc::Rc;
 
@@ -386,7 +387,7 @@ impl CodeGenerator {
 pub fn code_gen(
     program: Vec<Function>,
     globals: Vec<Rc<Var>>,
-    string_literals: Vec<Vec<u8>>,
+    string_literals: Vec<CString>,
 ) -> Result<(), CodeGenError> {
     let mut cg = CodeGenerator::default();
     println!(".intel_syntax noprefix");
@@ -401,7 +402,7 @@ pub fn code_gen(
     }
     for (i, s) in string_literals.iter().enumerate() {
         println!(".L.data.{}:", i);
-        for c in s {
+        for c in &s.0 {
             println!("  .byte {}", c);
         }
         println!("  .byte 0");

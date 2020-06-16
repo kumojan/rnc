@@ -453,7 +453,7 @@ pub struct Parser<'a> {
     tklist: VecDeque<Token>,
     locals: Vec<Rc<Var>>, // Node::Varと共有する。
     globals: Vec<VarScope>,
-    string_literals: Vec<Vec<u8>>,
+    string_literals: Vec<CString>,
     var_scopes: Vec<Vec<VarScope>>, // 後方に内側のスコープがある(読むときはrevする)
     tag_scopes: VecDeque<VecDeque<(String, Type)>>, // 前方に内側のスコープがある
     cur_tok: Option<Token>,
@@ -649,7 +649,7 @@ impl Parser<'_> {
             None
         }
     }
-    fn consume_string(&mut self) -> Option<Vec<u8>> {
+    fn consume_string(&mut self) -> Option<CString> {
         if let TokenKind::TkString(ref s) = self.head_kind() {
             let s = s.clone();
             self.shift();
@@ -987,20 +987,20 @@ impl Parser<'_> {
             Ok(())
         }
     }
-    fn add_string_literal(&mut self, data: Vec<u8>) -> Node {
+    fn add_string_literal(&mut self, data: CString) -> Node {
         let n = Node {
             kind: NodeKind::Literal {
-                ty: Type::TyChar.to_array(data.len() + 1), // string末尾の'\0'も大きさに含める
+                ty: Type::TyChar.to_array(data.0.len() + 1), // string末尾の'\0'も大きさに含める
                 id: self.string_literals.len(),
             },
-            ty: Some(Type::TyChar.to_array(data.len() + 1)),
+            ty: Some(Type::TyChar.to_array(data.0.len() + 1)),
             tok: self.tok(),
         };
         self.string_literals.push(data);
         n
     }
     // コード生成
-    pub fn program(mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<Vec<u8>>), ParseError> {
+    pub fn program(mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<CString>), ParseError> {
         let mut code = vec![];
         while !self.is_eof() {
             if self.consume("typedef") {
