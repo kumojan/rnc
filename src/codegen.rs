@@ -74,6 +74,7 @@ fn store(ty: &Type) {
 }
 fn cast(ty: &Type) {
     if ty == &Type::TyVoid || ty.size() == 8 {
+        // 配列をポインタにキャストするときは何もしない
         return;
     }
     if ty == &Type::TyBool {

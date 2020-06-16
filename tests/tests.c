@@ -64,6 +64,8 @@ int _add(int a, int b) { return a + 2 * b; }
 _Bool bool_fn_add(_Bool x) { return x + 1; }
 _Bool bool_fn_sub(_Bool x) { return x - 1; }
 
+ int param_decay(int x[]) { return x[0]; }
+
 int main() {
   // 二項演算
   assert(0, 0, "0");
@@ -499,6 +501,10 @@ int main() {
   // 不完全配列へのポインタ
   assert(8, sizeof(int(*)[10]), "sizeof(int(*)[10])");
   assert(8, sizeof(int(*)[][10]), "sizeof(int(*)[][10])");
+
+  // 引数の配列型はポインタにする
+  assert(3, ({ int x[2]; x[0]=3; param_decay(x); }), "({ int x[2]; x[0]=3; param_decay(x); })");  
+  assert(5, ({ int x[2]; x[0]=3; x[1]=5; param_decay(x+1); }), "({ int x[2]; x[0]=3; x[1]=5; param_decay(x+1); })");
   printf("OK\n");
   return 0;
 }

@@ -1032,7 +1032,10 @@ impl Parser<'_> {
             loop {
                 // TODO: 関数の引数では配列は本当には配列にならない
                 let ty = self.typespec()?;
-                let (name, ty) = self.declarator(ty)?;
+                let (name, mut ty) = self.declarator(ty)?;
+                if let Type::TyArray { base, .. } = ty {
+                    ty = base.to_ptr();
+                }
                 self.add_var(&name, ty);
                 if !self.consume(",") {
                     break; // 宣言終了
