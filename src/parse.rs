@@ -114,6 +114,8 @@ pub enum NodeKind {
     // 文(statement)
     Break,
     Continue,
+    Goto(String),
+    Label(String, Box<Node>),
     ExprStmt {
         expr: Box<Node>,
     },
@@ -160,6 +162,8 @@ impl fmt::Debug for NodeKind {
             NodeKind::Comma { .. } => write!(f, "comma"),
             NodeKind::Break => write!(f, "break"),
             NodeKind::Continue => write!(f, "continue"),
+            NodeKind::Goto(..) => write!(f, "goto"),
+            NodeKind::Label(..) => write!(f, "label"),
         }
     }
 }
@@ -539,7 +543,10 @@ impl VarScope {
 /// array_init = "{" num ("," num)?"}"
 /// stmt = expr ";"  // expression statement (値を残さない)
 ///     | "return" expr ";"  
+///     | "break" ";"
 ///     | "{" compound_stmt "}"
+///     | "goto" ident ";"
+///     | ident ":" stmt
 ///     | "if" "(" expr ")" stmt ( "else" stmt )?
 ///     | "while" "(" expr ")" stmt
 ///     | "for" "(" expr? ";" | vardef )  expr? ";" expr? ")" stmt  // vardefはセミコロンまで含む
@@ -1326,6 +1333,25 @@ impl Parser<'_> {
                 kind: NodeKind::Continue,
                 ty: None,
                 tok: self.tok(),
+            }
+        } else if self.consume("goto") {
+            let label = self.expect_ident()?;
+            self.expect(";")?;
+            Node {
+                kind: NodeKind::Goto(label),
+                ty: None,
+                tok: self.tok(),
+            }
+        } else if self.peek_ident().is_some()
+            && self.tklist[1].kind == TokenKind::TkReserved(":".to_owned())
+        {
+            let label = self.expect_ident()?;
+            let tok = self.tok();
+            self.expect(":")?;
+            Node {
+                kind: NodeKind::Label(label, Box::new(self.stmt()?)),
+                ty: None,
+                tok,
             }
         } else {
             Node::new_expr_stmt(read_until(self, ";")?, self.tok())

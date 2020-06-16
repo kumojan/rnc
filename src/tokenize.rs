@@ -131,7 +131,7 @@ impl Lexer {
             && match l {
                 2 => ["if"].contains(&s),
                 3 => ["for", "int"].contains(&s),
-                4 => ["else", "char", "long", "void", "enum"].contains(&s),
+                4 => ["else", "char", "long", "void", "enum", "goto"].contains(&s),
                 5 => ["while", "union", "short", "_Bool", "break"].contains(&s),
                 6 => ["return", "sizeof", "struct", "static"].contains(&s),
                 7 => ["typedef"].contains(&s),
@@ -223,7 +223,7 @@ impl Lexer {
         }
         // 1文字読み取り
         let c = self.peek_char(0);
-        if "+-*/(){}<>=;,*&[].\'!~%|^".find(c).is_some() {
+        if "+-*/(){}<>=;,*&[].\'!~%|^:".find(c).is_some() {
             self.pos += 1;
             return Some(c.to_string());
         }

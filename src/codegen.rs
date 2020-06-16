@@ -402,6 +402,13 @@ impl CodeGenerator {
                     });
                 }
             }
+            NodeKind::Goto(label) => {
+                println!("  jmp .L.label.{}.{}", self.func_name, label);
+            }
+            NodeKind::Label(label, stmt) => {
+                println!(".L.label.{}.{}:", self.func_name, label);
+                self.gen_stmt(stmt)?;
+            }
             _ => {
                 return Err(CodeGenError {
                     pos: self.pos,
@@ -621,6 +628,7 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
         NodeKind::Member { obj, .. } => {
             s += &graph_gen(obj, &nodename, 0, None);
         }
+        _ => unimplemented!(),
     }
     s
 }
