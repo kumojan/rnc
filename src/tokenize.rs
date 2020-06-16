@@ -135,6 +135,7 @@ impl Lexer {
                 5 => ["while", "union", "short", "_Bool", "break"].contains(&s),
                 6 => ["return", "sizeof", "struct", "static"].contains(&s),
                 7 => ["typedef"].contains(&s),
+                8 => ["continue"].contains(&s),
                 _ => unimplemented!(),
             }
     }
@@ -229,7 +230,7 @@ impl Lexer {
         None
     }
     fn read_word(&mut self) -> Option<String> {
-        for l in &[2, 3, 4, 5, 6, 7] {
+        for l in &[2, 3, 4, 5, 6, 7, 8] {
             if self.pos + l < self.code.len() {
                 let s = self.peek_str(*l);
                 if self.check_res_word(&s, *l) {

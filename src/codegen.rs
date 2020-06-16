@@ -28,6 +28,7 @@ pub struct CodeGenError {
 struct CodeGenerator {
     label_count: usize,
     break_label: Vec<usize>,
+    continue_label: Vec<usize>,
     func_name: String,
     var_offsets: Vec<usize>,
     func_stack_size: usize,
@@ -360,6 +361,7 @@ impl CodeGenerator {
             } => {
                 let label = self.new_label();
                 self.break_label.push(label);
+                self.continue_label.push(label);
                 if let Some(start) = start {
                     self.gen_stmt(start)?;
                 }
@@ -371,12 +373,14 @@ impl CodeGenerator {
                     println!("  je .L.break.{}", label);
                 }
                 self.gen_stmt(loop_)?;
+                println!(".L.continue.{}:", label); // インクリメント(end)の手前まですすむ
                 if let Some(end) = end {
                     self.gen_stmt(end)?;
                 }
                 println!("  jmp .L.begin.{}", label);
                 println!(".L.break.{}:", label);
                 self.break_label.pop();
+                self.continue_label.pop();
             }
             NodeKind::Break => {
                 if let Some(label) = self.break_label.last() {
@@ -385,6 +389,16 @@ impl CodeGenerator {
                     return Err(CodeGenError {
                         pos: self.pos,
                         msg: "stray break".to_owned(),
+                    });
+                }
+            }
+            NodeKind::Continue => {
+                if let Some(label) = self.continue_label.last() {
+                    println!("  jmp .L.continue.{}", label);
+                } else {
+                    return Err(CodeGenError {
+                        pos: self.pos,
+                        msg: "stray continue".to_owned(),
                     });
                 }
             }
@@ -509,6 +523,7 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
     match &node.kind {
         NodeKind::Num { val } => s += &format!("{} [label=\"num {}\"];\n", nodename, val),
         NodeKind::Break => s += &format!("{} [label=\"break\"];\n", nodename),
+        NodeKind::Continue => s += &format!("{} [label=\"continue\"];\n", nodename),
         NodeKind::Cast(expr) => {
             s += &format!("{} [label=\"cast {:?}\"];\n", nodename, node.ty);
             s += &graph_gen(expr, &nodename, 0, None);

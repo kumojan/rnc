@@ -113,6 +113,7 @@ pub enum NodeKind {
     },
     // 文(statement)
     Break,
+    Continue,
     ExprStmt {
         expr: Box<Node>,
     },
@@ -158,6 +159,7 @@ impl fmt::Debug for NodeKind {
             NodeKind::Member { obj, .. } => write!(f, "mem of {:?}", obj.kind),
             NodeKind::Comma { .. } => write!(f, "comma"),
             NodeKind::Break => write!(f, "break"),
+            NodeKind::Continue => write!(f, "continue"),
         }
     }
 }
@@ -1315,6 +1317,13 @@ impl Parser<'_> {
             self.expect(";")?;
             Node {
                 kind: NodeKind::Break,
+                ty: None,
+                tok: self.tok(),
+            }
+        } else if self.consume("continue") {
+            self.expect(";")?;
+            Node {
+                kind: NodeKind::Continue,
                 ty: None,
                 tok: self.tok(),
             }
