@@ -1,4 +1,5 @@
 // use crate::parse::ParseError;
+use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 
@@ -7,7 +8,7 @@ pub struct TypeError {
     pub msg: String,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Member {
     pub name: String,
     pub ty: Type,
@@ -47,6 +48,10 @@ pub enum Type {
         arg: Box<Vec<Type>>,
         ret: Box<Type>,
     },
+    IncompleteStruct {
+        tag: Option<String>,
+        resolved_type: Rc<RefCell<Option<Type>>>,
+    },
 }
 impl fmt::Debug for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -59,9 +64,12 @@ impl fmt::Debug for Type {
             Type::TyLong => write!(f, "long"),
             Type::TyPtr(ty) => write!(f, "*{:?}", ty),
             Type::TyArray { base, len } => write!(f, "[{:?}]{:?}", len, base),
-            Type::TyStruct { .. } => write!(f, "struct"),
+            Type::TyStruct { mems, .. } => write!(f, "struct {{{:?}}}", mems),
             Type::TyEnum { .. } => write!(f, "enum"),
             Type::TyFunc { .. } => write!(f, "func"),
+            t @ Type::IncompleteStruct { .. } => {
+                write!(f, "incomplete resolved {:?}", !t.is_incomplete())
+            }
         }
     }
 }
@@ -120,6 +128,15 @@ impl Type {
         }
         self
     }
+    pub fn new_incomplete_struct(
+        tag: Option<String>,
+        to_resolve: Rc<RefCell<Option<Type>>>,
+    ) -> Self {
+        Self::IncompleteStruct {
+            tag,
+            resolved_type: to_resolve,
+        }
+    }
     pub fn new_enum(mems: Vec<EnumMem>) -> Self {
         Self::TyEnum {
             mems: Rc::new(mems),
@@ -151,6 +168,10 @@ impl Type {
             Type::TyLong | Type::TyPtr(..) => 8,
             Type::TyArray { base, len } => base.size() * len.unwrap(),
             Type::TyStruct { size, .. } => *size,
+            Type::IncompleteStruct { resolved_type, .. } => match &*resolved_type.borrow() {
+                Some(Type::TyStruct { size, .. }) => *size,
+                _ => unimplemented!(),
+            },
             _ => unimplemented!(),
         }
     }
@@ -165,6 +186,10 @@ impl Type {
             Type::TyLong | Type::TyPtr(..) => 8,
             Type::TyArray { base, .. } => base.align(),
             Type::TyStruct { align, .. } => *align,
+            Type::IncompleteStruct { resolved_type, .. } => match &*resolved_type.borrow() {
+                Some(Type::TyStruct { align, .. }) => *align,
+                _ => unimplemented!(),
+            },
             _ => unimplemented!(),
         }
     }
@@ -175,6 +200,27 @@ impl Type {
             }
             Type::TyLong => Type::TyLong,
             _ => unimplemented!(),
+        }
+    }
+    pub fn is_incomplete(&self) -> bool {
+        match self {
+            Type::IncompleteStruct { resolved_type, .. } => match &*resolved_type.borrow() {
+                Some(Type::TyStruct { .. }) => false,
+                _ => true,
+            },
+            _ => false,
+        }
+    }
+    pub fn get_struct_mem(&self, name: &str) -> Option<Member> {
+        match self {
+            Type::TyStruct { mems, .. } => mems.iter().filter(|m| m.name == name).next().cloned(),
+            Type::IncompleteStruct { resolved_type, .. } => match &*resolved_type.borrow() {
+                Some(Type::TyStruct { mems, .. }) => {
+                    mems.iter().filter(|m| m.name == name).next().cloned()
+                }
+                _ => None,
+            },
+            _ => None,
         }
     }
 }

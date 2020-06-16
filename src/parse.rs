@@ -1,6 +1,7 @@
 use crate::r#type::*;
 use crate::tokenize::*;
 use crate::util::*;
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::fmt;
 use std::rc::Rc;
@@ -756,8 +757,8 @@ impl Parser<'_> {
         Ok(mems)
     }
     fn struct_decl(&mut self) -> Result<Type, ParseError> {
-        let name = self.consume_ident();
-        if self.consume("{") {
+        let tag = self.consume_ident();
+        let ty = if self.consume("{") {
             let mut mems = self.struct_list()?;
             let mut offset = 0;
             for m in mems.iter_mut() {
@@ -766,25 +767,31 @@ impl Parser<'_> {
                 offset += m.ty.size(); // メンバのサイズだけoffsetをずらす
             }
             let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
-            let ty = Type::TyStruct {
+            Type::TyStruct {
                 mems: Box::new(mems),
                 align,
                 size: align_to(offset, align),
                 is_union: false,
-            };
-            self.add_tag(name, ty.clone());
-            Ok(ty)
-        } else if let Some(name) = name {
-            match self.find_struct_tag(&name) {
-                Some(ty) => Ok(ty),
-                None => Err(self.raise_err("unknown struct tag")),
             }
         } else {
-            Err(self.raise_err("expected identifier"))
+            if let Some(tag) = &tag {
+                // 宣言がない時、タグがあればそこから探す
+                if let Some(ty) = self.find_struct_tag(tag) {
+                    return Ok(ty);
+                }
+            }
+            let r = Rc::new(RefCell::new(None));
+            Type::new_incomplete_struct(tag.clone(), r) // タグがないか、探しても見つからない時
+        };
+        if let Some(tag) = tag {
+            if !self.redefine_tag(&tag, &ty) {
+                self.add_tag(tag, ty.clone())
+            }
         }
+        Ok(ty)
     }
     fn union_decl(&mut self) -> Result<Type, ParseError> {
-        let name = self.consume_ident();
+        let tag = self.consume_ident();
         if self.consume("{") {
             let mems = self.struct_list()?;
             let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
@@ -795,19 +802,19 @@ impl Parser<'_> {
                 size: align_to(size, align),
                 is_union: true,
             };
-            self.add_tag(name, ty.clone());
-            Ok(ty)
-        } else if let Some(name) = name {
-            match self.find_union_tag(&name) {
-                Some(ty) => Ok(ty),
-                None => Err(self.raise_err("unknown union tag")),
+            if let Some(tag) = tag {
+                self.add_tag(tag, ty.clone());
             }
+            Ok(ty)
+        } else if let Some(tag) = tag {
+            self.find_union_tag(&tag)
+                .ok_or(self.raise_err("unknown union tag"))
         } else {
             Err(self.raise_err("expected identifier"))
         }
     }
     fn enum_decl(&mut self) -> Result<Type, ParseError> {
-        let name = self.consume_ident();
+        let tag = self.consume_ident();
         if self.consume("{") {
             let mut val = 0;
             let mut mems = Vec::new();
@@ -827,10 +834,12 @@ impl Parser<'_> {
                 self.add_enum(name.clone(), *val);
             }
             let ty = Type::new_enum(mems);
-            self.add_tag(name, ty.clone());
+            if let Some(tag) = tag {
+                self.add_tag(tag, ty.clone());
+            }
             Ok(ty)
-        } else if let Some(name) = name {
-            match self.find_enum_tag(&name) {
+        } else if let Some(tag) = tag {
+            match self.find_enum_tag(&tag) {
                 Some(ty) => Ok(ty),
                 None => Err(self.raise_err("unknown enum tag")),
             }
@@ -885,8 +894,26 @@ impl Parser<'_> {
             .flat_map(|v| v.get_union(name))
             .next()
     }
-    fn add_tag(&mut self, name: Option<String>, ty: Type) {
-        self.tag_scopes[0].push_front((name.unwrap_or("noname".to_owned()), ty));
+    fn add_tag(&mut self, tag: String, ty: Type) {
+        self.tag_scopes[0].push_front((tag, ty));
+    }
+    //
+    fn redefine_tag(&mut self, name: &String, ty: &Type) -> bool {
+        if ty.is_incomplete() {
+            return false;
+        }
+        // var_scopeにあるtypedefのやつも書き換えたいが、
+        // 現状ではIncempleteStructがresolveされた形になっていて、一応動くのでいいか。
+        for (_name, _ty) in &mut self.tag_scopes[0] {
+            if _name == name {
+                if let Type::IncompleteStruct { resolved_type, .. } = _ty {
+                    *resolved_type.borrow_mut() = Some(ty.clone()); // _tyを捨てる前に、その中の不完全型を解決しておく
+                }
+                *_ty = ty.clone();
+                return true;
+            }
+        }
+        false
     }
     fn find_tag(&self, name: &String) -> Option<Type> {
         self.tag_scopes
@@ -1516,12 +1543,7 @@ impl Parser<'_> {
     /// identを受けて構造体のメンバにアクセスする
     fn struct_ref(&mut self, node: Node) -> Result<Node, ParseError> {
         let name = self.expect_ident()?;
-        let mem = match match node.get_type() {
-            Type::TyStruct { mems, .. } => {
-                mems.clone().into_iter().filter(|m| m.name == name).next()
-            }
-            _ => Err(self.raise_err("not a struct/union!"))?,
-        } {
+        let mem = match node.get_type().get_struct_mem(&name) {
             Some(mem) => mem,
             _ => Err(self.raise_err(&format!("unknown member {}", name)))?,
         };

@@ -505,6 +505,13 @@ int main() {
   // 引数の配列型はポインタにする
   assert(3, ({ int x[2]; x[0]=3; param_decay(x); }), "({ int x[2]; x[0]=3; param_decay(x); })");  
   assert(5, ({ int x[2]; x[0]=3; x[1]=5; param_decay(x+1); }), "({ int x[2]; x[0]=3; x[1]=5; param_decay(x+1); })");
+
+  // 不完全構造体
+  assert(8, ({ struct foo *bar; sizeof(bar); }), "({ struct foo *bar; sizeof(bar); })");
+  assert(4, ({ struct T *foo; struct T {int x;}; sizeof(struct T); }), "({ struct T *foo; struct T {int x;}; sizeof(struct T); })");
+  assert(1, ({ struct T { struct T *next; int x; } a; struct T b; b.x=1; a.next=&b; a.next->x; }), "({ struct T { struct T *next; int x; } a; struct T b; b.x=1; a.next=&b; a.next->x; })");
+ assert(4, ({ typedef struct T T; struct T { int x; }; sizeof(T); }), "({ typedef struct T T; struct T { int x; }; sizeof(T); })");
+
   printf("OK\n");
   return 0;
 }
