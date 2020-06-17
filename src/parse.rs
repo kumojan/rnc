@@ -115,6 +115,11 @@ pub enum NodeKind {
         obj: Box<Node>,
         mem: Member,
     },
+    Conditional {
+        condi: Box<Node>,
+        then_: Box<Node>,
+        else_: Box<Node>,
+    },
     // 文(statement)
     Break,
     Continue,
@@ -179,7 +184,7 @@ impl fmt::Debug for NodeKind {
             NodeKind::Continue => write!(f, "continue"),
             NodeKind::Goto(..) => write!(f, "goto"),
             NodeKind::Label(..) => write!(f, "label"),
-            _ => unimplemented!(),
+            _ => write!(f, "unimplemented"),
         }
     }
 }
@@ -215,10 +220,14 @@ impl Node {
         }
     }
     fn new_cast(ty: Type, expr: Node, tok: Option<Token>) -> Self {
-        Self {
-            kind: NodeKind::Cast(Box::new(expr)),
-            ty: Some(ty),
-            tok,
+        if &ty == expr.get_type() {
+            expr
+        } else {
+            Self {
+                kind: NodeKind::Cast(Box::new(expr)),
+                ty: Some(ty),
+                tok,
+            }
         }
     }
     fn new_if(condi: Node, then_: Node, else_: Option<Node>, tok: Option<Token>) -> Self {
@@ -229,6 +238,24 @@ impl Node {
                 else_: else_.map(Box::new),
             },
             ty: None,
+            tok,
+        }
+    }
+    fn new_conditional(condi: Node, then_: Node, else_: Node, tok: Option<Token>) -> Self {
+        let ty = if then_.get_type() == &Type::TyVoid || else_.get_type() == &Type::TyVoid {
+            Type::TyVoid
+        } else if then_.get_type().size() == 8 || else_.get_type().size() == 8 {
+            Type::TyLong
+        } else {
+            Type::TyInt
+        };
+        Self {
+            kind: NodeKind::Conditional {
+                condi: Box::new(condi),
+                then_: Box::new(Node::new_cast(ty.clone(), then_, None)),
+                else_: Box::new(Node::new_cast(ty.clone(), else_, None)),
+            },
+            ty: Some(ty),
             tok,
         }
     }
@@ -1437,11 +1464,11 @@ impl Parser<'_> {
         }
         Ok(node)
     }
-    /// assign = logor (assign-op assign)?
+    /// assign = conditional (assign-op assign)?
     /// assignでは丸括弧の中以外ではコンマは出てこない
     /// assgin-op = "=", "+=", "-=", "*=", "/=", "%=", "|=", "&=", "^="
     fn assign(&mut self) -> Result<Node, ParseError> {
-        let node = self.logor()?;
+        let node = self.conditional()?;
         let binop: Node;
         macro_rules! to_assign {
             ($binop:expr) => {{
@@ -1499,6 +1526,18 @@ impl Parser<'_> {
             let msg = format!("line:{:?} at:{}", self.cur_line, self.cur_pos);
             unimplemented!("expected binop! {}", msg)
         }
+    }
+    // conditional = logor ("?" expr ":" conditional)?
+    fn conditional(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.logor()?;
+        if self.consume("?") {
+            let tok = self.tok();
+            let then_ = self.expr()?;
+            self.expect(":")?;
+            let else_ = self.conditional()?;
+            node = Node::new_conditional(node, then_, else_, tok);
+        }
+        Ok(node)
     }
     /// logor = logand ("&&" logand)*
     fn logor(&mut self) -> Result<Node, ParseError> {

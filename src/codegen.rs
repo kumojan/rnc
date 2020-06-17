@@ -277,6 +277,22 @@ impl CodeGenerator {
                 self.gen_addr(&node)?;
                 load(&node.get_type())
             }
+            NodeKind::Conditional {
+                condi,
+                then_,
+                else_,
+            } => {
+                self.gen_expr(condi)?;
+                let label = self.new_label();
+                println!("  pop rax");
+                println!("  cmp rax, 0");
+                println!("  je  .L.else.{}", label);
+                self.gen_expr(then_)?;
+                println!("  jmp .L.end.{}", label);
+                println!(".L.else.{}:", label);
+                self.gen_expr(else_)?;
+                println!(".L.end.{}:", label);
+            }
             NodeKind::Bin { kind, lhs, rhs } => {
                 self.gen_expr(lhs)?;
                 self.gen_expr(rhs)?;
