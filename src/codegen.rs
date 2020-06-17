@@ -45,9 +45,9 @@ fn load(ty: &Type) {
     // アドレスを取り出し、値を取得してpushし直す
     println!("  pop rax");
     match ty.size() {
-        1 => println!("  movsx rax, byte ptr [rax]\n"),
-        2 => println!("  movsx rax, word ptr [rax]\n"),
-        4 => println!("  movsx rax, dword ptr [rax]\n"),
+        1 => println!("  movsx rax, byte ptr [rax]"),
+        2 => println!("  movsx rax, word ptr [rax]"),
+        4 => println!("  movsx rax, dword ptr [rax]"),
         _ => println!("  mov rax, [rax]"),
     }
     println!("  push rax");
@@ -280,8 +280,8 @@ impl CodeGenerator {
             NodeKind::Bin { kind, lhs, rhs } => {
                 self.gen_expr(lhs)?;
                 self.gen_expr(rhs)?;
-                println!("  pop rdi");
-                println!("  pop rax");
+                println!("  pop rdi"); // rhs
+                println!("  pop rax"); // lhs
                 let code = match kind {
                     BinOp::Add => "  add rax, rdi",
                     BinOp::Sub => "  sub rax, rdi",
@@ -295,6 +295,8 @@ impl CodeGenerator {
                     BinOp::Neq => "  cmp rax, rdi\n  setne al\n  movzb rax, al",
                     BinOp::Lt => "  cmp rax, rdi\n  setl al\n  movzb rax, al",
                     BinOp::Le => "  cmp rax, rdi\n  setle al\n  movzb rax, al",
+                    BinOp::Shl => "  mov rcx, rdi\nshl rax, cl",
+                    BinOp::Shr => "  mov rcx, rdi\nsar rax, cl",
                 };
                 println!("{}", code);
                 println!("  push rax")

@@ -43,6 +43,8 @@ pub enum BinOp {
     Or,
     And,
     Xor,
+    Shl,
+    Shr,
 }
 impl fmt::Debug for BinOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -59,6 +61,8 @@ impl fmt::Debug for BinOp {
             BinOp::Or => write!(f, "|"),
             BinOp::And => write!(f, "&"),
             BinOp::Xor => write!(f, "^"),
+            BinOp::Shl => write!(f, "<<"),
+            BinOp::Shr => write!(f, ">>"),
         }
     }
 }
@@ -573,7 +577,8 @@ impl VarScope {
 /// bitxor = bitand ("^" bitand)*
 /// bitand = equality ("&" equality)*
 /// equality = relational (("==" | "!=") relational)*
-/// relational = add (("<" | "<=" | ">" | ">=") add)*
+/// relational = shift ("<" shift | "<=" shift | ">" shift | ">=" shift)*
+/// shift = add ("<<" add | ">>" add)*
 /// add = mul (("+" | "-") mul)*
 /// mul = cast ("*" cast | "/" cast)*
 /// cast = "(" type-name ")" cast | unary
@@ -596,7 +601,7 @@ impl Parser<'_> {
     }
     /// トークンを一つ読んで、すすむ
     /// 読んだトークンはcur_tokにいれる
-    fn shift(&mut self) -> &mut Self {
+    fn skip(&mut self) -> &mut Self {
         self.cur_tok = self.tklist.pop_front();
         if self.tklist.len() > 0 {
             let head = &self.tklist[0];
@@ -659,7 +664,7 @@ impl Parser<'_> {
     fn consume(&mut self, s: &str) -> bool {
         match self.head_kind() {
             TokenKind::TkReserved(_s) if _s == s => {
-                self.shift();
+                self.skip();
                 true
             }
             _ => false,
@@ -668,11 +673,11 @@ impl Parser<'_> {
     fn consume_num(&mut self) -> Option<usize> {
         if let TokenKind::TkNum(ref val) = self.head_kind() {
             let val = *val;
-            self.shift();
+            self.skip();
             Some(val)
         } else if let TokenKind::TkChar(ref c) = self.head_kind() {
             let c = *c as usize;
-            self.shift();
+            self.skip();
             Some(c)
         } else {
             None
@@ -681,7 +686,7 @@ impl Parser<'_> {
     fn consume_string(&mut self) -> Option<CString> {
         if let TokenKind::TkString(ref s) = self.head_kind() {
             let s = s.clone();
-            self.shift();
+            self.skip();
             Some(s)
         } else {
             None
@@ -690,7 +695,7 @@ impl Parser<'_> {
     fn consume_ident(&mut self) -> Option<String> {
         if let TokenKind::TkIdent(ref s) = self.head_kind() {
             let s = s.clone();
-            self.shift();
+            self.skip();
             Some(s)
         } else {
             None
@@ -699,7 +704,7 @@ impl Parser<'_> {
     // fn consume_reserved(&mut self) -> Option<String> {
     //     if let TokenKind::TkReserved(ref s) = self.head_kind() {
     //         let s = s.clone();
-    //         self.shift();
+    //         self.skip();
     //         Some(s)
     //     } else {
     //         None
@@ -724,13 +729,13 @@ impl Parser<'_> {
     }
     fn typespec(&mut self) -> Result<Type, ParseError> {
         match self.peek_reserved().as_deref() {
-            Some("struct") => return self.shift().struct_decl(),
-            Some("union") => return self.shift().union_decl(),
-            Some("enum") => return self.shift().enum_decl(),
+            Some("struct") => return self.skip().struct_decl(),
+            Some("union") => return self.skip().union_decl(),
+            Some("enum") => return self.skip().enum_decl(),
             _ => (),
         };
         if let Some(ty) = self.peek_typedef() {
-            self.shift();
+            self.skip();
             return Ok(ty);
         }
         const VOID: usize = 1 << 0;
@@ -741,7 +746,7 @@ impl Parser<'_> {
         const LONG: usize = 1 << 10;
         let mut counter = 0;
         while let Some(ty) = self.peek_base_type().as_deref() {
-            self.shift();
+            self.skip();
             counter += match ty {
                 "void" => VOID,
                 "_Bool" => BOOL,
@@ -1446,19 +1451,21 @@ impl Parser<'_> {
         }
         macro_rules! to_assign_op {
             ($op:expr) => {{
-                to_assign!(Node::new_bin($op, node, self.shift().assign()?, self.tok()))
+                to_assign!(Node::new_bin($op, node, self.skip().assign()?, self.tok()))
             }};
         }
         Ok(match self.peek_reserved().as_deref() {
-            Some("=") => Node::new_assign(node, self.shift().assign()?, self.tok()),
-            Some("+=") => to_assign!(Node::new_add(node, self.shift().assign()?, self.tok())),
-            Some("-=") => to_assign!(Node::new_sub(node, self.shift().assign()?, self.tok())),
+            Some("=") => Node::new_assign(node, self.skip().assign()?, self.tok()),
+            Some("+=") => to_assign!(Node::new_add(node, self.skip().assign()?, self.tok())),
+            Some("-=") => to_assign!(Node::new_sub(node, self.skip().assign()?, self.tok())),
             Some("*=") => to_assign_op!(BinOp::Mul),
             Some("/=") => to_assign_op!(BinOp::Div),
             Some("%=") => to_assign_op!(BinOp::Mod),
             Some("|=") => to_assign_op!(BinOp::Or),
             Some("&=") => to_assign_op!(BinOp::And),
             Some("^=") => to_assign_op!(BinOp::Xor),
+            Some("<<=") => to_assign_op!(BinOp::Shl),
+            Some(">>=") => to_assign_op!(BinOp::Shr),
             _ => node,
         })
     }
@@ -1538,33 +1545,46 @@ impl Parser<'_> {
         loop {
             node = match self.peek_reserved().as_deref() {
                 Some("==") => {
-                    Node::new_bin(BinOp::_Eq, node, self.shift().relational()?, self.tok())
+                    Node::new_bin(BinOp::_Eq, node, self.skip().relational()?, self.tok())
                 }
                 Some("!=") => {
-                    Node::new_bin(BinOp::Neq, node, self.shift().relational()?, self.tok())
+                    Node::new_bin(BinOp::Neq, node, self.skip().relational()?, self.tok())
                 }
                 _ => return Ok(node),
             }
         }
     }
+    /// relational = shift ("<" shift | "<=" shift | ">" shift | ">=" shift)*
     fn relational(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.shift()?;
+        loop {
+            node = match self.peek_reserved().as_deref() {
+                Some("<") => Node::new_bin(BinOp::Lt, node, self.skip().shift()?, self.tok()),
+                Some("<=") => Node::new_bin(BinOp::Le, node, self.skip().shift()?, self.tok()),
+                Some(">") => Node::new_bin(BinOp::Lt, self.skip().shift()?, node, self.tok()),
+                Some(">=") => Node::new_bin(BinOp::Le, self.skip().shift()?, node, self.tok()),
+                _ => return Ok(node),
+            }
+        }
+    }
+    /// shift = add ("<<" add | ">>" add)*
+    fn shift(&mut self) -> Result<Node, ParseError> {
         let mut node = self.add()?;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("<") => Node::new_bin(BinOp::Lt, node, self.shift().add()?, self.tok()),
-                Some("<=") => Node::new_bin(BinOp::Le, node, self.shift().add()?, self.tok()),
-                Some(">") => Node::new_bin(BinOp::Lt, self.shift().add()?, node, self.tok()),
-                Some(">=") => Node::new_bin(BinOp::Le, self.shift().add()?, node, self.tok()),
+                Some("<<") => Node::new_bin(BinOp::Shl, node, self.skip().add()?, self.tok()),
+                Some(">>") => Node::new_bin(BinOp::Shr, node, self.skip().add()?, self.tok()),
                 _ => return Ok(node),
             }
         }
     }
+    /// add = mul ("+" mul | "-" mul)*
     fn add(&mut self) -> Result<Node, ParseError> {
         let mut node = self.mul()?;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("+") => Node::new_add(node, self.shift().mul()?, self.tok()),
-                Some("-") => Node::new_sub(node, self.shift().mul()?, self.tok()),
+                Some("+") => Node::new_add(node, self.skip().mul()?, self.tok()),
+                Some("-") => Node::new_sub(node, self.skip().mul()?, self.tok()),
                 _ => return Ok(node),
             }
         }
@@ -1574,9 +1594,9 @@ impl Parser<'_> {
         let mut node = self.cast()?;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("*") => Node::new_bin(BinOp::Mul, node, self.shift().cast()?, self.tok()),
-                Some("/") => Node::new_bin(BinOp::Div, node, self.shift().cast()?, self.tok()),
-                Some("%") => Node::new_bin(BinOp::Mod, node, self.shift().cast()?, self.tok()),
+                Some("*") => Node::new_bin(BinOp::Mul, node, self.skip().cast()?, self.tok()),
+                Some("/") => Node::new_bin(BinOp::Div, node, self.skip().cast()?, self.tok()),
+                Some("%") => Node::new_bin(BinOp::Mod, node, self.skip().cast()?, self.tok()),
                 _ => return Ok(node),
             };
         }
@@ -1600,34 +1620,34 @@ impl Parser<'_> {
     ///         | postfix
     fn unary(&mut self) -> Result<Node, ParseError> {
         match self.peek_reserved().as_deref() {
-            Some("+") => self.shift().cast(),
+            Some("+") => self.skip().cast(),
             Some("-") => Ok(Node::new_bin(
                 BinOp::Sub,
                 Node::new_num(0, self.tok()),
-                self.shift().cast()?,
+                self.skip().cast()?,
                 self.tok(),
             )),
             Some("*") => {
-                let addr = self.shift().cast()?;
+                let addr = self.skip().cast()?;
                 self.check_deref(addr)
             }
-            Some("&") => Ok(Node::new_unary("addr", self.shift().cast()?, self.tok())),
-            Some("~") => Ok(Node::new_unary("bitnot", self.shift().cast()?, self.tok())),
+            Some("&") => Ok(Node::new_unary("addr", self.skip().cast()?, self.tok())),
+            Some("~") => Ok(Node::new_unary("bitnot", self.skip().cast()?, self.tok())),
             Some("!") => Ok(Node::new_bin(
                 BinOp::_Eq,
-                self.shift().cast()?,
+                self.skip().cast()?,
                 Node::new_num(0, None),
                 self.tok(),
             )),
             Some("++") => {
                 // ++i => i+=1
-                let cast = self.shift().cast()?;
+                let cast = self.skip().cast()?;
                 let tok = self.tok();
                 Ok(self.to_assign(Node::new_add(cast, Node::new_num(1, None), tok)))
             }
             Some("--") => {
                 // --i => i-=1
-                let cast = self.shift().cast()?;
+                let cast = self.skip().cast()?;
                 let tok = self.tok();
                 Ok(self.to_assign(Node::new_sub(cast, Node::new_num(1, None), tok)))
             }

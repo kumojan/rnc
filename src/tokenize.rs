@@ -208,12 +208,20 @@ impl Lexer {
     }
     fn read_punct(&mut self) -> Option<String> {
         // 記号読み取り
+        // 3文字
+        if self.pos < self.code.len() - 2 {
+            let s = self.peek_str(3);
+            if [">>=", "<<="].contains(&&s[..]) {
+                self.pos += 3;
+                return Some(s);
+            }
+        }
         // 2文字
         if self.pos < self.code.len() - 1 {
             let s = self.peek_str(2);
             if [
                 "==", "!=", "<=", ">=", "->", "+=", "-=", "*=", "/=", "++", "--", "%=", "&=", "|=",
-                "^=", "&&", "||",
+                "^=", "&&", "||", "<<", ">>",
             ]
             .contains(&&s[..])
             {
