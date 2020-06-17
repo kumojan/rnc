@@ -136,6 +136,17 @@ pub enum NodeKind {
         end: Option<Box<Node>>,
         loop_: Box<Node>,
     },
+    Switch {
+        condi: Box<Node>,
+        stmt: Box<Node>,
+        cases: Vec<usize>,
+        has_default: bool,
+    },
+    Case {
+        stmt: Box<Node>,
+        id: usize,
+    },
+    Default_(Box<Node>),
 }
 impl fmt::Debug for NodeKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -164,6 +175,7 @@ impl fmt::Debug for NodeKind {
             NodeKind::Continue => write!(f, "continue"),
             NodeKind::Goto(..) => write!(f, "goto"),
             NodeKind::Label(..) => write!(f, "label"),
+            _ => unimplemented!(),
         }
     }
 }
@@ -465,6 +477,8 @@ pub struct Parser<'a> {
     string_literals: Vec<CString>,
     var_scopes: Vec<Vec<VarScope>>, // 後方に内側のスコープがある(読むときはrevする)
     tag_scopes: VecDeque<VecDeque<(String, Type)>>, // 前方に内側のスコープがある
+    cases: Vec<Vec<usize>>,
+    switch_has_default: Vec<bool>,
     cur_tok: Option<Token>,
     // var_attr: VarAttr,
     pub code: &'a str,            // debug用
@@ -550,6 +564,9 @@ impl VarScope {
 ///     | "if" "(" expr ")" stmt ( "else" stmt )?
 ///     | "while" "(" expr ")" stmt
 ///     | "for" "(" expr? ";" | vardef )  expr? ";" expr? ")" stmt  // vardefはセミコロンまで含む
+///     | "switch" "(" expr ")" stmt
+///     | "case" num ":" stmt
+///     | "default" ":" stmt
 /// expr = assign ("," expr )?   // exprはassignをコンマで連結している
 /// assign = bitor (assign-op assign)?  // assignでは括弧()の中以外ではコンマは出てこない    
 /// bitor = bitxor ("|" bitxor)*
@@ -1352,6 +1369,54 @@ impl Parser<'_> {
                 kind: NodeKind::Label(label, Box::new(self.stmt()?)),
                 ty: None,
                 tok,
+            }
+        } else if self.consume("switch") {
+            self.expect("(")?;
+            let condi = Box::new(self.expr()?); // コンマもあり(expr, expr)みたいな
+            self.expect(")")?;
+            self.cases.push(vec![]);
+            self.switch_has_default.push(false);
+            Node {
+                tok: self.tok(),
+                kind: NodeKind::Switch {
+                    condi,
+                    stmt: Box::new(self.stmt()?),
+                    cases: self.cases.pop().unwrap(),
+                    has_default: self.switch_has_default.pop().unwrap(),
+                },
+                ty: None,
+            }
+        } else if self.consume("case") {
+            let val = self.expect_num()?;
+            self.cases
+                .last_mut()
+                .map(|v| v.push(val))
+                .ok_or(self.raise_err("stray case"))?;
+            self.expect(":")?;
+            let id = self.cases[self.cases.len() - 1].len() - 1; // self.stmt()の前に呼ばないとラベルがずれるので注意
+            Node {
+                tok: self.tok(),
+                kind: NodeKind::Case {
+                    id,
+                    stmt: Box::new(self.stmt()?),
+                },
+                ty: None,
+            }
+        } else if self.consume("default") {
+            self.expect(":")?;
+            if let Some(b) = self.switch_has_default.last_mut() {
+                if *b {
+                    Err(self.raise_err("duplicate default label"))?;
+                } else {
+                    *b = true;
+                }
+            } else {
+                Err(self.raise_err("stray default"))?;
+            }
+            Node {
+                tok: self.tok(),
+                kind: NodeKind::Default_(Box::new(self.stmt()?)),
+                ty: None,
             }
         } else {
             Node::new_expr_stmt(read_until(self, ";")?, self.tok())

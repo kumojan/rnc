@@ -29,6 +29,7 @@ struct CodeGenerator {
     label_count: usize,
     break_label: Vec<usize>,
     continue_label: Vec<usize>,
+    case_label: Vec<usize>,
     func_name: String,
     var_offsets: Vec<usize>,
     func_stack_size: usize,
@@ -409,6 +410,46 @@ impl CodeGenerator {
                 println!(".L.label.{}.{}:", self.func_name, label);
                 self.gen_stmt(stmt)?;
             }
+            NodeKind::Switch {
+                condi,
+                stmt,
+                cases,
+                has_default,
+            } => {
+                let label = self.new_label();
+                self.break_label.push(label);
+                self.case_label.push(label);
+                self.gen_expr(condi)?;
+                println!("  pop rax");
+                for (i, val) in cases.iter().enumerate() {
+                    println!("  cmp rax, {}", val);
+                    println!("  je .L.case.{}.{}", label, i);
+                }
+                if *has_default {
+                    println!("  jmp .L.case.{}.default", label);
+                } else {
+                    println!("  jmp .L.break.{}", label);
+                }
+                self.gen_stmt(stmt)?;
+                println!(".L.break.{}:", label);
+                self.break_label.pop();
+                self.case_label.pop();
+            }
+            NodeKind::Case { stmt, id } => {
+                println!(
+                    ".L.case.{}.{}:",
+                    self.case_label[self.case_label.len() - 1],
+                    id,
+                );
+                self.gen_stmt(stmt)?;
+            }
+            NodeKind::Default_(stmt) => {
+                println!(
+                    ".L.case.{}.default:",
+                    self.case_label[self.case_label.len() - 1]
+                );
+                self.gen_stmt(stmt)?;
+            }
             _ => {
                 return Err(CodeGenError {
                     pos: self.pos,
@@ -628,7 +669,7 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
         NodeKind::Member { obj, .. } => {
             s += &graph_gen(obj, &nodename, 0, None);
         }
-        _ => unimplemented!(),
+        _ => (),
     }
     s
 }
