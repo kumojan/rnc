@@ -178,6 +178,11 @@ impl CodeGenerator {
                 println!("  mov rax, {}", val); // raxに一旦入れると、アセンブリに文句を言われず、cのintやlongと相性が良さそう。(あまり理解していない)
                 println!("  push rax");
             }
+            NodeKind::INum { val, .. } => {
+                // println!("  push {}", val);
+                println!("  mov rax, {}", val); // raxに一旦入れると、アセンブリに文句を言われず、cのintやlongと相性が良さそう。(あまり理解していない)
+                println!("  push rax");
+            }
             NodeKind::Var { var } => {
                 self.gen_addr(&node)?; // まず変数のアドレスを取得する
                 load(&var.ty); // 配列型の場合は、値を取り出さず、アドレスをそのまま使う
@@ -293,12 +298,12 @@ impl CodeGenerator {
                 self.gen_expr(else_)?;
                 println!(".L.end.{}:", label);
             }
-            NodeKind::Bin { kind, lhs, rhs } => {
+            NodeKind::Bin { op, lhs, rhs } => {
                 self.gen_expr(lhs)?;
                 self.gen_expr(rhs)?;
                 println!("  pop rdi"); // rhs
                 println!("  pop rax"); // lhs
-                let code = match kind {
+                let code = match op {
                     BinOp::Add => "  add rax, rdi",
                     BinOp::Sub => "  sub rax, rdi",
                     BinOp::Mul => "  imul rax, rdi",
@@ -600,8 +605,8 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
         }
         NodeKind::Var { var } => s += &format!("{} [label=\"{:?}\"];\n", nodename, var),
         NodeKind::Literal { id, .. } => s += &format!("{} [label=\"literal {}\"];\n", nodename, id),
-        NodeKind::Bin { kind, lhs, rhs } => {
-            s += &format!("{} [label=\"{:?}\"];\n", nodename, kind);
+        NodeKind::Bin { op, lhs, rhs } => {
+            s += &format!("{} [label=\"{:?}\"];\n", nodename, op);
             s += &graph_gen(lhs, &nodename, 0, None);
             s += &graph_gen(rhs, &nodename, 1, None);
         }

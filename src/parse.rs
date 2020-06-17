@@ -73,6 +73,9 @@ pub enum NodeKind {
     Num {
         val: usize,
     },
+    INum {
+        val: i64,
+    },
     Var {
         var: Rc<Var>,
     },
@@ -91,7 +94,7 @@ pub enum NodeKind {
         rhs: Box<Node>,
     },
     Bin {
-        kind: BinOp,
+        op: BinOp,
         lhs: Box<Node>,
         rhs: Box<Node>,
     },
@@ -148,7 +151,7 @@ pub enum NodeKind {
     Switch {
         condi: Box<Node>,
         stmt: Box<Node>,
-        cases: Vec<usize>,
+        cases: Vec<i64>,
         has_default: bool,
     },
     Case {
@@ -168,7 +171,7 @@ impl fmt::Debug for NodeKind {
             NodeKind::LogOr(lhs, rhs) => write!(f, "[{:?} || {:?}]", lhs, rhs),
             NodeKind::Return { .. } => write!(f, "return"),
             NodeKind::ExprStmt { .. } => write!(f, "expr stmt"),
-            NodeKind::Bin { kind, lhs, rhs } => write!(f, "{:?} {:?} {:?}", lhs, kind, rhs),
+            NodeKind::Bin { op, lhs, rhs } => write!(f, "{:?} {:?} {:?}", lhs, op, rhs),
             NodeKind::Assign { .. } => write!(f, "assign"),
             NodeKind::If { .. } => write!(f, "If"),
             NodeKind::For { .. } => write!(f, "for"),
@@ -205,9 +208,79 @@ impl Node {
             _ => unimplemented!("called get_type for statements!"),
         }
     }
+    #[allow(overflowing_literals)] // 数値のキャストでオーバーフローを許す
+    fn eval(&self) -> Result<i64, &'static str> {
+        let cast_int = |b: bool| if b { 1 } else { 0 };
+        let val = match &self.kind {
+            NodeKind::Bin { op, lhs, rhs } => {
+                let l = lhs.eval()?;
+                let r = rhs.eval()?;
+                match op {
+                    BinOp::Add => l + r,
+                    BinOp::Sub => l - r,
+                    BinOp::Mul => l * r,
+                    BinOp::Or => l | r,
+                    BinOp::And => l & r,
+                    BinOp::Xor => l ^ r,
+                    BinOp::Div => l / r,
+                    BinOp::Mod => l % r,
+                    BinOp::_Eq => cast_int(l == r),
+                    BinOp::Neq => cast_int(l != r),
+                    BinOp::Lt => cast_int(l < r),
+                    BinOp::Le => cast_int(l <= r),
+                    BinOp::Shl => l << r,
+                    BinOp::Shr => l >> r,
+                }
+            }
+            NodeKind::Comma { rhs, .. } => rhs.eval()?,
+            NodeKind::Conditional {
+                condi,
+                then_,
+                else_,
+            } => {
+                if condi.eval()? != 0 {
+                    then_.eval()?
+                } else {
+                    else_.eval()?
+                }
+            }
+            NodeKind::BitNot(node) => !node.eval()?,
+            NodeKind::LogOr(lhs, rhs) => cast_int(lhs.eval()? != 0 || rhs.eval()? != 0),
+            NodeKind::LogAnd(lhs, rhs) => cast_int(lhs.eval()? != 0 && rhs.eval()? != 0),
+            NodeKind::Cast(node) => {
+                let ty = self.get_type();
+                let val = node.eval()?;
+                if ty.is_integer() {
+                    match ty.size() {
+                        1 => val as i8 as i64,
+                        2 => val as i16 as i64,
+                        4 => val as i32 as i64,
+                        _ => val,
+                    }
+                } else {
+                    val
+                }
+            }
+            NodeKind::Num { val } => *val as i64,
+            _ => Err("invalid constant expression")?,
+        };
+        Ok(val)
+    }
     fn new_num(val: usize, tok: Option<Token>) -> Self {
+        let ty = if val <= i32::MAX as usize {
+            Type::TyInt
+        } else {
+            Type::TyLong
+        };
         Self {
             kind: NodeKind::Num { val },
+            ty: Some(ty),
+            tok,
+        }
+    }
+    fn new_inum(val: i64, tok: Option<Token>) -> Self {
+        Self {
+            kind: NodeKind::INum { val },
             ty: Some(Type::TyInt),
             tok,
         }
@@ -332,9 +405,9 @@ impl Node {
             tok,
         }
     }
-    fn new_bin(kind: BinOp, lhs: Node, rhs: Node, tok: Option<Token>) -> Self {
+    fn new_bin(op: BinOp, lhs: Node, rhs: Node, tok: Option<Token>) -> Self {
         Self {
-            ty: match kind {
+            ty: match op {
                 BinOp::Sub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => {
                     Some(Type::TyInt)
                 } // ポインタ同士の引き算はint
@@ -342,7 +415,7 @@ impl Node {
                 _ => Some(lhs.get_type().clone()),
             },
             kind: NodeKind::Bin {
-                kind,
+                op,
                 lhs: Box::new(lhs),
                 rhs: Box::new(rhs),
             },
@@ -508,7 +581,7 @@ pub struct Parser<'a> {
     string_literals: Vec<CString>,
     var_scopes: Vec<Vec<VarScope>>, // 後方に内側のスコープがある(読むときはrevする)
     tag_scopes: VecDeque<VecDeque<(String, Type)>>, // 前方に内側のスコープがある
-    cases: Vec<Vec<usize>>,
+    cases: Vec<Vec<i64>>,
     switch_has_default: Vec<bool>,
     cur_tok: Option<Token>,
     // var_attr: VarAttr,
@@ -524,7 +597,7 @@ enum PtrDim {
 enum VarScope {
     Var(Rc<Var>),
     Type(String, Type),
-    Enum(String, usize),
+    Enum(String, i64),
 }
 
 // typedef, static, externなど
@@ -560,7 +633,7 @@ impl VarScope {
             _ => None,
         }
     }
-    fn get_union(&self, name: &str) -> Option<usize> {
+    fn get_union(&self, name: &str) -> Option<i64> {
         match self {
             Self::Enum(_name, val) if _name == name => Some(*val),
             _ => None,
@@ -747,9 +820,9 @@ impl Parser<'_> {
             Ok(())
         }
     }
-    fn expect_num(&mut self) -> Result<usize, ParseError> {
-        self.consume_num().ok_or(self.raise_err("expected number"))
-    }
+    // fn expect_num(&mut self) -> Result<usize, ParseError> {
+    //     self.consume_num().ok_or(self.raise_err("expected number"))
+    // }
     fn expect_ident(&mut self) -> Result<String, ParseError> {
         self.consume_ident()
             .ok_or(self.raise_err("expected identifier"))
@@ -881,7 +954,7 @@ impl Parser<'_> {
             loop {
                 let name = self.expect_ident()?;
                 if self.consume("=") {
-                    val = self.expect_num()?; // 実際は負の数とかも定義できるっぽいが...
+                    val = self.const_expr()?; // 実際は負の数とかも定義できるっぽいが...
                 }
                 mems.push(EnumMem { name, val });
                 val += 1;
@@ -945,7 +1018,7 @@ impl Parser<'_> {
             .flat_map(|v| v.get_var(name))
             .next()
     }
-    fn find_enum(&self, name: &String) -> Option<usize> {
+    fn find_enum(&self, name: &String) -> Option<i64> {
         self.var_scopes
             .iter()
             .rev()
@@ -1047,7 +1120,7 @@ impl Parser<'_> {
         let len = self.var_scopes.len();
         self.var_scopes[len - 1].push(VarScope::Type(name, ty));
     }
-    fn add_enum(&mut self, name: String, num: usize) {
+    fn add_enum(&mut self, name: String, num: i64) {
         let len = self.var_scopes.len();
         self.var_scopes[len - 1].push(VarScope::Enum(name, num));
     }
@@ -1230,7 +1303,15 @@ impl Parser<'_> {
         // read array dimension
         let mut dims = Vec::new();
         while self.consume("[") {
-            dims.push(PtrDim::Dim(self.consume_num()));
+            let dim = if self.peek("]") {
+                None
+            } else {
+                use std::convert::TryFrom;
+                usize::try_from(self.const_expr()?)
+                    .map(Some)
+                    .map_err(|_| self.raise_err("array dimension must be non-negative!"))?
+            };
+            dims.push(PtrDim::Dim(dim));
             self.expect("]")?;
         }
         v.extend(dims.into_iter().rev());
@@ -1419,7 +1500,7 @@ impl Parser<'_> {
                 ty: None,
             }
         } else if self.consume("case") {
-            let val = self.expect_num()?;
+            let val = self.const_expr()?;
             self.cases
                 .last_mut()
                 .map(|v| v.push(val))
@@ -1504,7 +1585,7 @@ impl Parser<'_> {
     /// なので、tmpによってここをさすようにするのである。
     fn to_assign(&mut self, binop: Node) -> Node {
         if let Node {
-            kind: NodeKind::Bin { kind, lhs, rhs },
+            kind: NodeKind::Bin { op, lhs, rhs },
             ..
         } = binop
         {
@@ -1518,7 +1599,7 @@ impl Parser<'_> {
             // *tmp = *tmp op B
             let line2 = Node::new_assign(
                 tmp_deref(),
-                Node::new_bin(kind, tmp_deref(), *rhs, None),
+                Node::new_bin(op, tmp_deref(), *rhs, None),
                 None,
             );
             Node::new_comma(line1, line2, self.tok())
@@ -1538,6 +1619,9 @@ impl Parser<'_> {
             node = Node::new_conditional(node, then_, else_, tok);
         }
         Ok(node)
+    }
+    fn const_expr(&mut self) -> Result<i64, ParseError> {
+        self.conditional()?.eval().map_err(|s| self.raise_err(s))
     }
     /// logor = logand ("&&" logand)*
     fn logor(&mut self) -> Result<Node, ParseError> {
@@ -1830,7 +1914,7 @@ impl Parser<'_> {
                 if let Some(var) = self.find_var(&name) {
                     Ok(Node::new_var(var, self.tok()))
                 } else if let Some(val) = self.find_enum(&name) {
-                    Ok(Node::new_num(val, self.tok()))
+                    Ok(Node::new_inum(val, self.tok()))
                 } else {
                     Err(self.raise_err("variable not found!"))
                 }

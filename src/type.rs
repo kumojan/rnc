@@ -18,7 +18,7 @@ pub struct Member {
 #[derive(Clone, PartialEq)]
 pub struct EnumMem {
     pub name: String,
-    pub val: usize,
+    pub val: i64,
 }
 
 #[allow(dead_code)]
@@ -221,6 +221,17 @@ impl Type {
                 _ => None,
             },
             _ => None,
+        }
+    }
+    pub fn is_integer(&self) -> bool {
+        match self {
+            Type::TyBool
+            | Type::TyChar
+            | Type::TyShort
+            | Type::TyInt
+            | Type::TyLong
+            | Type::TyEnum { .. } => true,
+            _ => false,
         }
     }
 }
