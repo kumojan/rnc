@@ -1,4 +1,4 @@
-use crate::parse::{BinOp, Function, Node, NodeKind, Var};
+use crate::parse::node::{BinOp, Function, Node, NodeKind, Var};
 use crate::r#type::Type;
 use crate::tokenize::CString;
 use crate::util::*;
@@ -129,8 +129,8 @@ impl CodeGenerator {
             println!(".loc 1 {}", tok.line_no);
         }
         match &node.kind {
-            NodeKind::Var { var } => self.gen_var_addr(var),
-            NodeKind::Deref { node } => self.gen_expr(node)?,
+            NodeKind::Var(var) => self.gen_var_addr(var),
+            NodeKind::Deref(node) => self.gen_expr(node)?,
             NodeKind::Member { obj, mem } => {
                 self.gen_addr(obj)?;
                 // 構造体の中でのoffsetだけずらす
@@ -139,7 +139,7 @@ impl CodeGenerator {
                     mem.name, mem.offset
                 );
             }
-            NodeKind::Comma { lhs, rhs } => {
+            NodeKind::Comma(lhs, rhs) => {
                 self.gen_expr(lhs)?;
                 println!("  pop rax");
                 self.gen_addr(rhs)?;
@@ -173,17 +173,17 @@ impl CodeGenerator {
             println!(".loc 1 {}", tok.line_no);
         }
         match &node.kind {
-            NodeKind::Num { val, .. } => {
+            NodeKind::Num(val) => {
                 // println!("  push {}", val);
                 println!("  mov rax, {}", val); // raxに一旦入れると、アセンブリに文句を言われず、cのintやlongと相性が良さそう。(あまり理解していない)
                 println!("  push rax");
             }
-            NodeKind::INum { val, .. } => {
+            NodeKind::INum(val) => {
                 // println!("  push {}", val);
                 println!("  mov rax, {}", val); // raxに一旦入れると、アセンブリに文句を言われず、cのintやlongと相性が良さそう。(あまり理解していない)
                 println!("  push rax");
             }
-            NodeKind::Var { var } => {
+            NodeKind::Var(var) => {
                 self.gen_addr(&node)?; // まず変数のアドレスを取得する
                 load(&var.ty); // 配列型の場合は、値を取り出さず、アドレスをそのまま使う
             }
@@ -198,8 +198,8 @@ impl CodeGenerator {
                     unreachable!();
                 }
             }
-            NodeKind::Addr { node } => self.gen_addr(node)?,
-            NodeKind::Deref { node } => {
+            NodeKind::Addr(node) => self.gen_addr(node)?,
+            NodeKind::Deref(node) => {
                 // **x(2段回)だと、gen(x); load(); load();
                 // となる。つまりxの結果(xが変数ならば、その値)を取得し、
                 // それをアドレスとして値を取得、
@@ -214,7 +214,7 @@ impl CodeGenerator {
                 self.gen_expr(node)?;
                 println!("  pop rax\n  not rax\n  push rax");
             }
-            NodeKind::Assign { lhs, rhs, .. } => {
+            NodeKind::Assign(lhs, rhs) => {
                 self.gen_addr(lhs)?;
                 self.gen_expr(rhs)?;
                 store(&lhs.get_type()); // どの型に代入するかによってコードが異なる
@@ -253,7 +253,7 @@ impl CodeGenerator {
                 println!(".L.end.{}:", label);
                 println!("  push rax");
             }
-            NodeKind::Comma { lhs, rhs } => {
+            NodeKind::Comma(lhs, rhs) => {
                 self.gen_expr(lhs)?;
                 println!("  pop rax");
                 self.gen_expr(rhs)?;
@@ -337,8 +337,8 @@ impl CodeGenerator {
             println!(".loc 1 {}", tok.line_no);
         }
         match &node.kind {
-            NodeKind::Return { returns } => {
-                self.gen_expr(returns)?; // その値を取得し
+            NodeKind::Return(node) => {
+                self.gen_expr(node)?; // その値を取得し
                 println!("  pop rax"); // raxに移す
                 println!("  jmp .L.return.{}", self.func_name);
             }
@@ -347,7 +347,7 @@ impl CodeGenerator {
                     self.gen_stmt(stmt)?;
                 }
             }
-            NodeKind::ExprStmt { expr } => {
+            NodeKind::ExprStmt(expr) => {
                 self.gen_expr(expr)?;
                 println!("  pop rax"); // 最後に評価した値を捨てる
             }
@@ -580,7 +580,7 @@ fillcolor = \"green\",
     f.write(b"}\n").unwrap();
 }
 pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str>) -> String {
-    if let NodeKind::ExprStmt { expr } = &node.kind {
+    if let NodeKind::ExprStmt(expr) = &node.kind {
         return graph_gen(expr, &parent, number, Some("stmt"));
     }
     // 親が指定されているとき、そこから自分への辺を引く
@@ -592,7 +592,7 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
         s += &format!("{} -> {}\n", parent, nodename);
     }
     match &node.kind {
-        NodeKind::Num { val } => s += &format!("{} [label=\"num {}\"];\n", nodename, val),
+        NodeKind::Num(val) => s += &format!("{} [label=\"num {}\"];\n", nodename, val),
         NodeKind::Break => s += &format!("{} [label=\"break\"];\n", nodename),
         NodeKind::Continue => s += &format!("{} [label=\"continue\"];\n", nodename),
         NodeKind::Cast(expr) => {
@@ -603,19 +603,19 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
             s += &format!("{} [label=\"bitnot {:?}\"];\n", nodename, node.ty);
             s += &graph_gen(expr, &nodename, 0, None);
         }
-        NodeKind::Var { var } => s += &format!("{} [label=\"{:?}\"];\n", nodename, var),
+        NodeKind::Var(var) => s += &format!("{} [label=\"{:?}\"];\n", nodename, var),
         NodeKind::Literal { id, .. } => s += &format!("{} [label=\"literal {}\"];\n", nodename, id),
         NodeKind::Bin { op, lhs, rhs } => {
             s += &format!("{} [label=\"{:?}\"];\n", nodename, op);
             s += &graph_gen(lhs, &nodename, 0, None);
             s += &graph_gen(rhs, &nodename, 1, None);
         }
-        NodeKind::Assign { lhs, rhs } => {
+        NodeKind::Assign(lhs, rhs) => {
             s += &format!("{} [label=\"assign\"];\n", nodename);
             s += &graph_gen(lhs, &nodename, 0, None);
             s += &graph_gen(rhs, &nodename, 1, None);
         }
-        NodeKind::Comma { lhs, rhs } => {
+        NodeKind::Comma(lhs, rhs) => {
             s += &format!("{} [label=\"comma\"];\n", nodename);
             s += &graph_gen(lhs, &nodename, 0, None);
             s += &graph_gen(rhs, &nodename, 1, None);
@@ -630,16 +630,16 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
             s += &graph_gen(lhs, &nodename, 0, None);
             s += &graph_gen(rhs, &nodename, 1, None);
         }
-        NodeKind::Return { returns } => {
+        NodeKind::Return(node) => {
             s += &format!("{} [label=\"return\"];\n", nodename);
-            s += &graph_gen(returns, &nodename, number, None);
+            s += &graph_gen(node, &nodename, number, None);
         }
         NodeKind::ExprStmt { .. } => panic!(),
-        NodeKind::Addr { node } => {
+        NodeKind::Addr(node) => {
             s += &format!("{} [label=\"addr\"];\n", nodename);
             s += &graph_gen(node, &nodename, 0, None);
         }
-        NodeKind::Deref { node } => {
+        NodeKind::Deref(node) => {
             s += &format!("{} [label=\"deref\"];\n", nodename);
             s += &graph_gen(node, &nodename, 0, None);
         }
