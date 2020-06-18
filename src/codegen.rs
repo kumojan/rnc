@@ -325,7 +325,7 @@ impl CodeGenerator {
             _ => {
                 return Err(CodeGenError {
                     pos: self.pos,
-                    msg: "invalid expression!".to_owned(),
+                    msg: "not an expression!".to_owned(),
                 })
             }
         }
@@ -473,7 +473,7 @@ impl CodeGenerator {
             _ => {
                 return Err(CodeGenError {
                     pos: self.pos,
-                    msg: "invalid expression!".to_owned(),
+                    msg: "not a statement!".to_owned(),
                 })
             }
         }

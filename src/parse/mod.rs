@@ -12,7 +12,6 @@ pub mod node;
 pub struct ParseError {
     pub pos: usize,
     pub msg: String,
-    pub is_warning: bool,
 }
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -104,10 +103,9 @@ impl VarScope {
 /// funcargs = "(" typespec declarator ( "," typespec declarator)? ")"
 /// compound_stmt = (vardef | typedef | stmt)*
 /// typedef = "typedef" typespec declarator ("," declarator)*
-/// vardef = typespec declarator initializer ("," declarator initializer)* ";"
+/// vardef = typespec declarator ("=" initializer)? ("," declarator ("=" initializer)?)* ";"
 /// declarator = ptr ("(" declarator ")" | ident) ("[" num "]")*
-/// initializer = "=" (assign | array_init)
-/// array_init = "{" num ("," num)?"}"
+/// initializer = "{" initializer ("," initializer )*"}" | assign
 /// stmt = expr ";"  // expression statement (値を残さない)
 ///     | "return" expr ";"  
 ///     | "break" ";"
@@ -423,7 +421,6 @@ impl Parser<'_> {
         ParseError {
             pos: self.tklist[self.head].pos,
             msg: msg.to_owned(),
-            is_warning: false,
         }
     }
     fn head_kind(&self) -> &TokenKind {
@@ -790,11 +787,11 @@ impl Parser<'_> {
                 }
                 // 初期化がなければ、コードには現れないので捨てられる
                 let var = self.add_var(&name, ty);
-                if let Some(init) = self.initializer()? {
-                    stmts.push(Node::new_expr_stmt(
-                        Node::new_assign(Node::new_var(var, self.head), init, self.head),
-                        self.head,
-                    ));
+                if self.consume("=") {
+                    let init = self.initializer()?;
+                    let mut nodes = vec![];
+                    Parser::init_stmt(var, init, vec![], &mut nodes);
+                    stmts.extend(nodes);
                 }
                 if !self.consume(",") {
                     break; // 宣言終了
@@ -804,19 +801,52 @@ impl Parser<'_> {
         }
         Ok(stmts)
     }
-    fn initializer(&mut self) -> Result<Option<Node>, ParseError> {
-        let node = if self.consume("=") {
-            if self.peek("{") {
-                unimplemented!("array initiation not implemented");
-            } else {
-                Some(self.assign()?)
+    /// initializer = "{" initializer ("," initializer )*"}" | assign
+    fn initializer(&mut self) -> Result<Initializer, ParseError> {
+        let pos = self.head;
+        if self.consume("{") {
+            let mut v = vec![];
+            loop {
+                v.push(self.initializer()?);
+                if !self.consume(",") {
+                    break;
+                }
             }
+            self.expect("}")?;
+            Ok(Initializer::new_list(v, pos))
         } else {
-            None
-        };
-        Ok(node)
+            Ok(Initializer::new_leaf(self.assign()?, pos))
+        }
     }
-
+    /// x[1][2] = a; というような代入文を生成する。
+    /// TODO: 初期化子不足の時、ゼロで初期化する。vの次元を見ると良いと思う。
+    fn init_stmt(
+        var: Rc<Var>,
+        i: Initializer,
+        mut v: Vec<usize>,
+        nodes: &mut Vec<Node>,
+    ) -> Vec<usize> {
+        let Initializer { t, tok_no } = i;
+        match t {
+            InitTree::List(list) => {
+                for (d, i) in list.into_iter().enumerate() {
+                    v.push(d);
+                    v = Parser::init_stmt(var.clone(), i, v, nodes);
+                }
+            }
+            InitTree::Leaf(a) => {
+                let mut node = Node::new_var(var, tok_no);
+                for d in &v {
+                    let d = Node::new_num(*d, tok_no);
+                    node = Node::new_unary("deref", Node::new_add(node, d, tok_no), tok_no);
+                }
+                node = Node::new_assign(node, *a, tok_no);
+                nodes.push(Node::new_expr_stmt(node, tok_no));
+            }
+        }
+        v.pop(); // 自分の階層のインデックスを捨てる
+        v
+    }
     fn compound_stmt(&mut self, enter_scope: bool) -> Result<Vec<Node>, ParseError> {
         self.expect("{")?;
         if enter_scope {
