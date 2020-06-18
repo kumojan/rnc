@@ -1,5 +1,4 @@
 use crate::tokenize::TokenKind::*;
-use std::collections::VecDeque;
 use std::fmt;
 ///
 /// トークナイザ
@@ -381,29 +380,29 @@ impl Lexer {
         }
         Ok(false)
     }
-    pub fn tokenize(&mut self) -> Result<VecDeque<Token>, TokenizeError> {
-        let mut list: VecDeque<Token> = VecDeque::new();
+    pub fn tokenize(&mut self) -> Result<Vec<Token>, TokenizeError> {
+        let mut list: Vec<Token> = Vec::new();
         while !self.is_at_end() {
             let tk_head = self.pos;
             if self.read_whitespace() || self.read_comment()? {
                 continue;
             } else if let Some(c) = self.read_char()? {
-                list.push_back(Token::new_char(c, tk_head));
+                list.push(Token::new_char(c, tk_head));
             } else if let Some(s) = self.read_punct() {
-                list.push_back(Token::new_reserved(s, tk_head));
+                list.push(Token::new_reserved(s, tk_head));
             } else if let Some(s) = self.read_word() {
-                list.push_back(Token::new_reserved(s, tk_head));
+                list.push(Token::new_reserved(s, tk_head));
             } else if let Some(n) = self.read_num()? {
-                list.push_back(Token::new_num(n, tk_head, self.pos - tk_head));
+                list.push(Token::new_num(n, tk_head, self.pos - tk_head));
             } else if let Some(s) = self.read_ident() {
-                list.push_back(Token::new_ident(s, tk_head));
+                list.push(Token::new_ident(s, tk_head));
             } else if let Some(s) = self.read_string()? {
-                list.push_back(Token::new_string(s, tk_head, self.pos - tk_head));
+                list.push(Token::new_string(s, tk_head, self.pos - tk_head));
             } else {
                 return Err(self.pos)?;
             }
         }
-        list.push_back(Token {
+        list.push(Token {
             kind: TkEOF,
             pos: self.code.len(),
             ..Default::default()

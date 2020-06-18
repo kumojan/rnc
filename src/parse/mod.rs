@@ -23,7 +23,8 @@ impl fmt::Display for ParseError {
 pub struct Parser<'a> {
     cur_line: (usize, &'a str),
     cur_pos: &'a str,
-    tklist: VecDeque<Token>,
+    head: usize, // 読んでいるtokenのtklist上の位置
+    tklist: Vec<Token>,
     locals: Vec<Rc<Var>>, // Node::Varと共有する。
     globals: Vec<VarScope>,
     string_literals: Vec<CString>,
@@ -31,7 +32,6 @@ pub struct Parser<'a> {
     tag_scopes: VecDeque<VecDeque<(String, Type)>>, // 前方に内側のスコープがある
     cases: Vec<Vec<i64>>,
     switch_has_default: Vec<bool>,
-    cur_tok: Option<Token>,
     // var_attr: VarAttr,
     pub code: &'a str,            // debug用
     pub code_lines: Vec<&'a str>, // debug用
@@ -141,7 +141,7 @@ impl VarScope {
 ///     | "(" "{" stmt* expr ";" "}" ")"
 ///
 impl Parser<'_> {
-    pub fn new(tklist: VecDeque<Token>) -> Self {
+    pub fn new(tklist: Vec<Token>) -> Self {
         Self {
             tklist,
             ..Self::default()
@@ -150,20 +150,19 @@ impl Parser<'_> {
     /// トークンを一つ読んで、すすむ
     /// 読んだトークンはcur_tokにいれる
     fn skip(&mut self) -> &mut Self {
-        self.cur_tok = self.tklist.pop_front();
-        if self.tklist.len() > 0 {
-            let head = &self.tklist[0];
+        self.head += 1;
+        if self.head < self.tklist.len() {
+            let head = &self.tklist[self.head];
             self.cur_line = (head.line_no + 1, self.code_lines[head.line_no]);
             self.cur_pos = &self.code[head.byte_len..head.byte_len + head.len];
         }
         self
     }
     fn unshift(&mut self) -> &mut Self {
-        if let Some(tok) = std::mem::replace(&mut self.cur_tok, None) {
-            self.tklist.push_front(tok);
-        } else {
-            panic!("unshift called but token was none");
-        }
+        self.head -= 1;
+        let head = &self.tklist[self.head];
+        self.cur_line = (head.line_no + 1, self.code_lines[head.line_no]);
+        self.cur_pos = &self.code[head.byte_len..head.byte_len + head.len];
         self
     }
     fn peek(&mut self, s: &str) -> bool {
@@ -249,15 +248,6 @@ impl Parser<'_> {
             None
         }
     }
-    // fn consume_reserved(&mut self) -> Option<String> {
-    //     if let TokenKind::TkReserved(ref s) = self.head_kind() {
-    //         let s = s.clone();
-    //         self.skip();
-    //         Some(s)
-    //     } else {
-    //         None
-    //     }
-    // }
     fn is_eof(&self) -> bool {
         self.head_kind() == &TokenKind::TkEOF
     }
@@ -268,9 +258,6 @@ impl Parser<'_> {
             Ok(())
         }
     }
-    // fn expect_num(&mut self) -> Result<usize, ParseError> {
-    //     self.consume_num().ok_or(self.raise_err("expected number"))
-    // }
     fn expect_ident(&mut self) -> Result<String, ParseError> {
         self.consume_ident()
             .ok_or(self.raise_err("expected identifier"))
@@ -361,8 +348,8 @@ impl Parser<'_> {
                     return Ok(ty);
                 }
             }
-            let r = Rc::new(RefCell::new(None));
-            Type::new_incomplete_struct(tag.clone(), r) // タグがないか、探しても見つからない時
+            // タグがないか、探しても見つからない時
+            Type::new_incomplete_struct(tag.clone(), Rc::new(RefCell::new(None)))
         };
         if let Some(tag) = tag {
             if !self.redefine_tag(&tag, &ty) {
@@ -431,20 +418,20 @@ impl Parser<'_> {
     fn raise_err(&self, msg: &str) -> ParseError {
         // panic!();
         ParseError {
-            pos: self.tklist[0].pos,
+            pos: self.tklist[self.head].pos,
             msg: msg.to_owned(),
             is_warning: false,
         }
     }
     fn head_kind(&self) -> &TokenKind {
-        &self.tklist[0].kind
+        &self.tklist[self.head].kind
     }
     /// shiftによってtokenが格納されているときは
     /// それを出して、Noneに置き換える
     /// あるいはそのままNoneが取り出される
     /// tokenは一つのNodeにしか渡らない
-    fn tok(&mut self) -> Option<Token> {
-        std::mem::replace(&mut self.cur_tok, None)
+    fn tok(&mut self) -> usize {
+        0
     }
     /// 必ずleave_scopeと対にして使うこと
     fn enter_scope(&mut self) {
@@ -602,13 +589,15 @@ impl Parser<'_> {
                 id: self.string_literals.len(),
             },
             ty: Some(Type::TyChar.to_complete_array(data.0.len() + 1)),
-            tok: self.tok(),
+            tok_no: self.head,
         };
         self.string_literals.push(data);
         n
     }
     // コード生成
-    pub fn program(mut self) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<CString>), ParseError> {
+    pub fn program(
+        mut self,
+    ) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<CString>, Vec<Token>), ParseError> {
         let mut code = vec![];
         while !self.is_eof() {
             if self.consume("typedef") {
@@ -632,7 +621,7 @@ impl Parser<'_> {
                 _ => None,
             })
             .collect();
-        Ok((code, globals, self.string_literals))
+        Ok((code, globals, self.string_literals, self.tklist))
     }
     fn funcargs(&mut self) -> Result<(), ParseError> {
         self.expect("(")?;
@@ -800,8 +789,8 @@ impl Parser<'_> {
                 let var = self.add_var(&name, ty);
                 if let Some(init) = self.initializer()? {
                     stmts.push(Node::new_expr_stmt(
-                        Node::new_assign(Node::new_var(var, self.tok()), init, self.tok()),
-                        self.tok(),
+                        Node::new_assign(Node::new_var(var, self.head), init, self.head),
+                        self.head,
                     ));
                 }
                 if !self.consume(",") {
@@ -863,7 +852,7 @@ impl Parser<'_> {
             })
         };
         let node = if self.peek("{") {
-            Node::new_block(self.compound_stmt(true)?, self.tok())
+            Node::new_block(self.compound_stmt(true)?, self.head)
         } else if self.consume("if") {
             self.expect("(")?;
             let condi = read_until(self, ")")?;
@@ -873,7 +862,7 @@ impl Parser<'_> {
             } else {
                 None
             };
-            Node::new_if(condi, then_, else_, self.tok())
+            Node::new_if(condi, then_, else_, self.head)
         } else if self.consume("while") {
             self.expect("(")?;
             Node::new_for(
@@ -881,13 +870,13 @@ impl Parser<'_> {
                 Some(read_until(self, ")")?),
                 None,
                 self.stmt()?,
-                self.tok(),
+                self.head,
             )
         } else if self.consume("for") {
             self.enter_scope();
             self.expect("(")?;
             let start = if self.peek_type() {
-                Some(Node::new_block(self.vardef()?, self.tok()))
+                Some(Node::new_block(self.vardef()?, self.head))
             } else {
                 maybe_null_expr(self, ";")?.map(|(e, t)| Node::new_expr_stmt(e, t))
             };
@@ -895,22 +884,22 @@ impl Parser<'_> {
             let end = maybe_null_expr(self, ")")?.map(|(e, t)| Node::new_expr_stmt(e, t));
             let loop_ = self.stmt()?;
             self.leave_scope();
-            Node::new_for(start, condi, end, loop_, self.tok())
+            Node::new_for(start, condi, end, loop_, self.head)
         } else if self.consume("return") {
-            Node::new_unary("return", read_until(self, ";")?, self.tok())
+            Node::new_unary("return", read_until(self, ";")?, self.head)
         } else if self.consume("break") {
             self.expect(";")?;
             Node {
                 kind: NodeKind::Break,
                 ty: None,
-                tok: self.tok(),
+                tok_no: self.head,
             }
         } else if self.consume("continue") {
             self.expect(";")?;
             Node {
                 kind: NodeKind::Continue,
                 ty: None,
-                tok: self.tok(),
+                tok_no: self.head,
             }
         } else if self.consume("goto") {
             let label = self.expect_ident()?;
@@ -918,18 +907,18 @@ impl Parser<'_> {
             Node {
                 kind: NodeKind::Goto(label),
                 ty: None,
-                tok: self.tok(),
+                tok_no: self.head,
             }
         } else if self.peek_ident().is_some()
-            && self.tklist[1].kind == TokenKind::TkReserved(":".to_owned())
+            && self.tklist[self.head + 1].kind == TokenKind::TkReserved(":".to_owned())
         {
             let label = self.expect_ident()?;
-            let tok = self.tok();
+            let tok_no = self.head;
             self.expect(":")?;
             Node {
                 kind: NodeKind::Label(label, Box::new(self.stmt()?)),
                 ty: None,
-                tok,
+                tok_no,
             }
         } else if self.consume("switch") {
             self.expect("(")?;
@@ -938,7 +927,7 @@ impl Parser<'_> {
             self.cases.push(vec![]);
             self.switch_has_default.push(false);
             Node {
-                tok: self.tok(),
+                tok_no: self.head,
                 kind: NodeKind::Switch {
                     condi,
                     stmt: Box::new(self.stmt()?),
@@ -956,7 +945,7 @@ impl Parser<'_> {
             self.expect(":")?;
             let id = self.cases[self.cases.len() - 1].len() - 1; // self.stmt()の前に呼ばないとラベルがずれるので注意
             Node {
-                tok: self.tok(),
+                tok_no: self.head,
                 kind: NodeKind::Case {
                     id,
                     stmt: Box::new(self.stmt()?),
@@ -975,12 +964,12 @@ impl Parser<'_> {
                 Err(self.raise_err("stray default"))?;
             }
             Node {
-                tok: self.tok(),
+                tok_no: self.head,
                 kind: NodeKind::Default_(Box::new(self.stmt()?)),
                 ty: None,
             }
         } else {
-            Node::new_expr_stmt(read_until(self, ";")?, self.tok())
+            Node::new_expr_stmt(read_until(self, ";")?, self.head)
         };
         Ok(node)
     }
@@ -989,7 +978,7 @@ impl Parser<'_> {
     fn expr(&mut self) -> Result<Node, ParseError> {
         let mut node = self.assign()?;
         if self.consume(",") {
-            node = Node::new_comma(node, self.expr()?, self.tok());
+            node = Node::new_comma(node, self.expr()?, self.head);
         }
         Ok(node)
     }
@@ -1007,13 +996,13 @@ impl Parser<'_> {
         }
         macro_rules! to_assign_op {
             ($op:expr) => {{
-                to_assign!(Node::new_bin($op, node, self.skip().assign()?, self.tok()))
+                to_assign!(Node::new_bin($op, node, self.skip().assign()?, self.head))
             }};
         }
         Ok(match self.peek_reserved().as_deref() {
-            Some("=") => Node::new_assign(node, self.skip().assign()?, self.tok()),
-            Some("+=") => to_assign!(Node::new_add(node, self.skip().assign()?, self.tok())),
-            Some("-=") => to_assign!(Node::new_sub(node, self.skip().assign()?, self.tok())),
+            Some("=") => Node::new_assign(node, self.skip().assign()?, self.head),
+            Some("+=") => to_assign!(Node::new_add(node, self.skip().assign()?, self.head)),
+            Some("-=") => to_assign!(Node::new_sub(node, self.skip().assign()?, self.head)),
             Some("*=") => to_assign_op!(BinOp::Mul),
             Some("/=") => to_assign_op!(BinOp::Div),
             Some("%=") => to_assign_op!(BinOp::Mod),
@@ -1039,18 +1028,22 @@ impl Parser<'_> {
         {
             let ty = lhs.get_type().clone().to_ptr();
             let tmp = self.add_var("", ty);
-            let tmp_node = || Node::new_var(tmp.clone(), None);
-            let tmp_deref = || Node::new_unary("deref", tmp_node(), None);
+            let tmp_node = || Node::new_var(tmp.clone(), self.head);
+            let tmp_deref = || Node::new_unary("deref", tmp_node(), self.head);
 
             // tmp = &A
-            let line1 = Node::new_assign(tmp_node(), Node::new_unary("addr", *lhs, None), None);
+            let line1 = Node::new_assign(
+                tmp_node(),
+                Node::new_unary("addr", *lhs, self.head),
+                self.head,
+            );
             // *tmp = *tmp op B
             let line2 = Node::new_assign(
                 tmp_deref(),
-                Node::new_bin(op, tmp_deref(), *rhs, None),
-                None,
+                Node::new_bin(op, tmp_deref(), *rhs, self.head),
+                self.head,
             );
-            Node::new_comma(line1, line2, self.tok())
+            Node::new_comma(line1, line2, self.head)
         } else {
             let msg = format!("line:{:?} at:{}", self.cur_line, self.cur_pos);
             unimplemented!("expected binop! {}", msg)
@@ -1060,7 +1053,7 @@ impl Parser<'_> {
     fn conditional(&mut self) -> Result<Node, ParseError> {
         let mut node = self.logor()?;
         if self.consume("?") {
-            let tok = self.tok();
+            let tok = self.head;
             let then_ = self.expr()?;
             self.expect(":")?;
             let else_ = self.conditional()?;
@@ -1075,7 +1068,7 @@ impl Parser<'_> {
     fn logor(&mut self) -> Result<Node, ParseError> {
         let mut node = self.logand()?;
         while self.consume("||") {
-            node = Node::new_or(node, self.logand()?, self.tok())
+            node = Node::new_or(node, self.logand()?, self.head)
         }
         Ok(node)
     }
@@ -1083,7 +1076,7 @@ impl Parser<'_> {
     fn logand(&mut self) -> Result<Node, ParseError> {
         let mut node = self.bitor()?;
         while self.consume("&&") {
-            node = Node::new_and(node, self.logand()?, self.tok())
+            node = Node::new_and(node, self.logand()?, self.head)
         }
         Ok(node)
     }
@@ -1091,7 +1084,7 @@ impl Parser<'_> {
     fn bitor(&mut self) -> Result<Node, ParseError> {
         let mut node = self.bitxor()?;
         while self.consume("|") {
-            node = Node::new_bin(BinOp::Or, node, self.bitxor()?, self.tok())
+            node = Node::new_bin(BinOp::Or, node, self.bitxor()?, self.head)
         }
         Ok(node)
     }
@@ -1099,7 +1092,7 @@ impl Parser<'_> {
     fn bitxor(&mut self) -> Result<Node, ParseError> {
         let mut node = self.bitand()?;
         while self.consume("^") {
-            node = Node::new_bin(BinOp::Xor, node, self.bitand()?, self.tok())
+            node = Node::new_bin(BinOp::Xor, node, self.bitand()?, self.head)
         }
         Ok(node)
     }
@@ -1107,7 +1100,7 @@ impl Parser<'_> {
     fn bitand(&mut self) -> Result<Node, ParseError> {
         let mut node = self.equality()?;
         while self.consume("&") {
-            node = Node::new_bin(BinOp::And, node, self.equality()?, self.tok())
+            node = Node::new_bin(BinOp::And, node, self.equality()?, self.head)
         }
         Ok(node)
     }
@@ -1115,12 +1108,8 @@ impl Parser<'_> {
         let mut node = self.relational()?;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("==") => {
-                    Node::new_bin(BinOp::_Eq, node, self.skip().relational()?, self.tok())
-                }
-                Some("!=") => {
-                    Node::new_bin(BinOp::Neq, node, self.skip().relational()?, self.tok())
-                }
+                Some("==") => Node::new_bin(BinOp::_Eq, node, self.skip().relational()?, self.head),
+                Some("!=") => Node::new_bin(BinOp::Neq, node, self.skip().relational()?, self.head),
                 _ => return Ok(node),
             }
         }
@@ -1130,10 +1119,10 @@ impl Parser<'_> {
         let mut node = self.shift()?;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("<") => Node::new_bin(BinOp::Lt, node, self.skip().shift()?, self.tok()),
-                Some("<=") => Node::new_bin(BinOp::Le, node, self.skip().shift()?, self.tok()),
-                Some(">") => Node::new_bin(BinOp::Lt, self.skip().shift()?, node, self.tok()),
-                Some(">=") => Node::new_bin(BinOp::Le, self.skip().shift()?, node, self.tok()),
+                Some("<") => Node::new_bin(BinOp::Lt, node, self.skip().shift()?, self.head),
+                Some("<=") => Node::new_bin(BinOp::Le, node, self.skip().shift()?, self.head),
+                Some(">") => Node::new_bin(BinOp::Lt, self.skip().shift()?, node, self.head),
+                Some(">=") => Node::new_bin(BinOp::Le, self.skip().shift()?, node, self.head),
                 _ => return Ok(node),
             }
         }
@@ -1143,8 +1132,8 @@ impl Parser<'_> {
         let mut node = self.add()?;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("<<") => Node::new_bin(BinOp::Shl, node, self.skip().add()?, self.tok()),
-                Some(">>") => Node::new_bin(BinOp::Shr, node, self.skip().add()?, self.tok()),
+                Some("<<") => Node::new_bin(BinOp::Shl, node, self.skip().add()?, self.head),
+                Some(">>") => Node::new_bin(BinOp::Shr, node, self.skip().add()?, self.head),
                 _ => return Ok(node),
             }
         }
@@ -1154,8 +1143,8 @@ impl Parser<'_> {
         let mut node = self.mul()?;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("+") => Node::new_add(node, self.skip().mul()?, self.tok()),
-                Some("-") => Node::new_sub(node, self.skip().mul()?, self.tok()),
+                Some("+") => Node::new_add(node, self.skip().mul()?, self.head),
+                Some("-") => Node::new_sub(node, self.skip().mul()?, self.head),
                 _ => return Ok(node),
             }
         }
@@ -1165,9 +1154,9 @@ impl Parser<'_> {
         let mut node = self.cast()?;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("*") => Node::new_bin(BinOp::Mul, node, self.skip().cast()?, self.tok()),
-                Some("/") => Node::new_bin(BinOp::Div, node, self.skip().cast()?, self.tok()),
-                Some("%") => Node::new_bin(BinOp::Mod, node, self.skip().cast()?, self.tok()),
+                Some("*") => Node::new_bin(BinOp::Mul, node, self.skip().cast()?, self.head),
+                Some("/") => Node::new_bin(BinOp::Div, node, self.skip().cast()?, self.head),
+                Some("%") => Node::new_bin(BinOp::Mod, node, self.skip().cast()?, self.head),
                 _ => return Ok(node),
             };
         }
@@ -1179,7 +1168,7 @@ impl Parser<'_> {
                 let mut ty = self.typespec()?;
                 ty = self.abstruct_declarator(ty)?;
                 self.expect(")")?;
-                return Ok(Node::new_cast(ty, self.cast()?, self.tok()));
+                return Ok(Node::new_cast(ty, self.cast()?, self.head));
             } else {
                 self.unshift();
             }
@@ -1194,33 +1183,33 @@ impl Parser<'_> {
             Some("+") => self.skip().cast(),
             Some("-") => Ok(Node::new_bin(
                 BinOp::Sub,
-                Node::new_num(0, self.tok()),
+                Node::new_num(0, self.head),
                 self.skip().cast()?,
-                self.tok(),
+                self.head,
             )),
             Some("*") => {
                 let addr = self.skip().cast()?;
                 self.check_deref(addr)
             }
-            Some("&") => Ok(Node::new_unary("addr", self.skip().cast()?, self.tok())),
-            Some("~") => Ok(Node::new_unary("bitnot", self.skip().cast()?, self.tok())),
+            Some("&") => Ok(Node::new_unary("addr", self.skip().cast()?, self.head)),
+            Some("~") => Ok(Node::new_unary("bitnot", self.skip().cast()?, self.head)),
             Some("!") => Ok(Node::new_bin(
                 BinOp::_Eq,
                 self.skip().cast()?,
-                Node::new_num(0, None),
-                self.tok(),
+                Node::new_num(0, self.head),
+                self.head,
             )),
             Some("++") => {
                 // ++i => i+=1
                 let cast = self.skip().cast()?;
-                let tok = self.tok();
-                Ok(self.to_assign(Node::new_add(cast, Node::new_num(1, None), tok)))
+                let tok = self.head;
+                Ok(self.to_assign(Node::new_add(cast, Node::new_num(1, self.head), tok)))
             }
             Some("--") => {
                 // --i => i-=1
                 let cast = self.skip().cast()?;
-                let tok = self.tok();
-                Ok(self.to_assign(Node::new_sub(cast, Node::new_num(1, None), tok)))
+                let tok = self.head;
+                Ok(self.to_assign(Node::new_sub(cast, Node::new_num(1, self.head), tok)))
             }
             _ => self.postfix(),
         }
@@ -1235,7 +1224,7 @@ impl Parser<'_> {
         Ok(Node {
             kind: NodeKind::Deref(Box::new(addr)),
             ty: Some(ty),
-            tok: None,
+            tok_no: self.head,
         })
     }
     /// identを受けて構造体のメンバにアクセスする
@@ -1245,7 +1234,7 @@ impl Parser<'_> {
             Some(mem) => mem,
             _ => Err(self.raise_err(&format!("unknown member {}", name)))?,
         };
-        Ok(Node::new_member_access(node, mem, self.tok()))
+        Ok(Node::new_member_access(node, mem, self.head))
     }
     /// postfix = primary ("[" expr "]" | "." ident  | "->" ident | "++" | "--")*
     fn postfix(&mut self) -> Result<Node, ParseError> {
@@ -1255,15 +1244,15 @@ impl Parser<'_> {
             if self.consume("[") {
                 node = Node::new_unary(
                     "deref",
-                    Node::new_add(node, self.expr()?, self.tok()),
-                    self.tok(),
+                    Node::new_add(node, self.expr()?, self.head),
+                    self.head,
                 );
                 self.expect("]")?;
             } else if self.consume(".") {
                 node = self.struct_ref(node)?;
             // x->yは(*x).yに同じ
             } else if self.consume("->") {
-                node = Node::new_unary("deref", node, self.tok());
+                node = Node::new_unary("deref", node, self.head);
                 node = self.struct_ref(node)?;
             } else if self.consume("++") {
                 node = self.new_inc_dec(node, "+");
@@ -1277,20 +1266,25 @@ impl Parser<'_> {
     /// A++ は (tmp = &A, *tmp = *tmp + 1, *tmp - 1) になる
     /// ++Aと違って、A+=1としたあと、A-1という単なる値が返ることに注意
     fn new_inc_dec(&mut self, node: Node, op: &str) -> Node {
+        let tok_no = self.head;
         let tmp = self.add_var("", node.get_type().clone().to_ptr());
-        let tmp_node = || Node::new_var(tmp.clone(), None);
-        let tmp_deref = || Node::new_unary("deref", tmp_node(), None);
-        let n1 = Node::new_assign(tmp_node(), Node::new_unary("addr", node, None), None);
+        let tmp_node = || Node::new_var(tmp.clone(), tok_no);
+        let tmp_deref = || Node::new_unary("deref", tmp_node(), tok_no);
+        let n1 = Node::new_assign(
+            tmp_node(),
+            Node::new_unary("addr", node, self.head),
+            self.head,
+        );
         let n2: Node;
         let n3: Node;
         if op == "+" {
-            n2 = self.to_assign(Node::new_add(tmp_deref(), Node::new_num(1, None), None));
-            n3 = Node::new_sub(tmp_deref(), Node::new_num(1, None), None);
+            n2 = self.to_assign(Node::new_add(tmp_deref(), Node::new_num(1, tok_no), tok_no));
+            n3 = Node::new_sub(tmp_deref(), Node::new_num(1, tok_no), tok_no);
         } else {
-            n2 = self.to_assign(Node::new_sub(tmp_deref(), Node::new_num(1, None), None));
-            n3 = Node::new_add(tmp_deref(), Node::new_num(1, None), None);
+            n2 = self.to_assign(Node::new_sub(tmp_deref(), Node::new_num(1, tok_no), tok_no));
+            n3 = Node::new_add(tmp_deref(), Node::new_num(1, self.head), self.head);
         }
-        Node::new_comma(n1, Node::new_comma(n2, n3, None), self.tok())
+        Node::new_comma(n1, Node::new_comma(n2, n3, self.head), self.head)
     }
     fn primary(&mut self) -> Result<Node, ParseError> {
         if self.consume("(") {
@@ -1299,7 +1293,7 @@ impl Parser<'_> {
                 self.expect(")")?;
                 // 最後はexpression statementでないといけない
                 if let Some(NodeKind::ExprStmt(expr)) = stmts.pop().map(|n| n.kind) {
-                    Ok(Node::new_stmt_expr(stmts, *expr, self.tok()))
+                    Ok(Node::new_stmt_expr(stmts, *expr, self.head))
                 } else {
                     Err(self.raise_err("statement expression returning void is not supported"))
                 }
@@ -1308,7 +1302,7 @@ impl Parser<'_> {
                 self.expect(")").map(|_| node)?
             }
         } else if let Some(val) = self.consume_num() {
-            Ok(Node::new_num(val, self.tok()))
+            Ok(Node::new_num(val, self.head))
         } else if let Some(s) = self.consume_string() {
             Ok(self.add_string_literal(s))
         } else if self.consume("sizeof") {
@@ -1317,7 +1311,7 @@ impl Parser<'_> {
                     let mut ty = self.typespec()?;
                     ty = self.abstruct_declarator(ty)?;
                     self.expect(")")?;
-                    return Ok(Node::new_num(ty.size(), self.tok()));
+                    return Ok(Node::new_num(ty.size(), self.head));
                 } else {
                     self.unshift(); // "("を取り戻す 途中でNodeが生成されていなければ、取り戻せるはず
                 }
@@ -1325,7 +1319,7 @@ impl Parser<'_> {
             // このnodeは型のサイズを取得するためのみに使われ、
             // 実際には評価されない
             let node = self.unary()?;
-            Ok(Node::new_num(node.get_type().size(), self.tok()))
+            Ok(Node::new_num(node.get_type().size(), self.head))
         } else {
             let name = self.expect_ident()?;
             // 関数呼び出し
@@ -1341,7 +1335,7 @@ impl Parser<'_> {
                     if let Some(ty) = arg_types.pop() {
                         // 足りない型は無視する(可変長引数未対応)
                         if &ty != arg.get_type() {
-                            arg = Node::new_cast(ty, arg, self.tok());
+                            arg = Node::new_cast(ty, arg, self.head);
                         }
                     }
                     args.push(arg);
@@ -1352,15 +1346,15 @@ impl Parser<'_> {
                 }
                 Ok(Node::new_cast(
                     ret,
-                    Node::new_funcall(name, args, self.tok()),
-                    None,
+                    Node::new_funcall(name, args, self.head),
+                    self.head,
                 ))
             } else {
                 // 変数、またはenum定数
                 if let Some(var) = self.find_var(&name) {
-                    Ok(Node::new_var(var, self.tok()))
+                    Ok(Node::new_var(var, self.head))
                 } else if let Some(val) = self.find_enum(&name) {
-                    Ok(Node::new_inum(val, self.tok()))
+                    Ok(Node::new_inum(val, self.head))
                 } else {
                     Err(self.raise_err("variable not found!"))
                 }

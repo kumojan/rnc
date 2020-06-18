@@ -1,5 +1,4 @@
 use crate::r#type::*;
-use crate::tokenize::*;
 use std::fmt;
 use std::rc::Rc;
 
@@ -193,7 +192,7 @@ impl fmt::Debug for NodeKind {
 pub struct Node {
     pub kind: NodeKind,
     pub ty: Option<Type>,
-    pub tok: Option<Token>,
+    pub tok_no: usize,
 }
 impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -265,7 +264,7 @@ impl Node {
         };
         Ok(val)
     }
-    pub(super) fn new_num(val: usize, tok: Option<Token>) -> Self {
+    pub(super) fn new_num(val: usize, tok_no: usize) -> Self {
         let ty = if val <= i32::MAX as usize {
             Type::TyInt
         } else {
@@ -274,40 +273,35 @@ impl Node {
         Self {
             kind: NodeKind::Num(val),
             ty: Some(ty),
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_inum(val: i64, tok: Option<Token>) -> Self {
+    pub(super) fn new_inum(val: i64, tok_no: usize) -> Self {
         Self {
             kind: NodeKind::INum(val),
             ty: Some(Type::TyInt),
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_var(var: Rc<Var>, tok: Option<Token>) -> Self {
+    pub(super) fn new_var(var: Rc<Var>, tok_no: usize) -> Self {
         Self {
             ty: Some(var.ty.clone()),
             kind: NodeKind::Var(var),
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_cast(ty: Type, expr: Node, tok: Option<Token>) -> Self {
+    pub(super) fn new_cast(ty: Type, expr: Node, tok_no: usize) -> Self {
         if &ty == expr.get_type() {
             expr
         } else {
             Self {
                 kind: NodeKind::Cast(Box::new(expr)),
                 ty: Some(ty),
-                tok,
+                tok_no,
             }
         }
     }
-    pub(super) fn new_if(
-        condi: Node,
-        then_: Node,
-        else_: Option<Node>,
-        tok: Option<Token>,
-    ) -> Self {
+    pub(super) fn new_if(condi: Node, then_: Node, else_: Option<Node>, tok_no: usize) -> Self {
         Self {
             kind: NodeKind::If {
                 condi: Box::new(condi),
@@ -315,15 +309,10 @@ impl Node {
                 else_: else_.map(Box::new),
             },
             ty: None,
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_conditional(
-        condi: Node,
-        then_: Node,
-        else_: Node,
-        tok: Option<Token>,
-    ) -> Self {
+    pub(super) fn new_conditional(condi: Node, then_: Node, else_: Node, tok_no: usize) -> Self {
         let ty = if then_.get_type() == &Type::TyVoid || else_.get_type() == &Type::TyVoid {
             Type::TyVoid
         } else if then_.get_type().size() == 8 || else_.get_type().size() == 8 {
@@ -334,21 +323,21 @@ impl Node {
         Self {
             kind: NodeKind::Conditional {
                 condi: Box::new(condi),
-                then_: Box::new(Node::new_cast(ty.clone(), then_, None)),
-                else_: Box::new(Node::new_cast(ty.clone(), else_, None)),
+                then_: Box::new(Node::new_cast(ty.clone(), then_, tok_no)),
+                else_: Box::new(Node::new_cast(ty.clone(), else_, tok_no)),
             },
             ty: Some(ty),
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_unary(t: &str, node: Node, tok: Option<Token>) -> Self {
+    pub(super) fn new_unary(t: &str, node: Node, tok_no: usize) -> Self {
         Self {
             ty: match t {
                 "return" | "expr_stmt" => None,
                 "addr" => node.ty.clone().map(|t| t.to_ptr()),
                 "deref" => node.ty.clone().map(|t| {
                     t.get_base()
-                        .unwrap_or_else(|_| panic!("deref failed! at:{:?}", tok))
+                        .unwrap_or_else(|_| panic!("deref failed! at:{:?}", tok_no))
                 }),
                 "bitnot" => node.ty.as_ref().map(|t| t.cast_int()),
                 _ => unimplemented!(),
@@ -361,44 +350,44 @@ impl Node {
                 "bitnot" => NodeKind::BitNot(Box::new(node)),
                 _ => unimplemented!(),
             },
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_member_access(obj: Node, member: Member, tok: Option<Token>) -> Self {
+    pub(super) fn new_member_access(obj: Node, member: Member, tok_no: usize) -> Self {
         Self {
             ty: Some(member.ty.clone()),
             kind: NodeKind::Member {
                 obj: Box::new(obj),
                 mem: member,
             },
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_assign(var: Node, mut rhs: Node, tok: Option<Token>) -> Self {
+    pub(super) fn new_assign(var: Node, mut rhs: Node, tok_no: usize) -> Self {
         if var.ty != rhs.ty {
-            rhs = Node::new_cast(var.get_type().clone(), rhs, None);
+            rhs = Node::new_cast(var.get_type().clone(), rhs, tok_no);
         }
         Self {
             ty: var.ty.clone(),
             kind: NodeKind::Assign(Box::new(var), Box::new(rhs)),
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_comma(lhs: Node, rhs: Node, tok: Option<Token>) -> Self {
+    pub(super) fn new_comma(lhs: Node, rhs: Node, tok_no: usize) -> Self {
         Self {
             ty: rhs.ty.clone(),
             kind: NodeKind::Comma(Box::new(lhs), Box::new(rhs)),
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_expr_stmt(expr: Node, tok: Option<Token>) -> Self {
+    pub(super) fn new_expr_stmt(expr: Node, tok_no: usize) -> Self {
         Self {
             kind: NodeKind::ExprStmt(Box::new(expr)),
             ty: None,
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_bin(op: BinOp, lhs: Node, rhs: Node, tok: Option<Token>) -> Self {
+    pub(super) fn new_bin(op: BinOp, lhs: Node, rhs: Node, tok_no: usize) -> Self {
         Self {
             ty: match op {
                 BinOp::Sub if lhs.get_type().is_ptr() && rhs.get_type().is_ptr() => {
@@ -412,40 +401,40 @@ impl Node {
                 lhs: Box::new(lhs),
                 rhs: Box::new(rhs),
             },
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_add(lhs: Node, rhs: Node, tok: Option<Token>) -> Self {
+    pub(super) fn new_add(lhs: Node, rhs: Node, tok_no: usize) -> Self {
         match (lhs.get_type().is_ptr_like(), rhs.get_type().is_ptr_like()) {
             // 値 + 値
-            (false, false) => Node::new_bin(BinOp::Add, lhs, rhs, tok),
+            (false, false) => Node::new_bin(BinOp::Add, lhs, rhs, tok_no),
             // 値+ポインタ => ポインタ+値と見なす
-            (false, true) => Node::new_add(rhs, lhs, tok),
+            (false, true) => Node::new_add(rhs, lhs, tok_no),
             // ポインタ + 値 は値だけずれたポインタを返す(型はlhsなのでポインタになる)
             (true, false) => {
                 let ty_size = lhs.get_type().get_base().unwrap().size();
                 Node::new_bin(
                     BinOp::Add,
                     lhs,
-                    Node::new_bin(BinOp::Mul, Node::new_num(ty_size, None), rhs, None),
-                    tok,
+                    Node::new_bin(BinOp::Mul, Node::new_num(ty_size, tok_no), rhs, tok_no),
+                    tok_no,
                 )
             }
             (true, true) => unimplemented!(), // ポインタ同士の足し算は意味をなさない
         }
     }
-    pub(super) fn new_sub(lhs: Node, rhs: Node, tok: Option<Token>) -> Self {
+    pub(super) fn new_sub(lhs: Node, rhs: Node, tok_no: usize) -> Self {
         match (lhs.get_type().is_ptr_like(), rhs.get_type().is_ptr_like()) {
             // 値 - 値
-            (false, false) => Node::new_bin(BinOp::Sub, lhs, rhs, tok),
+            (false, false) => Node::new_bin(BinOp::Sub, lhs, rhs, tok_no),
             // ポインタ - 値
             (true, false) => {
                 let ty_size = lhs.get_type().get_base().unwrap().size();
                 Node::new_bin(
                     BinOp::Sub,
                     lhs,
-                    Node::new_bin(BinOp::Mul, rhs, Node::new_num(ty_size, None), None),
-                    tok,
+                    Node::new_bin(BinOp::Mul, rhs, Node::new_num(ty_size, tok_no), tok_no),
+                    tok_no,
                 )
             }
             // ポインタ - ポインタ (ずれを返す int)
@@ -453,27 +442,27 @@ impl Node {
                 let ty_size = lhs.get_type().get_base().unwrap().size();
                 Node::new_bin(
                     BinOp::Div,
-                    Node::new_bin(BinOp::Sub, lhs, rhs, None),
-                    Node::new_num(ty_size, None),
-                    tok,
+                    Node::new_bin(BinOp::Sub, lhs, rhs, tok_no),
+                    Node::new_num(ty_size, tok_no),
+                    tok_no,
                 )
             }
             // 値 - ポインタは意味をなさない
             (false, true) => unimplemented!(),
         }
     }
-    pub(super) fn new_and(lhs: Node, rhs: Node, tok: Option<Token>) -> Self {
+    pub(super) fn new_and(lhs: Node, rhs: Node, tok_no: usize) -> Self {
         Self {
             ty: Some(Type::TyBool),
             kind: NodeKind::LogAnd(Box::new(lhs), Box::new(rhs)),
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_or(lhs: Node, rhs: Node, tok: Option<Token>) -> Self {
+    pub(super) fn new_or(lhs: Node, rhs: Node, tok_no: usize) -> Self {
         Self {
             ty: Some(Type::TyBool),
             kind: NodeKind::LogOr(Box::new(lhs), Box::new(rhs)),
-            tok,
+            tok_no,
         }
     }
     pub(super) fn new_for(
@@ -481,7 +470,7 @@ impl Node {
         condi: Option<Node>,
         end: Option<Node>,
         loop_: Node,
-        tok: Option<Token>,
+        tok_no: usize,
     ) -> Self {
         Node {
             kind: NodeKind::For {
@@ -491,31 +480,31 @@ impl Node {
                 loop_: Box::new(loop_),
             },
             ty: None,
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_block(stmts: Vec<Node>, tok: Option<Token>) -> Self {
+    pub(super) fn new_block(stmts: Vec<Node>, tok_no: usize) -> Self {
         Self {
             kind: NodeKind::Block { stmts },
             ty: None,
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_stmt_expr(stmts: Vec<Node>, expr: Node, tok: Option<Token>) -> Self {
+    pub(super) fn new_stmt_expr(stmts: Vec<Node>, expr: Node, tok_no: usize) -> Self {
         Node {
             ty: Some(expr.get_type().clone()),
             kind: NodeKind::StmtExpr {
-                stmts: Box::new(Node::new_block(stmts, None)),
+                stmts: Box::new(Node::new_block(stmts, tok_no)),
                 expr: Box::new(expr),
             },
-            tok,
+            tok_no,
         }
     }
-    pub(super) fn new_funcall(name: String, args: Vec<Node>, tok: Option<Token>) -> Self {
+    pub(super) fn new_funcall(name: String, args: Vec<Node>, tok_no: usize) -> Self {
         Self {
             kind: NodeKind::FunCall { name, args },
             ty: Some(Type::TyInt),
-            tok,
+            tok_no,
         }
     }
 }

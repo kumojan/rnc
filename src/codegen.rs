@@ -1,6 +1,6 @@
 use crate::parse::node::{BinOp, Function, Node, NodeKind, Var};
 use crate::r#type::Type;
-use crate::tokenize::CString;
+use crate::tokenize::{CString, Token};
 use crate::util::*;
 use std::rc::Rc;
 
@@ -27,6 +27,7 @@ pub struct CodeGenError {
 #[derive(Default)]
 struct CodeGenerator {
     label_count: usize,
+    tklist: Vec<Token>,
     break_label: Vec<usize>,
     continue_label: Vec<usize>,
     case_label: Vec<usize>,
@@ -104,6 +105,11 @@ impl CodeGenerator {
         self.label_count += 1;
         label
     }
+    fn update_pos(&mut self, tok_no: usize) {
+        let cur_tok = &self.tklist[tok_no];
+        self.pos = cur_tok.pos;
+        println!(".loc 1 {}", cur_tok.line_no);
+    }
     fn gen_var_addr(&self, v: &Rc<Var>) {
         // println!("gen lval {:?}", &node);
         // rbpは関数の先頭アドレス
@@ -124,10 +130,7 @@ impl CodeGenerator {
         }
     }
     fn gen_addr(&mut self, node: &Node) -> Result<(), CodeGenError> {
-        if let Some(tok) = &node.tok {
-            self.pos = tok.pos;
-            println!(".loc 1 {}", tok.line_no);
-        }
+        self.update_pos(node.tok_no);
         match &node.kind {
             NodeKind::Var(var) => self.gen_var_addr(var),
             NodeKind::Deref(node) => self.gen_expr(node)?,
@@ -168,10 +171,7 @@ impl CodeGenerator {
         self.func_stack_size = align_to(offset, 16);
     }
     fn gen_expr(&mut self, node: &Node) -> Result<(), CodeGenError> {
-        if let Some(tok) = &node.tok {
-            self.pos = tok.pos;
-            println!(".loc 1 {}", tok.line_no);
-        }
+        self.update_pos(node.tok_no);
         match &node.kind {
             NodeKind::Num(val) => {
                 // println!("  push {}", val);
@@ -332,10 +332,7 @@ impl CodeGenerator {
         Ok(())
     }
     fn gen_stmt(&mut self, node: &Node) -> Result<(), CodeGenError> {
-        if let Some(tok) = &node.tok {
-            self.pos = tok.pos;
-            println!(".loc 1 {}", tok.line_no);
-        }
+        self.update_pos(node.tok_no);
         match &node.kind {
             NodeKind::Return(node) => {
                 self.gen_expr(node)?; // その値を取得し
@@ -487,8 +484,10 @@ pub fn code_gen(
     program: Vec<Function>,
     globals: Vec<Rc<Var>>,
     string_literals: Vec<CString>,
+    token_list: Vec<Token>,
 ) -> Result<(), CodeGenError> {
     let mut cg = CodeGenerator::default();
+    cg.tklist = token_list;
     println!(".intel_syntax noprefix");
 
     println!(".data");

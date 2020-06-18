@@ -54,11 +54,11 @@ fn compile(code: &String, print_tklist: bool, print_graph_: bool) -> Result<(), 
     let mut parser = Parser::new(token_list);
     parser.code_lines = code.split('\n').collect();
     parser.code = &code;
-    let (functions, globals, string_literals) = parser.program()?;
+    let (functions, globals, string_literals, token_list) = parser.program()?;
     if print_graph_ {
         print_graph(&functions);
     }
-    code_gen(functions, globals, string_literals)?;
+    code_gen(functions, globals, string_literals, token_list)?;
     Ok(())
 }
 
