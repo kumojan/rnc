@@ -22,8 +22,9 @@ impl fmt::Display for ParseError {
 #[derive(Default)]
 pub struct Parser<'a> {
     cur_line: (usize, &'a str),
-    cur_pos: &'a str,
-    head: usize, // 読んでいるtokenのtklist上の位置
+    cur_pos: &'a str, // 現在のトークンからのコード
+    cur_tok: &'a str, // 現在のトークン
+    head: usize,      // 読んでいるtokenのtklist上の位置
     tklist: Vec<Token>,
     locals: Vec<Rc<Var>>, // Node::Varと共有する。
     globals: Vec<VarScope>,
@@ -147,22 +148,24 @@ impl Parser<'_> {
             ..Self::default()
         }
     }
+    fn set_tok(&mut self) {
+        if self.head < self.tklist.len() {
+            let head = &self.tklist[self.head];
+            self.cur_line = (head.line_no + 1, self.code_lines[head.line_no]);
+            self.cur_pos = &self.code[head.byte_len..];
+            self.cur_tok = &self.code[head.byte_len..head.byte_len + head.len];
+        }
+    }
     /// トークンを一つ読んで、すすむ
     /// 読んだトークンはcur_tokにいれる
     fn skip(&mut self) -> &mut Self {
         self.head += 1;
-        if self.head < self.tklist.len() {
-            let head = &self.tklist[self.head];
-            self.cur_line = (head.line_no + 1, self.code_lines[head.line_no]);
-            self.cur_pos = &self.code[head.byte_len..head.byte_len + head.len];
-        }
+        self.set_tok();
         self
     }
     fn unshift(&mut self) -> &mut Self {
         self.head -= 1;
-        let head = &self.tklist[self.head];
-        self.cur_line = (head.line_no + 1, self.code_lines[head.line_no]);
-        self.cur_pos = &self.code[head.byte_len..head.byte_len + head.len];
+        self.set_tok();
         self
     }
     fn peek(&mut self, s: &str) -> bool {

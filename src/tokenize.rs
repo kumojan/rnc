@@ -33,10 +33,10 @@ impl Default for TokenKind {
 #[derive(Debug, Default)]
 pub struct Token {
     pub kind: TokenKind,
-    pub pos: usize,
-    pub len: usize,
-    pub line_no: usize,
-    pub byte_len: usize,
+    pub pos: usize,      // charとしての位置
+    pub len: usize,      // byteでの長さ
+    pub line_no: usize,  // 行番号0始まり
+    pub byte_len: usize, // byteでの位置
 }
 impl Token {
     fn new_num(val: usize, pos: usize, len: usize) -> Self {
@@ -73,11 +73,11 @@ impl Token {
             ..Default::default()
         }
     }
-    fn new_char(c: u8, pos: usize) -> Self {
+    fn new_char(c: u8, pos: usize, len: usize) -> Self {
         Self {
             kind: TkChar(c),
             pos,
-            len: 1,
+            len,
             ..Default::default()
         }
     }
@@ -94,11 +94,6 @@ pub struct TokenizeError {
 impl fmt::Display for TokenizeError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "invalid token at {}", self.pos)
-    }
-}
-impl From<usize> for TokenizeError {
-    fn from(pos: usize) -> Self {
-        Self::new("unknown token", pos)
     }
 }
 impl TokenizeError {
@@ -188,10 +183,7 @@ impl Lexer {
         } else {
             None // error
         }
-        .ok_or(TokenizeError::new(
-            &format!("expected number of base {}", base),
-            self.pos,
-        ))
+        .ok_or(self.raise_err(&format!("expected number of base {}", base)))
     }
     fn read_ident(&mut self) -> Option<String> {
         let s: String = self.code[self.pos..]
@@ -262,7 +254,7 @@ impl Lexer {
             s => {
                 let c = s.to_string().as_bytes().to_owned();
                 if c.len() > 1 {
-                    Err(TokenizeError::new("unknown escape sequence", self.pos))?
+                    Err(self.raise_err("unknown escape sequence"))?
                 }
                 c[0]
             }
@@ -283,7 +275,7 @@ impl Lexer {
                 c = self.read_escape_char()?;
             }
             if self.consume() != '\'' {
-                Err(TokenizeError::new("char literal too long", self.pos))?;
+                Err(self.raise_err("char literal too long"))?;
             }
             Ok(Some(c))
         } else {
@@ -322,7 +314,7 @@ impl Lexer {
             // などとして持つ必要がある。 => 修正した
             Ok(u32::from_str_radix(&s, 16).unwrap() as u8)
         } else {
-            Err(TokenizeError::new("expected hex digits", self.pos))
+            Err(self.raise_err("expected hex digits"))
         }
     }
     fn read_string(&mut self) -> Result<Option<Vec<u8>>, TokenizeError> {
@@ -380,6 +372,15 @@ impl Lexer {
         }
         Ok(false)
     }
+    fn byte_len(&self, start: usize) -> usize {
+        self.code[start..self.pos]
+            .iter()
+            .map(|c| c.len_utf8())
+            .sum()
+    }
+    fn raise_err(&self, msg: &str) -> TokenizeError {
+        TokenizeError::new(msg, self.pos)
+    }
     pub fn tokenize(&mut self) -> Result<Vec<Token>, TokenizeError> {
         let mut list: Vec<Token> = Vec::new();
         while !self.is_at_end() {
@@ -387,19 +388,19 @@ impl Lexer {
             if self.read_whitespace() || self.read_comment()? {
                 continue;
             } else if let Some(c) = self.read_char()? {
-                list.push(Token::new_char(c, tk_head));
+                list.push(Token::new_char(c, tk_head, self.byte_len(tk_head)));
             } else if let Some(s) = self.read_punct() {
                 list.push(Token::new_reserved(s, tk_head));
             } else if let Some(s) = self.read_word() {
                 list.push(Token::new_reserved(s, tk_head));
             } else if let Some(n) = self.read_num()? {
-                list.push(Token::new_num(n, tk_head, self.pos - tk_head));
+                list.push(Token::new_num(n, tk_head, self.byte_len(tk_head)));
             } else if let Some(s) = self.read_ident() {
                 list.push(Token::new_ident(s, tk_head));
             } else if let Some(s) = self.read_string()? {
-                list.push(Token::new_string(s, tk_head, self.pos - tk_head));
+                list.push(Token::new_string(s, tk_head, self.byte_len(tk_head)));
             } else {
-                return Err(self.pos)?;
+                return Err(self.raise_err("unknown token"))?;
             }
         }
         list.push(Token {
