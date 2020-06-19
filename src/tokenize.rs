@@ -325,6 +325,7 @@ impl Lexer {
             while !self.is_at_end() {
                 match self.consume() {
                     '"' => {
+                        v.push(0); // 末尾の'\0'を追加
                         return Ok(Some(v));
                     }
                     '\\' => {

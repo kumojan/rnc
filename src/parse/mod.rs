@@ -585,10 +585,10 @@ impl Parser<'_> {
     fn add_string_literal(&mut self, data: CString) -> Node {
         let n = Node {
             kind: NodeKind::Literal {
-                ty: Type::TyChar.to_complete_array(data.0.len() + 1), // string末尾の'\0'も大きさに含める
+                ty: Type::TyChar.to_complete_array(data.0.len()),
                 id: self.string_literals.len(),
             },
-            ty: Some(Type::TyChar.to_complete_array(data.0.len() + 1)),
+            ty: Some(Type::TyChar.to_complete_array(data.0.len())),
             tok_no: self.head,
         };
         self.string_literals.push(data);
@@ -781,15 +781,23 @@ impl Parser<'_> {
         // 構造体宣言の後にすぐにセミコロンの場合、変数は設定せず、初期化もないのでstmts=vec![]のまま
         if !self.consume(";") {
             loop {
-                let (name, ty) = self.declarator(basety.clone())?;
+                let (name, mut ty) = self.declarator(basety.clone())?;
                 if ty == Type::TyVoid {
                     Err(self.raise_err("variable decleared void"))?
                 }
                 if self.consume("=") {
                     let init = self.initializer()?;
+                    if let Type::TyArray { mut len, base } = ty {
+                        if let InitTree::List(v) = &init.t {
+                            if len.is_none() {
+                                len = Some(v.len());
+                            }
+                        }
+                        ty = Type::TyArray { len, base };
+                    }
                     let var = self.add_var(&name, ty);
                     let mut nodes = vec![];
-                    self.init_stmt3(&var, init, vec![], &mut nodes, &var.ty)?;
+                    self.init_stmt(&var, init, vec![], &mut nodes, &var.ty)?;
                     stmts.extend(nodes);
                 } else {
                     self.add_var(&name, ty);
@@ -830,7 +838,7 @@ impl Parser<'_> {
     }
     /// x[1][2] = a; というような代入文を生成する。
     /// TODO: 初期化子不足の時、ゼロで初期化する。vの次元を見ると良いと思う。
-    fn init_stmt3(
+    fn init_stmt(
         &mut self,
         var: &Rc<Var>,
         i: Initializer,
@@ -852,18 +860,18 @@ impl Parser<'_> {
                         for d in list.len()..*len {
                             v.push(d);
                             let z = Initializer::new_zero(tok_no);
-                            v = self.init_stmt3(var, z, v, nodes, base)?;
+                            v = self.init_stmt(var, z, v, nodes, base)?;
                         }
                     }
                     for (d, i) in list.into_iter().enumerate() {
                         v.push(d);
-                        v = self.init_stmt3(var, i, v, nodes, base)?;
+                        v = self.init_stmt(var, i, v, nodes, base)?;
                     }
                 }
                 InitTree::Zero => {
                     for d in 0..*len {
                         v.push(d);
-                        v = self.init_stmt3(var, Initializer::new_zero(tok_no), v, nodes, base)?;
+                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, base)?;
                     }
                 }
                 _ => Err(self.raise_err("invalid initializer"))?,
