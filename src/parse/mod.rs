@@ -585,10 +585,10 @@ impl Parser<'_> {
     fn add_string_literal(&mut self, data: CString) -> Node {
         let n = Node {
             kind: NodeKind::Literal {
-                ty: Type::TyChar.to_complete_array(data.0.len() + 1), // string末尾の'\0'も大きさに含める
+                ty: Type::TyChar.to_complete_array(data.0.len()), // string末尾の'\0'も大きさに含める
                 id: self.string_literals.len(),
             },
-            ty: Some(Type::TyChar.to_complete_array(data.0.len() + 1)),
+            ty: Some(Type::TyChar.to_complete_array(data.0.len())),
             tok_no: self.head,
         };
         self.string_literals.push(data);
@@ -781,12 +781,20 @@ impl Parser<'_> {
         // 構造体宣言の後にすぐにセミコロンの場合、変数は設定せず、初期化もないのでstmts=vec![]のまま
         if !self.consume(";") {
             loop {
-                let (name, ty) = self.declarator(basety.clone())?;
+                let (name, mut ty) = self.declarator(basety.clone())?;
                 if ty == Type::TyVoid {
                     Err(self.raise_err("variable decleared void"))?
                 }
                 if self.consume("=") {
                     let init = self.initializer()?;
+                    if let Type::TyArray { mut len, base } = ty {
+                        if let InitTree::List(v) = &init.t {
+                            if len.is_none() {
+                                len = Some(v.len());
+                            }
+                        }
+                        ty = Type::TyArray { len, base };
+                    }
                     let var = self.add_var(&name, ty);
                     let mut nodes = vec![];
                     self.init_stmt3(&var, init, vec![], &mut nodes, &var.ty)?;
