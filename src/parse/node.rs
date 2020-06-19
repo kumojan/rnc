@@ -360,6 +360,7 @@ impl Node {
                 "addr" => node.ty.clone().map(|t| t.to_ptr()),
                 "deref" => node.ty.clone().map(|t| {
                     t.get_base()
+                        .map(|b| b.clone())
                         .unwrap_or_else(|_| panic!("deref failed! at:{:?}", tok_no))
                 }),
                 "bitnot" => node.ty.as_ref().map(|t| t.cast_int()),

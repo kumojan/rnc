@@ -142,19 +142,14 @@ impl Type {
             mems: Rc::new(mems),
         }
     }
-    pub fn get_base(&self) -> Result<Self, TypeError> {
+    pub fn get_base(&self) -> Result<&Self, TypeError> {
         let base = match self {
-            Type::TyPtr(base) => *base.clone(),
-            Type::TyArray { base, .. } => *base.clone(),
+            Type::TyPtr(base) => base,
+            Type::TyArray { base, .. } => base,
             _ => Err(TypeError {
                 msg: "cannot dereference".to_owned(),
             })?,
         };
-        if base == Type::TyVoid {
-            Err(TypeError {
-                msg: "dereferencing void pointer".to_owned(),
-            })?;
-        }
         Ok(base)
     }
     pub fn size(&self) -> usize {

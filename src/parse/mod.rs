@@ -788,7 +788,7 @@ impl Parser<'_> {
                 // 初期化がなければ、コードには現れないので捨てられる
                 let var = self.add_var(&name, ty);
                 if self.consume("=") {
-                    let init = self.initializer()?;
+                    let init = self.array_initializer()?;
                     let mut nodes = vec![];
                     Parser::init_stmt(var, init, vec![], &mut nodes);
                     stmts.extend(nodes);
@@ -801,19 +801,28 @@ impl Parser<'_> {
         }
         Ok(stmts)
     }
-    /// initializer = "{" initializer ("," initializer )*"}" | assign
-    fn initializer(&mut self) -> Result<Initializer, ParseError> {
+    /// array-initializer = "{" array-initializer ("," array-initializer )*"}" | assign
+    fn array_initializer(&mut self) -> Result<Initializer, ParseError> {
         let pos = self.head;
         if self.consume("{") {
             let mut v = vec![];
             loop {
-                v.push(self.initializer()?);
+                v.push(self.array_initializer()?);
                 if !self.consume(",") {
                     break;
                 }
             }
             self.expect("}")?;
             Ok(Initializer::new_list(v, pos))
+        } else if let Some(s) = self.consume_string() {
+            let s =
+                s.0.into_iter()
+                    .map(|c| {
+                        let n = Node::new_num(c as usize, pos);
+                        Initializer::new_leaf(n, pos)
+                    })
+                    .collect();
+            Ok(Initializer::new_list(s, pos))
         } else {
             Ok(Initializer::new_leaf(self.assign()?, pos))
         }
@@ -1249,14 +1258,17 @@ impl Parser<'_> {
     }
     fn check_deref(&self, addr: Node) -> Result<Node, ParseError> {
         let ty = if let Ok(ty) = addr.get_type().get_base() {
-            ty
+            if ty == &Type::TyVoid {
+                return Err(self.raise_err("dereferencing void pointer!"));
+            }
+            Some(ty.clone())
         } else {
             println!("kind:{:?} type:{:?}", addr.kind, addr.get_type());
             return Err(self.raise_err("cannot dereference"));
         };
         Ok(Node {
             kind: NodeKind::Deref(Box::new(addr)),
-            ty: Some(ty),
+            ty,
             tok_no: self.head,
         })
     }
