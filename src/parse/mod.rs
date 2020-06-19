@@ -785,13 +785,14 @@ impl Parser<'_> {
                 if ty == Type::TyVoid {
                     Err(self.raise_err("variable decleared void"))?
                 }
-                // 初期化がなければ、コードには現れないので捨てられる
-                let var = self.add_var(&name, ty);
                 if self.consume("=") {
-                    let init = self.array_initializer()?;
+                    let init = self.initializer()?;
+                    let var = self.add_var(&name, ty);
                     let mut nodes = vec![];
-                    Parser::init_stmt(var, init, vec![], &mut nodes);
+                    self.init_stmt3(&var, init, vec![], &mut nodes, &var.ty)?;
                     stmts.extend(nodes);
+                } else {
+                    self.add_var(&name, ty);
                 }
                 if !self.consume(",") {
                     break; // 宣言終了
@@ -801,13 +802,13 @@ impl Parser<'_> {
         }
         Ok(stmts)
     }
-    /// array-initializer = "{" array-initializer ("," array-initializer )*"}" | assign
-    fn array_initializer(&mut self) -> Result<Initializer, ParseError> {
+    /// initializer = "{" initializer ("," initializer )*"}" | assign
+    fn initializer(&mut self) -> Result<Initializer, ParseError> {
         let pos = self.head;
         if self.consume("{") {
             let mut v = vec![];
             loop {
-                v.push(self.array_initializer()?);
+                v.push(self.initializer()?);
                 if !self.consume(",") {
                     break;
                 }
@@ -829,32 +830,67 @@ impl Parser<'_> {
     }
     /// x[1][2] = a; というような代入文を生成する。
     /// TODO: 初期化子不足の時、ゼロで初期化する。vの次元を見ると良いと思う。
-    fn init_stmt(
-        var: Rc<Var>,
+    fn init_stmt3(
+        &mut self,
+        var: &Rc<Var>,
         i: Initializer,
         mut v: Vec<usize>,
         nodes: &mut Vec<Node>,
-    ) -> Vec<usize> {
+        ty: &Type,
+    ) -> Result<Vec<usize>, ParseError> {
         let Initializer { t, tok_no } = i;
-        match t {
-            InitTree::List(list) => {
-                for (d, i) in list.into_iter().enumerate() {
-                    v.push(d);
-                    v = Parser::init_stmt(var.clone(), i, v, nodes);
+        // 配列に代入しようとしているか否かで分ける
+        match ty {
+            Type::TyArray {
+                len: Some(len),
+                base,
+            } => match t {
+                InitTree::List(list) => {
+                    if *len < list.len() {
+                        Err(self.raise_err("initializer too long"))?;
+                    } else if list.len() < *len {
+                        for d in list.len()..*len {
+                            v.push(d);
+                            let z = Initializer::new_zero(tok_no);
+                            v = self.init_stmt3(var, z, v, nodes, base)?;
+                        }
+                    }
+                    for (d, i) in list.into_iter().enumerate() {
+                        v.push(d);
+                        v = self.init_stmt3(var, i, v, nodes, base)?;
+                    }
                 }
-            }
-            InitTree::Leaf(a) => {
-                let mut node = Node::new_var(var, tok_no);
+                InitTree::Zero => {
+                    for d in 0..*len {
+                        v.push(d);
+                        v = self.init_stmt3(var, Initializer::new_zero(tok_no), v, nodes, base)?;
+                    }
+                }
+                _ => Err(self.raise_err("invalid initializer"))?,
+            },
+            ty => {
+                let val = match t {
+                    InitTree::Leaf(a) => *a,
+                    InitTree::Zero => {
+                        if ty.is_integer() {
+                            Node::new_num(0, tok_no)
+                        } else {
+                            Err(self.raise_err("invalid initializer"))?
+                        }
+                    }
+                    InitTree::List(..) => Err(self.raise_err("too much dimension!"))?,
+                };
+                let mut node = Node::new_var(var.clone(), tok_no);
                 for d in &v {
                     let d = Node::new_num(*d, tok_no);
                     node = Node::new_unary("deref", Node::new_add(node, d, tok_no), tok_no);
                 }
-                node = Node::new_assign(node, *a, tok_no);
+                node = Node::new_assign(node, val, tok_no);
                 nodes.push(Node::new_expr_stmt(node, tok_no));
             }
         }
         v.pop(); // 自分の階層のインデックスを捨てる
-        v
+        Ok(v)
     }
     fn compound_stmt(&mut self, enter_scope: bool) -> Result<Vec<Node>, ParseError> {
         self.expect("{")?;

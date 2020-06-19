@@ -22,6 +22,7 @@ impl fmt::Debug for Var {
 pub enum InitTree {
     Leaf(Box<Node>),
     List(Vec<Initializer>),
+    Zero,
 }
 pub struct Initializer {
     pub t: InitTree,
@@ -37,6 +38,12 @@ impl Initializer {
     pub(super) fn new_list(list: Vec<Initializer>, tok_no: usize) -> Self {
         Initializer {
             t: InitTree::List(list),
+            tok_no,
+        }
+    }
+    pub(super) fn new_zero(tok_no: usize) -> Self {
+        Initializer {
+            t: InitTree::Zero,
             tok_no,
         }
     }
