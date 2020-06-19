@@ -89,6 +89,11 @@ impl VarScope {
     }
 }
 
+enum Init {
+    Index(usize),
+    Member(String),
+}
+
 ///
 /// program = (funcdef | global-var)*
 /// funcdef = "static"? typespec declarator funcargs "{" compound_stmt "}"
@@ -788,7 +793,7 @@ impl Parser<'_> {
                 if self.consume("=") {
                     let init = self.initializer()?;
                     if let Type::TyArray { mut len, base } = ty {
-                        if let InitTree::List(v) = &init.t {
+                        if let InitKind::List(v) = &init.t {
                             if len.is_none() {
                                 len = Some(v.len());
                             }
@@ -810,19 +815,23 @@ impl Parser<'_> {
         }
         Ok(stmts)
     }
-    /// initializer = "{" initializer ("," initializer )*"}" | assign
+    /// initializer = "{" initializer ("," initializer )*"}" | assign | string
     fn initializer(&mut self) -> Result<Initializer, ParseError> {
         let pos = self.head;
         if self.consume("{") {
-            let mut v = vec![];
-            loop {
-                v.push(self.initializer()?);
-                if !self.consume(",") {
-                    break;
+            if self.consume("}") {
+                Ok(Initializer::new_zero(pos))
+            } else {
+                let mut v = vec![];
+                loop {
+                    v.push(self.initializer()?);
+                    if !self.consume(",") {
+                        break;
+                    }
                 }
+                self.expect("}")?;
+                Ok(Initializer::new_list(v, pos))
             }
-            self.expect("}")?;
-            Ok(Initializer::new_list(v, pos))
         } else if let Some(s) = self.consume_string() {
             let s =
                 s.0.into_iter()
@@ -837,68 +846,110 @@ impl Parser<'_> {
         }
     }
     /// x[1][2] = a; というような代入文を生成する。
-    /// TODO: 初期化子不足の時、ゼロで初期化する。vの次元を見ると良いと思う。
     fn init_stmt(
         &mut self,
         var: &Rc<Var>,
         i: Initializer,
-        mut v: Vec<usize>,
+        mut v: Vec<Init>,
         nodes: &mut Vec<Node>,
         ty: &Type,
-    ) -> Result<Vec<usize>, ParseError> {
+    ) -> Result<Vec<Init>, ParseError> {
         let Initializer { t, tok_no } = i;
-        // 配列に代入しようとしているか否かで分ける
+        // 配列または構造体に代入している時は分ける
+        // TODO: union
         match ty {
             Type::TyArray {
                 len: Some(len),
                 base,
             } => match t {
-                InitTree::List(list) => {
+                InitKind::List(list) => {
                     if *len < list.len() {
                         Err(self.raise_err("initializer too long"))?;
-                    } else if list.len() < *len {
-                        for d in list.len()..*len {
-                            v.push(d);
-                            let z = Initializer::new_zero(tok_no);
-                            v = self.init_stmt(var, z, v, nodes, base)?;
-                        }
+                    }
+                    for d in list.len()..*len {
+                        v.push(Init::Index(d));
+                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, base)?;
                     }
                     for (d, i) in list.into_iter().enumerate() {
-                        v.push(d);
+                        v.push(Init::Index(d));
                         v = self.init_stmt(var, i, v, nodes, base)?;
                     }
                 }
-                InitTree::Zero => {
+                InitKind::Zero => {
                     for d in 0..*len {
-                        v.push(d);
+                        v.push(Init::Index(d));
                         v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, base)?;
                     }
                 }
-                _ => Err(self.raise_err("invalid initializer"))?,
+                _ => Err(self.raise_err("array must be initialized with braces"))?,
+            },
+            Type::TyStruct {
+                mems,
+                is_union: false,
+                ..
+            } => match t {
+                InitKind::List(list) => {
+                    if mems.len() < list.len() {
+                        Err(self.raise_err("initializer too long"))?;
+                    }
+                    for m in mems.iter().skip(list.len()) {
+                        v.push(Init::Member(m.name.clone()));
+                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, &m.ty)?;
+                    }
+                    for (i, m) in list.into_iter().zip(mems.iter()) {
+                        v.push(Init::Member(m.name.clone()));
+                        v = self.init_stmt(var, i, v, nodes, &m.ty)?;
+                    }
+                }
+                InitKind::Zero => {
+                    for m in mems.iter() {
+                        v.push(Init::Member(m.name.clone()));
+                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, &m.ty)?;
+                    }
+                }
+                InitKind::Leaf(val) => {
+                    self.init_leaf(var.clone(), *val, nodes, &v, tok_no)?;
+                }
             },
             ty => {
                 let val = match t {
-                    InitTree::Leaf(a) => *a,
-                    InitTree::Zero => {
-                        if ty.is_integer() {
-                            Node::new_num(0, tok_no)
+                    InitKind::Leaf(val) => *val,
+                    InitKind::Zero => {
+                        if ty.is_integer() || ty.is_ptr() {
+                            Node::new_num(0, tok_no) // ptrの場合、nullポインタ
                         } else {
                             Err(self.raise_err("invalid initializer"))?
                         }
                     }
-                    InitTree::List(..) => Err(self.raise_err("too much dimension!"))?,
+                    InitKind::List(..) => Err(self.raise_err("too much dimension"))?, // 配列でも構造体でもないものに、配列風の初期化をしようとしている
                 };
-                let mut node = Node::new_var(var.clone(), tok_no);
-                for d in &v {
-                    let d = Node::new_num(*d, tok_no);
-                    node = Node::new_unary("deref", Node::new_add(node, d, tok_no), tok_no);
-                }
-                node = Node::new_assign(node, val, tok_no);
-                nodes.push(Node::new_expr_stmt(node, tok_no));
+                self.init_leaf(var.clone(), val, nodes, &v, tok_no)?;
             }
         }
         v.pop(); // 自分の階層のインデックスを捨てる
         Ok(v)
+    }
+    fn init_leaf(
+        &mut self,
+        var: Rc<Var>,
+        val: Node,
+        nodes: &mut Vec<Node>,
+        v: &Vec<Init>,
+        tok_no: usize,
+    ) -> Result<(), ParseError> {
+        let mut node = Node::new_var(var.clone(), tok_no);
+        for d in v {
+            node = match d {
+                Init::Index(idx) => {
+                    let idx = Node::new_num(*idx, tok_no);
+                    Node::new_unary("deref", Node::new_add(node, idx, tok_no), tok_no)
+                }
+                Init::Member(name) => self.struct_ref(node, name)?,
+            };
+        }
+        node = Node::new_assign(node, val, tok_no);
+        nodes.push(Node::new_expr_stmt(node, tok_no));
+        Ok(())
     }
     fn compound_stmt(&mut self, enter_scope: bool) -> Result<Vec<Node>, ParseError> {
         self.expect("{")?;
@@ -1317,9 +1368,8 @@ impl Parser<'_> {
         })
     }
     /// identを受けて構造体のメンバにアクセスする
-    fn struct_ref(&mut self, node: Node) -> Result<Node, ParseError> {
-        let name = self.expect_ident()?;
-        let mem = match node.get_type().get_struct_mem(&name) {
+    fn struct_ref(&mut self, node: Node, name: &String) -> Result<Node, ParseError> {
+        let mem = match node.get_type().get_struct_mem(name) {
             Some(mem) => mem,
             _ => Err(self.raise_err(&format!("unknown member {}", name)))?,
         };
@@ -1338,11 +1388,13 @@ impl Parser<'_> {
                 );
                 self.expect("]")?;
             } else if self.consume(".") {
-                node = self.struct_ref(node)?;
+                let name = &self.expect_ident()?;
+                node = self.struct_ref(node, name)?;
             // x->yは(*x).yに同じ
             } else if self.consume("->") {
+                let name = &self.expect_ident()?;
                 node = Node::new_unary("deref", node, self.head);
-                node = self.struct_ref(node)?;
+                node = self.struct_ref(node, name)?;
             } else if self.consume("++") {
                 node = self.new_inc_dec(node, "+");
             } else if self.consume("--") {

@@ -19,31 +19,31 @@ impl fmt::Debug for Var {
     }
 }
 
-pub enum InitTree {
+pub enum InitKind {
     Leaf(Box<Node>),
     List(Vec<Initializer>),
     Zero,
 }
 pub struct Initializer {
-    pub t: InitTree,
+    pub t: InitKind,
     pub tok_no: usize,
 }
 impl Initializer {
     pub(super) fn new_leaf(leaf: Node, tok_no: usize) -> Self {
         Initializer {
-            t: InitTree::Leaf(Box::new(leaf)),
+            t: InitKind::Leaf(Box::new(leaf)),
             tok_no,
         }
     }
     pub(super) fn new_list(list: Vec<Initializer>, tok_no: usize) -> Self {
         Initializer {
-            t: InitTree::List(list),
+            t: InitKind::List(list),
             tok_no,
         }
     }
     pub(super) fn new_zero(tok_no: usize) -> Self {
         Initializer {
-            t: InitTree::Zero,
+            t: InitKind::Zero,
             tok_no,
         }
     }

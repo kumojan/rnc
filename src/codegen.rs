@@ -602,7 +602,7 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
             s += &format!("{} [label=\"bitnot {:?}\"];\n", nodename, node.ty);
             s += &graph_gen(expr, &nodename, 0, None);
         }
-        NodeKind::Var(var) => s += &format!("{} [label=\"{:?}\"];\n", nodename, var),
+        NodeKind::Var(var) => s += &format!("{} [label=\"var {}\"];\n", nodename, var.name),
         NodeKind::Literal { id, .. } => s += &format!("{} [label=\"literal {}\"];\n", nodename, id),
         NodeKind::Bin { op, lhs, rhs } => {
             s += &format!("{} [label=\"{:?}\"];\n", nodename, op);
