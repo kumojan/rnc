@@ -142,6 +142,8 @@ enum Init {
 ///     | ident ("(" (assign ("," assign )*)? ")")?  // 関数の引数はassignにした。(コンマ演算子との兼ね合い)
 ///     | "(" expr ")"
 ///     | "sizeof" unary
+///     | "sizeof" "(" type ")"
+///     | "alignof" "(" type ")"
 ///     | "(" "{" stmt* expr ";" "}" ")"
 ///
 impl Parser<'_> {
@@ -1454,13 +1456,19 @@ impl Parser<'_> {
                     self.expect(")")?;
                     return Ok(Node::new_num(ty.size(), self.head));
                 } else {
-                    self.unshift(); // "("を取り戻す 途中でNodeが生成されていなければ、取り戻せるはず
+                    self.unshift(); // 型名ではなかったので、戻す
                 }
             }
             // このnodeは型のサイズを取得するためのみに使われ、
             // 実際には評価されない
             let node = self.unary()?;
             Ok(Node::new_num(node.get_type().size(), self.head))
+        } else if self.consume("alignof") {
+            self.expect("(")?;
+            let mut ty = self.typespec()?;
+            ty = self.abstruct_declarator(ty)?;
+            self.expect(")")?;
+            Ok(Node::new_num(ty.align(), self.head))
         } else {
             let name = self.expect_ident()?;
             // 関数呼び出し

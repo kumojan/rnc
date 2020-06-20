@@ -128,7 +128,7 @@ impl Lexer {
                 4 => ["else", "char", "long", "void", "enum", "goto", "case"].contains(&s),
                 5 => ["while", "union", "short", "_Bool", "break"].contains(&s),
                 6 => ["return", "sizeof", "struct", "static", "switch"].contains(&s),
-                7 => ["typedef", "default"].contains(&s),
+                7 => ["typedef", "default", "alignof"].contains(&s),
                 8 => ["continue"].contains(&s),
                 _ => unimplemented!(),
             }
