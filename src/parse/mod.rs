@@ -535,7 +535,7 @@ impl Parser<'_> {
             })
             .next()
     }
-    fn peek_typedef(&mut self) -> Option<Type> {
+    fn peek_typedef(&self) -> Option<Type> {
         self.peek_ident().map_or(None, |name| {
             self.var_scopes
                 .iter()
@@ -552,6 +552,7 @@ impl Parser<'_> {
             ty,
             id: self.locals.len(),
             is_local: true,
+            init_data: None,
         });
         self.locals.push(var.clone());
         let len = self.var_scopes.len();
@@ -567,7 +568,12 @@ impl Parser<'_> {
         self.var_scopes[len - 1].push(VarScope::Enum(name, num));
     }
     // グローバル変数は重複して宣言できない
-    fn add_global(&mut self, name: String, ty: Type) -> Result<Rc<Var>, ParseError> {
+    fn add_global(
+        &mut self,
+        name: String,
+        ty: Type,
+        init_data: Option<Vec<u8>>,
+    ) -> Result<Rc<Var>, ParseError> {
         if self.globals.iter().find(|v| v.name() == &name).is_some() {
             Err(self.raise_err("global var/type or func redefined!"))
         } else {
@@ -576,6 +582,7 @@ impl Parser<'_> {
                 ty,
                 id: 0,
                 is_local: false,
+                init_data,
             });
             self.globals.push(VarScope::Var(var.clone()));
             Ok(var)
@@ -665,7 +672,7 @@ impl Parser<'_> {
                 arg: Box::new(arg),
                 ret: Box::new(ty),
             };
-            self.add_global(name.clone(), ty.clone())?;
+            self.add_global(name.clone(), ty.clone(), None)?;
             if self.consume(";") {
                 // int func();のように関数の宣言のみの場合
                 self.leave_scope(); // スコープは全く使わずに捨てる
@@ -684,18 +691,30 @@ impl Parser<'_> {
         }
         // 関数でないとしたら、グローバル変数が続いている
         // TODO: グローバル変数の初期化
-        self.add_global(name, ty)?;
+        let init_data = self.global_init(&ty)?;
+        self.add_global(name, ty, init_data)?;
         if !self.consume(";") {
             loop {
                 self.expect(",")?;
                 let (name, ty) = self.declarator(basety.clone())?;
-                self.add_global(name, ty)?;
+                let init_data = self.global_init(&ty)?;
+                self.add_global(name, ty, init_data)?;
                 if self.consume(";") {
                     break;
                 }
             }
         }
         Ok(None)
+    }
+    fn global_init(&mut self, ty: &Type) -> Result<Option<Vec<u8>>, ParseError> {
+        if self.consume("=") {
+            self.initializer()?
+                .eval(&ty)
+                .map(Some)
+                .map_err(|msg| self.raise_err(msg))
+        } else {
+            Ok(None)
+        }
     }
     /// declarator = ptr ("(" declarator ")" | ident) ("[" num "]")*
     fn declarator(&mut self, mut ty: Type) -> Result<(String, Type), ParseError> {
@@ -795,7 +814,7 @@ impl Parser<'_> {
                 if self.consume("=") {
                     let init = self.initializer()?;
                     if let Type::TyArray { mut len, base } = ty {
-                        if let InitKind::List(v) = &init.t {
+                        if let InitKind::List(v) = &init.kind {
                             if len.is_none() {
                                 len = Some(v.len());
                             }
@@ -856,14 +875,14 @@ impl Parser<'_> {
         nodes: &mut Vec<Node>,
         ty: &Type,
     ) -> Result<Vec<Init>, ParseError> {
-        let Initializer { t, tok_no } = i;
+        let Initializer { kind, tok_no } = i;
         // 配列または構造体に代入している時は分ける
         // TODO: union
         match ty {
             Type::TyArray {
                 len: Some(len),
                 base,
-            } => match t {
+            } => match kind {
                 InitKind::List(list) => {
                     if *len < list.len() {
                         Err(self.raise_err("initializer too long"))?;
@@ -889,7 +908,7 @@ impl Parser<'_> {
                 mems,
                 is_union: false,
                 ..
-            } => match t {
+            } => match kind {
                 InitKind::List(list) => {
                     if mems.len() < list.len() {
                         Err(self.raise_err("initializer too long"))?;
@@ -914,7 +933,7 @@ impl Parser<'_> {
                 }
             },
             ty => {
-                let val = match t {
+                let val = match kind {
                     InitKind::Leaf(val) => *val,
                     InitKind::Zero => {
                         if ty.is_integer() || ty.is_ptr() {

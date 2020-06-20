@@ -7,6 +7,7 @@ pub struct Var {
     pub ty: Type,
     pub id: usize,
     pub is_local: bool,
+    pub init_data: Option<Vec<u8>>,
 }
 
 impl fmt::Debug for Var {
@@ -25,27 +26,64 @@ pub enum InitKind {
     Zero,
 }
 pub struct Initializer {
-    pub t: InitKind,
+    pub kind: InitKind,
     pub tok_no: usize,
 }
 impl Initializer {
     pub(super) fn new_leaf(leaf: Node, tok_no: usize) -> Self {
         Initializer {
-            t: InitKind::Leaf(Box::new(leaf)),
+            kind: InitKind::Leaf(Box::new(leaf)),
             tok_no,
         }
     }
     pub(super) fn new_list(list: Vec<Initializer>, tok_no: usize) -> Self {
         Initializer {
-            t: InitKind::List(list),
+            kind: InitKind::List(list),
             tok_no,
         }
     }
     pub(super) fn new_zero(tok_no: usize) -> Self {
         Initializer {
-            t: InitKind::Zero,
+            kind: InitKind::Zero,
             tok_no,
         }
+    }
+    pub(super) fn eval(self, ty: &Type) -> Result<Vec<u8>, &'static str> {
+        Ok(match self.kind {
+            InitKind::Zero => vec![0; ty.size()],
+            InitKind::Leaf(node) => {
+                let mut init = node.eval()?.to_le_bytes().to_vec();
+                init.truncate(ty.size());
+                init
+            }
+            InitKind::List(list) => match ty {
+                Type::TyArray {
+                    len: Some(len),
+                    base,
+                } => {
+                    if *len < list.len() {
+                        Err("initializer too long!")?;
+                    }
+                    let mut v = vec![0; ty.size()];
+                    let mut head = 0;
+                    for init in list {
+                        let next = head + base.size();
+                        v[head..next].copy_from_slice(&init.eval(base)?);
+                        head = next;
+                    }
+                    v
+                }
+                Type::TyStruct { mems, .. } => {
+                    let mut v = vec![0; ty.size()];
+                    for (init, mem) in list.into_iter().zip(mems.iter()) {
+                        let init = init.eval(&mem.ty)?;
+                        v[mem.offset..mem.offset + init.len()].copy_from_slice(&init);
+                    }
+                    v
+                }
+                _ => Err("invalid initializer!")?,
+            },
+        })
     }
 }
 

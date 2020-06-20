@@ -495,7 +495,13 @@ pub fn code_gen(
         if !v.ty.is_func() {
             // 関数はここでは宣言しない
             println!("{}:", v.name);
-            println!("  .zero {}", v.ty.size());
+            if let Some(v) = &v.init_data {
+                for b in v.iter() {
+                    println!("  .byte {}", b);
+                }
+            } else {
+                println!("  .zero {}", v.ty.size());
+            }
         }
     }
     for (i, s) in string_literals.iter().enumerate() {
@@ -503,7 +509,6 @@ pub fn code_gen(
         for c in &s.0 {
             println!("  .byte {}", c);
         }
-        println!("  .byte 0");
     }
     println!(".text");
     for func in program {

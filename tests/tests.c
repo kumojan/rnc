@@ -11,8 +11,19 @@
 int printf();
 int exit();
 
+
+
 int g1, g2[4];
-short (*g3)[5];
+short (*g3_)[5];
+char g3 = 3;
+short g4 = 4;
+int g5 = 5;
+long g6 = 6;
+int g9[3] = {0, 1, 2};
+struct {char a; int b;} g11[2] = {{1, 2}, {3, 4}};
+struct {int a[2];} g12[2] = {{{1, 2}}};
+struct {int a[2]; struct { long a; char c[3]; int x; } y; } g12_[2] = {{}, {{1} ,{99, {1,2,100}, 4}}};
+
 typedef int MyInt, MyInt2[4];
 
 static int static_fn() { return 3; }
@@ -341,8 +352,8 @@ int main() {
   assert(8, ({ int (*x)[3]; sizeof(x); }), "({ int (*x)[3]; sizeof(x); })");
   assert(3, ({ int *x[3]; int y; x[0]=&y; y=3; x[0][0]; }), "({ int *x[3]; int y; x[0]=&y; y=3; x[0][0]; })");
   assert(4, ({ int x[3]; int (*y)[3]=x; y[0][0]=4; y[0][0]; }), "({ int x[3]; int (*y)[3]=x; y[0][0]=4; y[0][0]; })");
-  assert(8, sizeof g3, "sizeof g3");
-  assert(10, sizeof *g3, "sizeof *g3");
+  assert(8, sizeof g3_, "sizeof g3_");
+  assert(10, sizeof *g3_, "sizeof *g3_");
   { void *x; }
 
   // long int や int long
@@ -685,6 +696,30 @@ int main() {
   assert(1, alignof(struct {char a; char b;}[2]), "alignof(struct {char a; char b;}[2])");
   assert(8, alignof(struct {char a; long b;}[2]), "alignof(struct {char a; long b;}[2])");
 
+
+  // グローバル変数初期化
+  assert(3, g3, "g3");
+  assert(4, g4, "g4");
+  assert(5, g5, "g5");
+  assert(6, g6, "g6");
+  assert(0, g9[0], "g9[0]");
+  assert(1, g9[1], "g9[1]");
+  assert(2, g9[2], "g9[2]");
+  assert(1, g11[0].a, "g11[0].a");
+  assert(2, g11[0].b, "g11[0].b");
+  assert(3, g11[1].a, "g11[1].a");
+  assert(4, g11[1].b, "g11[1].b");
+  assert(1, g12[0].a[0], "g12[0].a[0]");
+  assert(2, g12[0].a[1], "g12[0].a[1]");
+  assert(0, g12[1].a[0], "g12[1].a[0]");
+  assert(0, g12[1].a[1], "g12[1].a[1]");
+  assert(1, g12_[1].a[0], "g12_[1].a[0]");
+  assert(0, g12_[1].a[1], "g12_[1].a[1]");
+  assert(99, g12_[1].y.a, "g12_[1].y.a");
+  assert(1, g12_[1].y.c[0], "g12_[1].y.c[0]");
+  assert(2, g12_[1].y.c[1], "g12_[1].y.c[1]");
+  assert(100, g12_[1].y.c[2], "g12_[1].y.c[2]");
+  assert(4, g12_[1].y.x, "g12_[1].y.x");
   printf("OK\n");
   return 0;
 }
