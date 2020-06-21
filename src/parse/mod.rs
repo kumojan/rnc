@@ -698,15 +698,12 @@ impl Parser<'_> {
             )));
         }
         // 関数でないとしたら、グローバル変数が続いている
-        // TODO: グローバル変数の初期化
-        let init_data = self.global_init(&ty)?;
-        self.add_global(name, ty, init_data)?;
+        self.global_var_def(name, ty)?;
         if !self.consume(";") {
             loop {
                 self.expect(",")?;
                 let (name, ty) = self.declarator(basety.clone())?;
-                let init_data = self.global_init(&ty)?;
-                self.add_global(name, ty, init_data)?;
+                self.global_var_def(name, ty)?;
                 if self.consume(";") {
                     break;
                 }
@@ -714,15 +711,25 @@ impl Parser<'_> {
         }
         Ok(None)
     }
-    fn global_init(&mut self, ty: &Type) -> Result<Option<Vec<Data>>, ParseError> {
-        if self.consume("=") {
-            self.initializer()?
-                .eval(&ty)
+    fn global_var_def(&mut self, name: String, mut ty: Type) -> Result<(), ParseError> {
+        let init = if self.consume("=") {
+            let init = self.initializer()?;
+            if let Type::TyArray { mut len, base } = ty {
+                if let InitKind::List(v) = &init.kind {
+                    if len.is_none() {
+                        len = Some(v.len());
+                    }
+                }
+                ty = Type::TyArray { len, base };
+            }
+            init.eval(&ty)
                 .map(Some)
-                .map_err(|(tok_no, msg)| ParseError::new(self.tklist[tok_no].pos, msg))
+                .map_err(|(tok_no, msg)| ParseError::new(self.tklist[tok_no].pos, msg))?
         } else {
-            Ok(None)
-        }
+            None
+        };
+        self.add_global(name, ty, init)?;
+        Ok(())
     }
     /// declarator = ptr ("(" declarator ")" | ident) ("[" num "]")*
     fn declarator(&mut self, mut ty: Type) -> Result<(String, Type), ParseError> {
