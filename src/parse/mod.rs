@@ -33,7 +33,8 @@ pub struct Parser<'a> {
     cur_tok: &'a str, // 現在のトークン
     head: usize,      // 読んでいるtokenのtklist上の位置
     tklist: Vec<Token>,
-    locals: Vec<Rc<Var>>, // Node::Varと共有する。
+    locals: Vec<Rc<Var>>,  // Node::Varと共有する。
+    statics: Vec<Rc<Var>>, // static variables
     globals: Vec<VarScope>,
     string_literals: Vec<CString>,
     var_scopes: Vec<Vec<VarScope>>, // 後方に内側のスコープがある(読むときはrevする)
@@ -560,6 +561,7 @@ impl Parser<'_> {
             ty,
             id: self.locals.len(),
             is_local: true,
+            is_static: false,
             init_data: None,
         });
         self.locals.push(var.clone());
@@ -590,11 +592,31 @@ impl Parser<'_> {
                 ty,
                 id: 0,
                 is_local: false,
+                is_static: false,
                 init_data,
             });
             self.globals.push(VarScope::Var(var.clone()));
             Ok(var)
         }
+    }
+    fn add_static(
+        &mut self,
+        name: String,
+        ty: Type,
+        init_data: Option<Vec<Data>>,
+    ) -> Result<Rc<Var>, ParseError> {
+        let var = Rc::new(Var {
+            name: name.clone(),
+            ty,
+            id: self.statics.len(), // static変数の通し番号
+            is_local: true,
+            is_static: true,
+            init_data,
+        });
+        let len = self.var_scopes.len();
+        self.var_scopes[len - 1].push(VarScope::Var(var.clone())); // var_scopeに追加
+        self.statics.push(var.clone()); // 初期化はglobal
+        Ok(var)
     }
     fn add_global_typedef(&mut self, name: String, ty: Type) -> Result<(), ParseError> {
         if self.globals.iter().find(|v| v.name() == &name).is_some() {
@@ -642,6 +664,7 @@ impl Parser<'_> {
                 VarScope::Var(var) => Some(var),
                 _ => None,
             })
+            .chain(self.statics.into_iter()) // static変数も追加
             .collect();
         Ok((code, globals, self.string_literals, self.tklist))
     }
@@ -702,12 +725,12 @@ impl Parser<'_> {
             )));
         }
         // 関数でないとしたら、グローバル変数が続いている
-        self.global_var_def(name, ty)?;
+        self.global_vardef(name, ty)?;
         if !self.consume(";") {
             loop {
                 self.expect(",")?;
                 let (name, ty) = self.declarator(basety.clone())?;
-                self.global_var_def(name, ty)?;
+                self.global_vardef(name, ty)?;
                 if self.consume(";") {
                     break;
                 }
@@ -715,7 +738,7 @@ impl Parser<'_> {
         }
         Ok(None)
     }
-    fn global_var_def(&mut self, name: String, mut ty: Type) -> Result<(), ParseError> {
+    fn global_vardef(&mut self, name: String, mut ty: Type) -> Result<(), ParseError> {
         let init = if self.consume("=") {
             let init = self.initializer()?;
             if let Type::TyArray { mut len, base } = ty {
@@ -820,10 +843,37 @@ impl Parser<'_> {
         };
         Ok(())
     }
+    fn static_vardef(&mut self) -> Result<(), ParseError> {
+        let basety = self.typespec()?;
+        loop {
+            let (name, mut ty) = self.declarator(basety.clone())?;
+            let init = if self.consume("=") {
+                let init = self.initializer()?;
+                if let Type::TyArray { mut len, base } = ty {
+                    if let InitKind::List(v) = &init.kind {
+                        if len.is_none() {
+                            len = Some(v.len());
+                        }
+                    }
+                    ty = Type::TyArray { len, base };
+                }
+                init.eval(&ty)
+                    .map(Some)
+                    .map_err(|(tok_no, msg)| ParseError::new(self.tklist[tok_no].pos, msg))?
+            } else {
+                None
+            };
+            self.add_static(name, ty, init)?;
+            if self.consume(";") {
+                break;
+            }
+            self.expect(",")?;
+        }
+        Ok(())
+    }
     fn vardef(&mut self) -> Result<Vec<Node>, ParseError> {
         let basety = self.typespec()?;
         let mut stmts = vec![];
-        // 構造体宣言の後にすぐにセミコロンの場合、変数は設定せず、初期化もないのでstmts=vec![]のまま
         if !self.consume(";") {
             loop {
                 let (name, mut ty) = self.declarator(basety.clone())?;
@@ -1000,6 +1050,8 @@ impl Parser<'_> {
         while !self.consume("}") {
             if self.peek_type() {
                 block.extend(self.vardef()?);
+            } else if self.consume("static") {
+                self.static_vardef()?;
             } else if self.consume("typedef") {
                 self.typedef(false)?;
             } else {

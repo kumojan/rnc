@@ -110,7 +110,7 @@ impl CodeGenerator {
         self.pos = cur_tok.pos;
         println!(".loc 1 {}", cur_tok.line_no);
     }
-    fn gen_var_addr(&self, v: &Rc<Var>) {
+    fn gen_var_addr(&self, var: &Rc<Var>) {
         // println!("gen lval {:?}", &node);
         // rbpは関数の先頭アドレス
         // そこからoffset分引くと、目的の変数のアドレスを得る
@@ -119,14 +119,14 @@ impl CodeGenerator {
         // 要するに、gen(node)が結果の値をpushするのに対し、
         // gen_addrはoffsetにあるアドレスをpushする
         // 代入する場合と値を用いる場合で、その後の扱いを変えること
-        if v.is_local {
+        if var.is_local && !var.is_static {
             println!(
                 "  lea rax, [rbp-{}]  # load {}",
-                self.var_offsets[v.id], v.name
+                self.var_offsets[var.id], var.name
             );
             println!("  push rax");
         } else {
-            println!("  push offset {}", v.name);
+            println!("  push offset {}", var.global_name());
         }
     }
     fn gen_addr(&mut self, node: &Node) -> Result<(), CodeGenError> {
@@ -493,7 +493,7 @@ pub fn code_gen(
     for var in &globals {
         if !var.ty.is_func() && var.init_data.is_none() {
             println!(".align {}", var.ty.align());
-            println!("{}:", var.name);
+            println!("{}:", var.global_name());
             println!("  .zero {}", var.ty.size());
         }
     }
@@ -509,7 +509,7 @@ pub fn code_gen(
             // 関数はここでは宣言しない
             if let Some(data) = &var.init_data {
                 println!(".align {}", var.ty.align());
-                println!("{}:", var.name);
+                println!("{}:", var.global_name());
                 let mut quad_skip = 0; // quad命令が出現すると、+7されて、以下の7個(全てゼロ)はスキップされる。
                                        // これによりquadを8バイトと同様に扱うことができる
                 for b in data.iter() {

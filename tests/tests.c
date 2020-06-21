@@ -36,6 +36,17 @@ int g26[] = {1, 2, 3};
 int *g27 = g26 + 1;
 struct {int a[2]; struct { long *a; char c[3]; int x; } y; } g27_[2] = {{}, {{1} ,{&g6, {1,2,100}, 4}}};
 
+int counter() {
+  static int i;
+  static int j = 1+1;
+  return i++ + j++;
+}
+int counter2() {
+  static int i;
+  static int j = 1+1;
+  return j++;
+}
+
 typedef int MyInt, MyInt2[4];
 
 static int static_fn() { return 3; }
@@ -751,6 +762,13 @@ int main() {
   assert(3, g24, "g24");
   assert(3, *g25, "*g25");
   assert(2, *g27, "*g27");
+
+  // staticローカル変数
+  assert(2, counter(), "counter()");
+  assert(4, counter(), "counter()");
+  assert(2, counter2(), "counter2()");
+  assert(6, counter(), "counter()");
+  assert(3, counter2(), "counter2()");
   printf("OK\n");
   return 0;
 }

@@ -7,6 +7,7 @@ pub struct Var {
     pub ty: Type,
     pub id: usize,
     pub is_local: bool,
+    pub is_static: bool,
     pub init_data: Option<Vec<Data>>,
 }
 
@@ -16,6 +17,15 @@ impl fmt::Debug for Var {
             write!(f, "{:?} {}: {}", self.ty, self.name, self.id)
         } else {
             write!(f, "gvar {:?} {}", self.ty, self.name)
+        }
+    }
+}
+impl Var {
+    pub fn global_name(&self) -> String {
+        if self.is_static {
+            format!(".L.static.{}", self.id)
+        } else {
+            format!("{}", self.name)
         }
     }
 }
