@@ -50,7 +50,7 @@ int assert(int expected, int actual, char *code) {
   }
 }
 
-int ret3() {
+int ret3(void) {
   return 3;
   return 5;
 }

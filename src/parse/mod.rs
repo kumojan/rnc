@@ -113,7 +113,7 @@ enum Init {
 /// enum_list = ident ("=" num)? ("," ident ("=" num)?)*
 /// struct_members = (typespec declarator (","  declarator)* ";")*
 /// ptr = "*"*
-/// funcargs = "(" typespec declarator ( "," typespec declarator)? ")"
+/// funcargs = "(" typespec declarator ( "," typespec declarator)? ")" | "(" "void" ")"
 /// compound_stmt = (vardef | typedef | stmt)*
 /// typedef = "typedef" typespec declarator ("," declarator)*
 /// vardef = typespec declarator ("=" initializer)? ("," declarator ("=" initializer)?)* ";"
@@ -647,6 +647,10 @@ impl Parser<'_> {
     }
     fn funcargs(&mut self) -> Result<(), ParseError> {
         self.expect("(")?;
+        if self.consume("void") {
+            self.expect(")")?;
+            return Ok(()); // voidはパラメタがないことを意味する。
+        }
         if !self.consume(")") {
             loop {
                 // TODO: 関数の引数では配列は本当には配列にならない
