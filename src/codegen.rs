@@ -1,4 +1,4 @@
-use crate::parse::node::{BinOp, Function, Node, NodeKind, Var};
+use crate::parse::node::{BinOp, Data, Function, Node, NodeKind, Var};
 use crate::r#type::Type;
 use crate::tokenize::{CString, Token};
 use crate::util::*;
@@ -491,23 +491,39 @@ pub fn code_gen(
     println!(".intel_syntax noprefix");
 
     println!(".data");
+    for (i, s) in string_literals.iter().enumerate() {
+        println!(".L.data.{}:", i);
+        for c in &s.0 {
+            println!("  .byte {}", c);
+        }
+    }
     for v in &globals {
         if !v.ty.is_func() {
             // 関数はここでは宣言しない
             println!("{}:", v.name);
             if let Some(v) = &v.init_data {
+                let mut quad_skip = 0; // quad命令が出現すると、+7されて、以下の7個(全てゼロ)はスキップされる。
+                                       // これによりquadを8バイトと同様に扱うことができる
                 for b in v.iter() {
-                    println!("  .byte {}", b);
+                    if quad_skip > 0 {
+                        quad_skip -= 1;
+                    } else {
+                        match b {
+                            Data::Byte(b) => println!("  .byte {}", b),
+                            Data::Quad(b) => {
+                                quad_skip += 7;
+                                if b.is_positive {
+                                    println!("  .quad {}+{}", b.label, b.addend);
+                                } else {
+                                    println!("  .quad {}-{}", b.label, b.addend);
+                                }
+                            }
+                        }
+                    }
                 }
             } else {
                 println!("  .zero {}", v.ty.size());
             }
-        }
-    }
-    for (i, s) in string_literals.iter().enumerate() {
-        println!(".L.data.{}:", i);
-        for c in &s.0 {
-            println!("  .byte {}", c);
         }
     }
     println!(".text");

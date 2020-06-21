@@ -10,7 +10,8 @@
 
 int printf();
 int exit();
-
+int strcmp(char *p, char *q);
+int memcmp(char *p, char *q);
 
 
 int g1, g2[4];
@@ -23,6 +24,17 @@ int g9[3] = {0, 1, 2};
 struct {char a; int b;} g11[2] = {{1, 2}, {3, 4}};
 struct {int a[2];} g12[2] = {{{1, 2}}};
 struct {int a[2]; struct { long a; char c[3]; int x; } y; } g12_[2] = {{}, {{1} ,{99, {1,2,100}, 4}}};
+char g17[7] = "foobar";
+char g18[10] = "foobar";
+char *g20 = g17+0;
+char *g21 = g17+3;
+char *g22 = g17-3;
+char *g23[3] = {g17+0, g17+3, g17-3};
+int g24=3;
+int *g25=&g24;
+int g26[3] = {1, 2, 3};
+int *g27 = g26 + 1;
+struct {int a[2]; struct { long *a; char c[3]; int x; } y; } g27_[2] = {{}, {{1} ,{&g6, {1,2,100}, 4}}};
 
 typedef int MyInt, MyInt2[4];
 
@@ -720,6 +732,25 @@ int main() {
   assert(2, g12_[1].y.c[1], "g12_[1].y.c[1]");
   assert(100, g12_[1].y.c[2], "g12_[1].y.c[2]");
   assert(4, g12_[1].y.x, "g12_[1].y.x");
+
+  // グローバルポインタ変数初期化
+  assert(7, sizeof(g17), "sizeof(g17)");
+  assert(10, sizeof(g18), "sizeof(g18)");
+
+  assert(0, memcmp(g17, "foobar", 7), "memcmp(g17, \"foobar\", 7)");
+  assert(0, memcmp(g18, "foobar\0\0\0", 10), "memcmp(g18, \"foobar\\0\\0\\0\", 10)");
+
+  assert(0, strcmp(g20, "foobar"), "strcmp(g20, \"foobar\")");
+  assert(0, strcmp(g21, "bar"), "strcmp(g21, \"bar\")");
+  assert(0, strcmp(g22+3, "foobar"), "strcmp(g22+3, \"foobar\")");
+
+  assert(0, strcmp(g23[0], "foobar"), "strcmp(g23[0], \"foobar\")");
+  assert(0, strcmp(g23[1], "bar"), "strcmp(g23[1], \"bar\")");
+  assert(0, strcmp(g23[2]+3, "foobar"), "strcmp(g23[2]+3, \"foobar\")");
+
+  assert(3, g24, "g24");
+  assert(3, *g25, "*g25");
+  assert(2, *g27, "*g27");
   printf("OK\n");
   return 0;
 }

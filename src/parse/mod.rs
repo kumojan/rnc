@@ -580,7 +580,7 @@ impl Parser<'_> {
         &mut self,
         name: String,
         ty: Type,
-        init_data: Option<Vec<u8>>,
+        init_data: Option<Vec<Data>>,
     ) -> Result<Rc<Var>, ParseError> {
         if self.globals.iter().find(|v| v.name() == &name).is_some() {
             Err(self.raise_err("global var/type or func redefined!"))
@@ -714,7 +714,7 @@ impl Parser<'_> {
         }
         Ok(None)
     }
-    fn global_init(&mut self, ty: &Type) -> Result<Option<Vec<u8>>, ParseError> {
+    fn global_init(&mut self, ty: &Type) -> Result<Option<Vec<Data>>, ParseError> {
         if self.consume("=") {
             self.initializer()?
                 .eval(&ty)

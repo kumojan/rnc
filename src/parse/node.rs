@@ -7,7 +7,7 @@ pub struct Var {
     pub ty: Type,
     pub id: usize,
     pub is_local: bool,
-    pub init_data: Option<Vec<u8>>,
+    pub init_data: Option<Vec<Data>>,
 }
 
 impl fmt::Debug for Var {
@@ -18,6 +18,17 @@ impl fmt::Debug for Var {
             write!(f, "gvar {:?} {}", self.ty, self.name)
         }
     }
+}
+#[derive(Clone)]
+pub struct Quad {
+    pub label: String,
+    pub is_positive: bool,
+    pub addend: usize,
+}
+#[derive(Clone)]
+pub enum Data {
+    Byte(u8),        // バイト直書き
+    Quad(Box<Quad>), // 指定する場所から8バイト読み取ってくる
 }
 
 pub enum InitKind {
@@ -48,13 +59,24 @@ impl Initializer {
             tok_no,
         }
     }
-    pub(super) fn eval(self, ty: &Type) -> Result<Vec<u8>, (usize, &'static str)> {
+    pub(super) fn eval(self, ty: &Type) -> Result<Vec<Data>, (usize, &'static str)> {
         Ok(match self.kind {
-            InitKind::Zero => vec![0; ty.size()],
+            InitKind::Zero => vec![Data::Byte(0); ty.size()],
             InitKind::Leaf(node) => {
-                let mut init = node.eval()?.to_le_bytes().to_vec();
-                init.truncate(ty.size());
-                init
+                let (var, init) = node.eval2()?;
+                if let Some(var) = var {
+                    let mut v = vec![Data::Byte(0); 8]; // quadは要するにポインタなので、8バイト確保する
+                    v[0] = Data::Quad(Box::new(Quad {
+                        label: var.name.clone(),
+                        addend: init.abs() as usize,
+                        is_positive: init.is_positive(),
+                    }));
+                    v
+                } else {
+                    let mut init = init.to_le_bytes().to_vec();
+                    init.truncate(ty.size());
+                    init.into_iter().map(Data::Byte).collect()
+                }
             }
             InitKind::List(list) => match ty {
                 Type::TyArray {
@@ -64,11 +86,11 @@ impl Initializer {
                     if *len < list.len() {
                         Err((self.tok_no, "initializer too long!"))?;
                     }
-                    let mut v = vec![0; ty.size()];
+                    let mut v = vec![Data::Byte(0); ty.size()];
                     let mut head = 0;
                     for init in list {
                         let next = head + base.size();
-                        v[head..next].copy_from_slice(&init.eval(base)?);
+                        v[head..next].clone_from_slice(&init.eval(base)?);
                         head = next;
                     }
                     v
@@ -81,10 +103,10 @@ impl Initializer {
                     if mems.len() < list.len() {
                         Err((self.tok_no, "initializer too long!"))?;
                     }
-                    let mut v = vec![0; ty.size()];
+                    let mut v = vec![Data::Byte(0); ty.size()];
                     for (init, mem) in list.into_iter().zip(mems.iter()) {
                         let init = init.eval(&mem.ty)?;
-                        v[mem.offset..mem.offset + init.len()].copy_from_slice(&init);
+                        v[mem.offset..mem.offset + init.len()].clone_from_slice(&init);
                     }
                     v
                 }
@@ -122,7 +144,7 @@ impl Function {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum BinOp {
     Add,
     Sub,
@@ -339,7 +361,23 @@ impl Node {
         };
         Ok(val)
     }
-    // pub(super) fn eval2(&self, vars: Vec<var>) -> Result<i64, (usize, &'static str)>
+    pub(super) fn eval2(&self) -> Result<(Option<Rc<Var>>, i64), (usize, &'static str)> {
+        Ok(match &self.kind {
+            NodeKind::Bin { op, lhs, rhs } if op == &BinOp::Add || op == &BinOp::Sub => {
+                let (var, l) = lhs.eval2()?;
+                let r = rhs.eval()?;
+                (var, if op == &BinOp::Add { l + r } else { l - r })
+            }
+            NodeKind::Var(var) if self.ty.as_ref().map_or(false, |t| t.is_array()) => {
+                (Some(var.clone()), 0) // 配列のポインタ扱い
+            }
+            NodeKind::Addr(node) => match &node.kind {
+                NodeKind::Var(var) => (Some(var.clone()), 0),
+                _ => Err((self.tok_no, "invalid constant expression"))?,
+            },
+            _ => (None, self.eval()?),
+        })
+    }
     pub(super) fn new_num(val: usize, tok_no: usize) -> Self {
         let ty = if val <= i32::MAX as usize {
             Type::TyInt
