@@ -490,10 +490,11 @@ pub fn code_gen(
     cg.tklist = token_list;
     println!(".intel_syntax noprefix");
     println!(".bss");
-    for v in &globals {
-        if !v.ty.is_func() && v.init_data.is_none() {
-            println!("{}:", v.name);
-            println!("  .zero {}", v.ty.size());
+    for var in &globals {
+        if !var.ty.is_func() && var.init_data.is_none() {
+            println!(".align {}", var.ty.align());
+            println!("{}:", var.name);
+            println!("  .zero {}", var.ty.size());
         }
     }
     println!(".data");
@@ -503,11 +504,12 @@ pub fn code_gen(
             println!("  .byte {}", c);
         }
     }
-    for v in &globals {
-        if !v.ty.is_func() {
+    for var in &globals {
+        if !var.ty.is_func() {
             // 関数はここでは宣言しない
-            if let Some(data) = &v.init_data {
-                println!("{}:", v.name);
+            if let Some(data) = &var.init_data {
+                println!(".align {}", var.ty.align());
+                println!("{}:", var.name);
                 let mut quad_skip = 0; // quad命令が出現すると、+7されて、以下の7個(全てゼロ)はスキップされる。
                                        // これによりquadを8バイトと同様に扱うことができる
                 for b in data.iter() {
