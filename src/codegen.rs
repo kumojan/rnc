@@ -489,7 +489,13 @@ pub fn code_gen(
     let mut cg = CodeGenerator::default();
     cg.tklist = token_list;
     println!(".intel_syntax noprefix");
-
+    println!(".bss");
+    for v in &globals {
+        if !v.ty.is_func() && v.init_data.is_none() {
+            println!("{}:", v.name);
+            println!("  .zero {}", v.ty.size());
+        }
+    }
     println!(".data");
     for (i, s) in string_literals.iter().enumerate() {
         println!(".L.data.{}:", i);
@@ -500,11 +506,11 @@ pub fn code_gen(
     for v in &globals {
         if !v.ty.is_func() {
             // 関数はここでは宣言しない
-            println!("{}:", v.name);
-            if let Some(v) = &v.init_data {
+            if let Some(data) = &v.init_data {
+                println!("{}:", v.name);
                 let mut quad_skip = 0; // quad命令が出現すると、+7されて、以下の7個(全てゼロ)はスキップされる。
                                        // これによりquadを8バイトと同様に扱うことができる
-                for b in v.iter() {
+                for b in data.iter() {
                     if quad_skip > 0 {
                         quad_skip -= 1;
                     } else {
@@ -521,8 +527,6 @@ pub fn code_gen(
                         }
                     }
                 }
-            } else {
-                println!("  .zero {}", v.ty.size());
             }
         }
     }
