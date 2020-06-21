@@ -48,7 +48,7 @@ impl Initializer {
             tok_no,
         }
     }
-    pub(super) fn eval(self, ty: &Type) -> Result<Vec<u8>, &'static str> {
+    pub(super) fn eval(self, ty: &Type) -> Result<Vec<u8>, (usize, &'static str)> {
         Ok(match self.kind {
             InitKind::Zero => vec![0; ty.size()],
             InitKind::Leaf(node) => {
@@ -62,7 +62,7 @@ impl Initializer {
                     base,
                 } => {
                     if *len < list.len() {
-                        Err("initializer too long!")?;
+                        Err((self.tok_no, "initializer too long!"))?;
                     }
                     let mut v = vec![0; ty.size()];
                     let mut head = 0;
@@ -73,7 +73,14 @@ impl Initializer {
                     }
                     v
                 }
-                Type::TyStruct { mems, .. } => {
+                Type::TyStruct {
+                    mems,
+                    is_union: false,
+                    ..
+                } => {
+                    if mems.len() < list.len() {
+                        Err((self.tok_no, "initializer too long!"))?;
+                    }
                     let mut v = vec![0; ty.size()];
                     for (init, mem) in list.into_iter().zip(mems.iter()) {
                         let init = init.eval(&mem.ty)?;
@@ -81,7 +88,7 @@ impl Initializer {
                     }
                     v
                 }
-                _ => Err("invalid initializer!")?,
+                _ => Err((self.tok_no, "invalid initializer!"))?,
             },
         })
     }
@@ -275,7 +282,7 @@ impl Node {
         }
     }
     #[allow(overflowing_literals)] // 数値のキャストでオーバーフローを許す
-    pub(super) fn eval(&self) -> Result<i64, &'static str> {
+    pub(super) fn eval(&self) -> Result<i64, (usize, &'static str)> {
         let cast_int = |b: bool| if b { 1 } else { 0 };
         let val = match &self.kind {
             NodeKind::Bin { op, lhs, rhs } => {
@@ -328,10 +335,11 @@ impl Node {
                 }
             }
             NodeKind::Num(val) => *val as i64,
-            _ => Err("invalid constant expression")?,
+            _ => Err((self.tok_no, "invalid constant expression"))?,
         };
         Ok(val)
     }
+    // pub(super) fn eval2(&self, vars: Vec<var>) -> Result<i64, (usize, &'static str)>
     pub(super) fn new_num(val: usize, tok_no: usize) -> Self {
         let ty = if val <= i32::MAX as usize {
             Type::TyInt

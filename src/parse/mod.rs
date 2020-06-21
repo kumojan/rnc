@@ -13,6 +13,14 @@ pub struct ParseError {
     pub pos: usize,
     pub msg: String,
 }
+impl ParseError {
+    fn new(pos: usize, msg: &str) -> ParseError {
+        ParseError {
+            pos,
+            msg: msg.to_owned(),
+        }
+    }
+}
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "parse failed at {}", self.pos)
@@ -711,7 +719,7 @@ impl Parser<'_> {
             self.initializer()?
                 .eval(&ty)
                 .map(Some)
-                .map_err(|msg| self.raise_err(msg))
+                .map_err(|(tok_no, msg)| ParseError::new(self.tklist[tok_no].pos, msg))
         } else {
             Ok(None)
         }
@@ -1220,7 +1228,9 @@ impl Parser<'_> {
         Ok(node)
     }
     fn const_expr(&mut self) -> Result<i64, ParseError> {
-        self.conditional()?.eval().map_err(|s| self.raise_err(s))
+        self.conditional()?
+            .eval()
+            .map_err(|(tok_no, msg)| ParseError::new(self.tklist[tok_no].pos, msg))
     }
     /// logor = logand ("&&" logand)*
     fn logor(&mut self) -> Result<Node, ParseError> {
