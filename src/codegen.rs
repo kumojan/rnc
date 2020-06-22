@@ -488,14 +488,22 @@ pub fn code_gen(
     string_literals: Vec<CString>,
     token_list: Vec<Token>,
 ) -> Result<(), CodeGenError> {
+    fn global_var_header(var: &Var) {
+        println!(".align {}", var.ty.align());
+        if !var.is_static {
+            // static local, static globalは.globlをつけない
+            println!(".globl {}", var.name);
+        }
+        println!("{}:", var.global_name());
+    }
     let mut cg = CodeGenerator::default();
     cg.tklist = token_list;
     println!(".intel_syntax noprefix");
     println!(".bss");
+
     for var in &globals {
         if !var.ty.is_func() && var.init_data.is_none() {
-            println!(".align {}", var.ty.align());
-            println!("{}:", var.global_name());
+            global_var_header(var);
             println!("  .zero {}", var.ty.size());
         }
     }
@@ -507,27 +515,26 @@ pub fn code_gen(
         }
     }
     for var in &globals {
-        if !var.ty.is_func() {
-            // 関数はここでは宣言しない
-            if let Some(data) = &var.init_data {
-                println!(".align {}", var.ty.align());
-                println!("{}:", var.global_name());
-                let mut quad_skip = 0; // quad命令が出現すると、+7されて、以下の7個(全てゼロ)はスキップされる。
-                                       // これによりquadを8バイトと同様に扱うことができる
-                for b in data.iter() {
-                    if quad_skip > 0 {
-                        quad_skip -= 1;
-                    } else {
-                        match b {
-                            Data::Byte(b) => println!("  .byte {}", b),
-                            Data::Quad(b) => {
-                                quad_skip += 7;
-                                if b.is_positive {
-                                    println!("  .quad {}+{}", b.label, b.addend);
-                                } else {
-                                    println!("  .quad {}-{}", b.label, b.addend);
-                                }
-                            }
+        if var.ty.is_func() {
+            continue; // 関数はここでは宣言しない
+        }
+        if let Some(data) = &var.init_data {
+            global_var_header(var);
+            let mut quad_skip = 0; // quad命令が出現すると、+7されて、以下の7個(全てゼロ)はスキップされる。
+                                   // これによりquadを8バイトと同様に扱うことができる
+            for b in data.iter() {
+                if quad_skip > 0 {
+                    quad_skip -= 1;
+                    continue;
+                }
+                match b {
+                    Data::Byte(b) => println!("  .byte {}", b),
+                    Data::Quad(b) => {
+                        quad_skip += 7;
+                        if b.is_positive {
+                            println!("  .quad {}+{}", b.label, b.addend);
+                        } else {
+                            println!("  .quad {}-{}", b.label, b.addend);
                         }
                     }
                 }

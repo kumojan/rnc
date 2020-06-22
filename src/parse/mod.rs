@@ -583,6 +583,7 @@ impl Parser<'_> {
         name: String,
         ty: Type,
         init_data: Option<Vec<Data>>,
+        is_static: bool,
     ) -> Result<Rc<Var>, ParseError> {
         if self.globals.iter().find(|v| v.name() == &name).is_some() {
             Err(self.raise_err("global var/type or func redefined!"))
@@ -592,7 +593,7 @@ impl Parser<'_> {
                 ty,
                 id: 0,
                 is_local: false,
-                is_static: false,
+                is_static,
                 init_data,
             });
             self.globals.push(VarScope::Var(var.clone()));
@@ -707,7 +708,7 @@ impl Parser<'_> {
                 arg: Box::new(arg),
                 ret: Box::new(ty),
             };
-            self.add_global(name.clone(), ty.clone(), None)?;
+            self.add_global(name.clone(), ty.clone(), None, is_static)?;
             if self.consume(";") {
                 // int func();のように関数の宣言のみの場合
                 self.leave_scope(); // スコープは全く使わずに捨てる
@@ -725,12 +726,12 @@ impl Parser<'_> {
             )));
         }
         // 関数でないとしたら、グローバル変数が続いている
-        self.global_vardef(name, ty)?;
+        self.global_vardef(name, ty, is_static)?;
         if !self.consume(";") {
             loop {
                 self.expect(",")?;
                 let (name, ty) = self.declarator(basety.clone())?;
-                self.global_vardef(name, ty)?;
+                self.global_vardef(name, ty, is_static)?;
                 if self.consume(";") {
                     break;
                 }
@@ -738,7 +739,12 @@ impl Parser<'_> {
         }
         Ok(None)
     }
-    fn global_vardef(&mut self, name: String, mut ty: Type) -> Result<(), ParseError> {
+    fn global_vardef(
+        &mut self,
+        name: String,
+        mut ty: Type,
+        is_static: bool,
+    ) -> Result<(), ParseError> {
         let init = if self.consume("=") {
             let init = self.initializer()?;
             if let Type::TyArray { mut len, base } = ty {
@@ -755,7 +761,7 @@ impl Parser<'_> {
         } else {
             None
         };
-        self.add_global(name, ty, init)?;
+        self.add_global(name, ty, init, is_static)?;
         Ok(())
     }
     /// declarator = ptr ("(" declarator ")" | ident) ("[" num "]")*

@@ -22,7 +22,8 @@ impl fmt::Debug for Var {
 }
 impl Var {
     pub fn global_name(&self) -> String {
-        if self.is_static {
+        if self.is_static && self.is_local {
+            // localなstatic変数はアセンブリにおいて関数の外に記述されるが、その時の名前をラベルから生成する。
             format!(".L.static.{}", self.id)
         } else {
             format!("{}", self.name)

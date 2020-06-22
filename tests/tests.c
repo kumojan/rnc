@@ -36,6 +36,10 @@ int g26[] = {1, 2, 3};
 int *g27 = g26 + 1;
 struct {int a[2]; struct { long *a; char c[3]; int x; } y; } g27_[2] = {{}, {{1} ,{&g6, {1,2,100}, 4}}};
 
+// static global variable
+// staticがついてないと、別のファイルにext3がある時、multiple definition errorになる
+static int ext3 = 3;
+
 int counter() {
   static int i;
   static int j = 1+1;
@@ -775,6 +779,9 @@ int main() {
 
   // voidな関数
   ret_none();
+
+  // static global variable
+  assert(3, ext3, "ext3");
   printf("OK\n");
   return 0;
 }

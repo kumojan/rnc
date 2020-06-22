@@ -63,7 +63,12 @@ impl fmt::Debug for Type {
             Type::TyInt => write!(f, "int"),
             Type::TyLong => write!(f, "long"),
             Type::TyPtr(ty) => write!(f, "*{:?}", ty),
-            Type::TyArray { base, len } => write!(f, "[{:?}]{:?}", len, base),
+            Type::TyArray { base, len } => write!(
+                f,
+                "[{}]{:?}",
+                len.map(|n| n.to_string()).unwrap_or_default(),
+                base
+            ),
             Type::TyStruct { mems, .. } => write!(f, "struct {{{:?}}}", mems),
             Type::TyEnum { .. } => write!(f, "enum"),
             Type::TyFunc { .. } => write!(f, "func"),
