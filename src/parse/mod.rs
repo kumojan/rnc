@@ -563,6 +563,7 @@ impl Parser<'_> {
             id: self.locals.len(),
             is_local: true,
             is_static: false,
+            is_extern: false,
             init_data: None,
         });
         self.locals.push(var.clone());
@@ -585,6 +586,7 @@ impl Parser<'_> {
         ty: Type,
         init_data: Option<Vec<Data>>,
         is_static: bool,
+        is_extern: bool,
     ) -> Result<Rc<Var>, ParseError> {
         if self.globals.iter().find(|v| v.name() == &name).is_some() {
             Err(self.raise_err("global var/type or func redefined!"))
@@ -596,6 +598,7 @@ impl Parser<'_> {
                 is_local: false,
                 is_static,
                 init_data,
+                is_extern,
             });
             self.globals.push(VarScope::Var(var.clone()));
             Ok(var)
@@ -613,6 +616,7 @@ impl Parser<'_> {
             id: self.statics.len(), // static変数の通し番号
             is_local: true,
             is_static: true,
+            is_extern: false,
             init_data,
         });
         let len = self.var_scopes.len();
@@ -696,6 +700,10 @@ impl Parser<'_> {
     fn funcdef(&mut self) -> Result<Option<Function>, ParseError> {
         // まず int *x まで見る
         let is_static = self.consume("static");
+        let is_extern = self.consume("extern");
+        if is_extern && is_static {
+            return Err(self.raise_err("cannot be extern and static at the same time!"));
+        }
         let basety = self.typespec()?;
         let (name, ty) = self.declarator(basety.clone())?;
         // 次に関数の有無を見る
@@ -709,7 +717,7 @@ impl Parser<'_> {
                 arg: Box::new(arg),
                 ret: Box::new(ty),
             };
-            self.add_global(name.clone(), ty.clone(), None, is_static)?;
+            self.add_global(name.clone(), ty.clone(), None, is_static, is_extern)?;
             if self.consume(";") {
                 // int func();のように関数の宣言のみの場合
                 self.leave_scope(); // スコープは全く使わずに捨てる
@@ -727,12 +735,12 @@ impl Parser<'_> {
             )));
         }
         // 関数でないとしたら、グローバル変数が続いている
-        self.global_vardef(name, ty, is_static)?;
+        self.global_vardef(name, ty, is_static, is_extern)?;
         if !self.consume(";") {
             loop {
                 self.expect(",")?;
                 let (name, ty) = self.declarator(basety.clone())?;
-                self.global_vardef(name, ty, is_static)?;
+                self.global_vardef(name, ty, is_static, is_extern)?;
                 if self.consume(";") {
                     break;
                 }
@@ -745,6 +753,7 @@ impl Parser<'_> {
         name: String,
         mut ty: Type,
         is_static: bool,
+        is_extern: bool,
     ) -> Result<(), ParseError> {
         let init = if self.consume("=") {
             let init = self.initializer()?;
@@ -762,7 +771,7 @@ impl Parser<'_> {
         } else {
             None
         };
-        self.add_global(name, ty, init, is_static)?;
+        self.add_global(name, ty, init, is_static, is_extern)?;
         Ok(())
     }
     /// declarator = ptr ("(" declarator ")" | ident) ("[" num "]")*

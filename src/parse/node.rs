@@ -8,6 +8,7 @@ pub struct Var {
     pub id: usize,
     pub is_local: bool,
     pub is_static: bool,
+    pub is_extern: bool,
     pub init_data: Option<Vec<Data>>,
 }
 

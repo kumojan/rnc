@@ -36,6 +36,8 @@ int g26[] = {1, 2, 3};
 int *g27 = g26 + 1;
 struct {int a[2]; struct { long *a; char c[3]; int x; } y; } g27_[2] = {{}, {{1} ,{&g6, {1,2,100}, 4}}};
 
+extern int ext1;
+extern int *ext2;
 // static global variable
 // staticがついてないと、別のファイルにext3がある時、multiple definition errorになる
 static int ext3 = 3;
@@ -790,6 +792,13 @@ int main() {
 
   assert(7, ({ int i=0; int j=0; do { j++; } while (i++ < 6); j; }), "({ int i=0; int j=0; do { j++; } while (i++ < 6); j; })");
   assert(4, ({ int i=0; int j=0; int k=0; do { if (++j > 3) break; continue; k++; } while (1); j; }), "({ int i=0; int j=0; int k=0; do { if (++j > 3) break; continue; k++; } while (1); j; })");
+
+  // extern (とりあえず追加したが、よくわかってない)  
+  ext1 = 5;
+  assert(5, ext1, "ext1");
+
+  ext2 = &ext1;
+  assert(5, *ext2, "*ext2");
 
   printf("OK\n");
   return 0;
