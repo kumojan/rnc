@@ -240,6 +240,10 @@ pub enum NodeKind {
     Label(String, Box<Node>),
     ExprStmt(Box<Node>),
     Return(Option<Box<Node>>),
+    Do {
+        stmt: Box<Node>,
+        condi: Box<Node>,
+    },
     Block {
         stmts: Vec<Node>,
     },
@@ -293,6 +297,7 @@ impl fmt::Debug for NodeKind {
             NodeKind::Continue => write!(f, "continue"),
             NodeKind::Goto(..) => write!(f, "goto"),
             NodeKind::Label(..) => write!(f, "label"),
+            NodeKind::Do { .. } => write!(f, "do"),
             _ => write!(f, "unimplemented"),
         }
     }
@@ -452,6 +457,16 @@ impl Node {
                 else_: Box::new(Node::new_cast(ty.clone(), else_, tok_no)),
             },
             ty: Some(ty),
+            tok_no,
+        }
+    }
+    pub(super) fn new_do(stmt: Node, condi: Node, tok_no: usize) -> Self {
+        Self {
+            ty: None,
+            kind: NodeKind::Do {
+                stmt: Box::new(stmt),
+                condi: Box::new(condi),
+            },
             tok_no,
         }
     }

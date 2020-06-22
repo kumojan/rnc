@@ -405,6 +405,21 @@ impl CodeGenerator {
                 self.break_label.pop();
                 self.continue_label.pop();
             }
+            NodeKind::Do { stmt, condi } => {
+                let label = self.new_label();
+                self.break_label.push(label);
+                self.continue_label.push(label);
+                println!(".L.begin.{}:", label);
+                self.gen_stmt(stmt)?;
+                println!(".L.continue.{}:", label);
+                self.gen_expr(condi)?;
+                println!("  pop rax");
+                println!("  cmp rax, 0");
+                println!("  jne .L.begin.{}", label);
+                println!(".L.break.{}:", label);
+                self.break_label.pop();
+                self.continue_label.pop();
+            }
             NodeKind::Break => {
                 if let Some(label) = self.break_label.last() {
                     println!("  jmp .L.break.{}", label);
@@ -709,6 +724,11 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
                 s += &graph_gen(n, &nodename, 2, Some("end"));
             }
             s += &graph_gen(loop_, &nodename, 3, Some("loop"));
+        }
+        NodeKind::Do { stmt, condi } => {
+            s += &format!("{} [label=\"do\"];\n", nodename);
+            s += &graph_gen(stmt, &nodename, 0, Some("stmt"));
+            s += &graph_gen(condi, &nodename, 1, Some("condi"));
         }
         NodeKind::Block { stmts } => {
             s += &format!("{} [label=\"block\"];\n", nodename);

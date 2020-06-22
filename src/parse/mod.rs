@@ -132,6 +132,7 @@ enum Init {
 ///     | "switch" "(" expr ")" stmt
 ///     | "case" num ":" stmt
 ///     | "default" ":" stmt
+///     | "do" stmt "while" "(" expr ")" ";"
 /// expr = assign ("," expr )?   // exprはassignをコンマで連結している
 /// assign = bitor (assign-op assign)?  // assignでは括弧()の中以外ではコンマは出てこない    
 /// bitor = bitxor ("|" bitxor)*
@@ -1121,6 +1122,14 @@ impl Parser<'_> {
             let loop_ = self.stmt()?;
             self.leave_scope();
             Node::new_for(start, condi, end, loop_, self.head)
+        } else if self.consume("do") {
+            let stmt = self.stmt()?;
+            self.expect("while")?;
+            self.expect("(")?;
+            let condi = self.expr()?;
+            self.expect(")")?;
+            self.expect(";")?;
+            Node::new_do(stmt, condi, self.head)
         } else if self.consume("return") {
             let node = if self.peek(";") {
                 None

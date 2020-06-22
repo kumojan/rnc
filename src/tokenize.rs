@@ -123,7 +123,7 @@ impl Lexer {
     fn check_res_word(&self, s: &str, l: usize) -> bool {
         !is_alnum(&self.peek_char(l))
             && match l {
-                2 => ["if"].contains(&s),
+                2 => ["if", "do"].contains(&s),
                 3 => ["for", "int"].contains(&s),
                 4 => ["else", "char", "long", "void", "enum", "goto", "case"].contains(&s),
                 5 => ["while", "union", "short", "_Bool", "break"].contains(&s),
