@@ -238,7 +238,7 @@ pub enum NodeKind {
     Goto(String),
     Label(String, Box<Node>),
     ExprStmt(Box<Node>),
-    Return(Box<Node>),
+    Return(Option<Box<Node>>),
     Block {
         stmts: Vec<Node>,
     },
@@ -454,10 +454,17 @@ impl Node {
             tok_no,
         }
     }
+    pub(super) fn new_return(node: Option<Node>, tok_no: usize) -> Self {
+        Self {
+            ty: None,
+            kind: NodeKind::Return(node.map(Box::new)),
+            tok_no,
+        }
+    }
     pub(super) fn new_unary(t: &str, node: Node, tok_no: usize) -> Self {
         Self {
             ty: match t {
-                "return" | "expr_stmt" => None,
+                "expr_stmt" => None,
                 "addr" => node.ty.clone().map(|t| t.to_ptr()),
                 "deref" => node.ty.clone().map(|t| {
                     t.get_base()
@@ -468,7 +475,6 @@ impl Node {
                 _ => unimplemented!(),
             },
             kind: match t {
-                "return" => NodeKind::Return(Box::new(node)),
                 "addr" => NodeKind::Addr(Box::new(node)),
                 "deref" => NodeKind::Deref(Box::new(node)),
                 "expr_stmt" => NodeKind::ExprStmt(Box::new(node)),

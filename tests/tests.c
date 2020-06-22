@@ -122,6 +122,9 @@ int switch_break_check(int x) {
   }
   return x;
 }
+void ret_none() {
+  return;
+}
 
 int main() {
   // 二項演算
@@ -769,6 +772,9 @@ int main() {
   assert(2, counter2(), "counter2()");
   assert(6, counter(), "counter()");
   assert(3, counter2(), "counter2()");
+
+  // voidな関数
+  ret_none();
   printf("OK\n");
   return 0;
 }

@@ -335,8 +335,10 @@ impl CodeGenerator {
         self.update_pos(node.tok_no);
         match &node.kind {
             NodeKind::Return(node) => {
-                self.gen_expr(node)?; // その値を取得し
-                println!("  pop rax"); // raxに移す
+                if let Some(node) = node {
+                    self.gen_expr(node)?;
+                    println!("  pop rax");
+                }
                 println!("  jmp .L.return.{}", self.func_name);
             }
             NodeKind::Block { stmts } => {
@@ -658,7 +660,9 @@ pub fn graph_gen(node: &Node, parent: &String, number: usize, arrow: Option<&str
         }
         NodeKind::Return(node) => {
             s += &format!("{} [label=\"return\"];\n", nodename);
-            s += &graph_gen(node, &nodename, number, None);
+            if let Some(node) = node {
+                s += &graph_gen(node, &nodename, number, None);
+            }
         }
         NodeKind::ExprStmt { .. } => panic!(),
         NodeKind::Addr(node) => {

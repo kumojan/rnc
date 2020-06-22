@@ -1075,7 +1075,8 @@ impl Parser<'_> {
             Ok(if self_.consume(s) {
                 None
             } else {
-                let n = Some((self_.expr()?, self_.tok()));
+                let tok = self_.tok();
+                let n = Some((self_.expr()?, tok));
                 self_.expect(s)?;
                 n
             })
@@ -1115,7 +1116,13 @@ impl Parser<'_> {
             self.leave_scope();
             Node::new_for(start, condi, end, loop_, self.head)
         } else if self.consume("return") {
-            Node::new_unary("return", read_until(self, ";")?, self.head)
+            let node = if self.peek(";") {
+                None
+            } else {
+                Some(self.expr()?)
+            };
+            self.expect(";")?;
+            Node::new_return(node, self.head)
         } else if self.consume("break") {
             self.expect(";")?;
             Node {
