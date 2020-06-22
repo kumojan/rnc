@@ -3,7 +3,6 @@ use crate::tokenize::*;
 use crate::util::*;
 use node::*;
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::fmt;
 use std::rc::Rc;
 pub mod node;
@@ -38,7 +37,7 @@ pub struct Parser<'a> {
     globals: Vec<VarScope>,
     string_literals: Vec<CString>,
     var_scopes: Vec<Vec<VarScope>>, // 後方に内側のスコープがある(読むときはrevする)
-    tag_scopes: VecDeque<VecDeque<(String, Type)>>, // 前方に内側のスコープがある
+    tag_scopes: Vec<Vec<(String, Type)>>, // 前方に内側のスコープがある
     cases: Vec<Vec<i64>>,
     switch_has_default: Vec<bool>,
     // var_attr: VarAttr,
@@ -220,7 +219,8 @@ impl Parser<'_> {
                 .map_or(false, |s| {
                     self.var_scopes
                         .iter()
-                        .flat_map(|scope| scope.iter())
+                        .rev()
+                        .flat_map(|scope| scope.iter().rev())
                         .chain(self.globals.iter())
                         .any(|v| v.is_type(&s))
                 });
@@ -452,12 +452,12 @@ impl Parser<'_> {
     }
     /// 必ずleave_scopeと対にして使うこと
     fn enter_scope(&mut self) {
-        self.tag_scopes.push_front(Default::default());
+        self.tag_scopes.push(Default::default());
         self.var_scopes.push(Default::default());
     }
     /// 必ずenter_scopeと対にして使うこと
     fn leave_scope(&mut self) {
-        self.tag_scopes.pop_front();
+        self.tag_scopes.pop();
         self.var_scopes.pop();
     }
     fn find_var(&self, name: &String) -> Option<Rc<Var>> {
@@ -480,7 +480,7 @@ impl Parser<'_> {
             .next()
     }
     fn add_tag(&mut self, tag: String, ty: Type) {
-        self.tag_scopes[0].push_front((tag, ty));
+        self.tag_scopes.last_mut().unwrap().push((tag, ty));
     }
     //
     fn redefine_tag(&mut self, name: &String, ty: &Type) -> bool {
@@ -489,7 +489,7 @@ impl Parser<'_> {
         }
         // var_scopeにあるtypedefのやつも書き換えたいが、
         // 現状ではIncempleteStructがresolveされた形になっていて、一応動くのでいいか。
-        for (_name, _ty) in &mut self.tag_scopes[0] {
+        for (_name, _ty) in self.tag_scopes.last_mut().unwrap() {
             if _name == name {
                 if let Type::IncompleteStruct { resolved_type, .. } = _ty {
                     *resolved_type.borrow_mut() = Some(ty.clone()); // _tyを捨てる前に、その中の不完全型を解決しておく
@@ -503,7 +503,8 @@ impl Parser<'_> {
     fn find_tag(&self, name: &String) -> Option<Type> {
         self.tag_scopes
             .iter()
-            .flat_map(|scope| scope.iter())
+            .rev()
+            .flat_map(|scope| scope.iter().rev())
             .find(|(_name, _)| name == _name)
             .cloned()
             .map(|(_, ty)| ty)
@@ -567,17 +568,23 @@ impl Parser<'_> {
             init_data: None,
         });
         self.locals.push(var.clone());
-        let len = self.var_scopes.len();
-        self.var_scopes[len - 1].push(VarScope::Var(var.clone())); // scopeにも追加
+        self.var_scopes
+            .last_mut()
+            .unwrap()
+            .push(VarScope::Var(var.clone())); // scopeにも追加
         var
     }
     fn add_typdef(&mut self, name: String, ty: Type) {
-        let len = self.var_scopes.len();
-        self.var_scopes[len - 1].push(VarScope::Type(name, ty));
+        self.var_scopes
+            .last_mut()
+            .unwrap()
+            .push(VarScope::Type(name, ty));
     }
     fn add_enum(&mut self, name: String, num: i64) {
-        let len = self.var_scopes.len();
-        self.var_scopes[len - 1].push(VarScope::Enum(name, num));
+        self.var_scopes
+            .last_mut()
+            .unwrap()
+            .push(VarScope::Enum(name, num));
     }
     // グローバル変数は重複して宣言できない
     fn add_global(
@@ -619,8 +626,10 @@ impl Parser<'_> {
             is_extern: false,
             init_data,
         });
-        let len = self.var_scopes.len();
-        self.var_scopes[len - 1].push(VarScope::Var(var.clone())); // var_scopeに追加
+        self.var_scopes
+            .last_mut()
+            .unwrap()
+            .push(VarScope::Var(var.clone())); // var_scopeに追加
         self.statics.push(var.clone()); // 初期化はglobal
         Ok(var)
     }
@@ -648,6 +657,7 @@ impl Parser<'_> {
     pub fn program(
         mut self,
     ) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<CString>, Vec<Token>), ParseError> {
+        self.enter_scope(); // ファイルスコープ
         let mut code = vec![];
         while !self.is_eof() {
             if self.consume("typedef") {
@@ -657,6 +667,7 @@ impl Parser<'_> {
                 code.push(func); // グローバル変数か関数
             }
         }
+        self.leave_scope();
         if self.var_scopes.len() > 0 {
             return Err(self.raise_err("varscope remains!"));
         }
@@ -699,6 +710,7 @@ impl Parser<'_> {
     }
     fn funcdef(&mut self) -> Result<Option<Function>, ParseError> {
         // まず int *x まで見る
+        // TODO: 順番入れ替わっても対応
         let is_static = self.consume("static");
         let is_extern = self.consume("extern");
         if is_extern && is_static {
