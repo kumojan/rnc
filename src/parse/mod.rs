@@ -362,6 +362,7 @@ impl Parser<'_> {
         } else {
             if let Some(tag) = &tag {
                 // 宣言がない時、タグがあればそこから探す
+                // タグから見つかった場合、それを使って再定義することはない
                 if let Some(ty) = self.find_struct_tag(tag) {
                     return Ok(ty);
                 }
@@ -515,6 +516,8 @@ impl Parser<'_> {
             is_union: false, ..
         }) = ty
         {
+            ty
+        } else if let Some(Type::IncompleteStruct { .. }) = ty {
             ty
         } else {
             None
@@ -717,6 +720,10 @@ impl Parser<'_> {
             return Err(self.raise_err("cannot be extern and static at the same time!"));
         }
         let basety = self.typespec()?;
+        if self.consume(";") {
+            // struct x {};のように構造体タグ宣言のみの場合。
+            return Ok(None);
+        }
         let (name, ty) = self.declarator(basety.clone())?;
         // 次に関数の有無を見る
         if self.peek("(") {

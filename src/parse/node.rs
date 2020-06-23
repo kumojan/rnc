@@ -42,6 +42,14 @@ pub enum Data {
     Byte(u8),        // バイト直書き
     Quad(Box<Quad>), // 指定する場所から8バイト読み取ってくる
 }
+impl fmt::Debug for Data {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Data::Byte(b) => write!(f, "{}", b),
+            Data::Quad(q) => write!(f, "{}", q.label),
+        }
+    }
+}
 
 pub enum InitKind {
     Leaf(Box<Node>),
