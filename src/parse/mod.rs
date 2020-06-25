@@ -1,6 +1,5 @@
 use crate::r#type::*;
 use crate::tokenize::*;
-use crate::util::*;
 use node::*;
 use std::cell::RefCell;
 use std::fmt;
@@ -348,38 +347,31 @@ impl Parser<'_> {
     fn struct_decl(&mut self) -> Result<TypeRef, ParseError> {
         let tag = self.consume_ident();
         let ty = if self.consume("{") {
-            let mut mems = self.struct_list()?;
-            unimplemented!();
-        // let mut offset = 0;
-        // for m in mems.iter_mut() {
-        //     offset = align_to(offset, m.ty.align()); // 新しく追加される型のアライメントにoffsetを合わせる
-        //     m.offset = offset; // メンバのoffsetを設定
-        //     offset += m.ty.size(); // メンバのサイズだけoffsetをずらす
-        // }
-        // let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
-        // TypeKind::TyStruct {
-        //     mems: Box::new(mems),
-        //     align,
-        //     size: align_to(offset, align),
-        //     is_union: false,
-        // }
+            let mems = self.struct_list()?;
+            let ty_ = self.types.new_struct(mems);
+            if let Some(tag) = tag {
+                // redefine or add
+                for (name, ty) in self.tag_scopes.last().unwrap() {
+                    if name == &tag {
+                        self.types.replace(*ty, ty_);
+                        return Ok(*ty);
+                    }
+                }
+                let ty = self.types.add_new(ty_);
+                self.add_tag(tag, ty);
+                ty
+            } else {
+                self.types.add_new(ty_)
+            }
         } else {
             if let Some(tag) = &tag {
-                // 宣言がない時、タグがあればそこから探す
-                // タグから見つかった場合、それを使って再定義することはない
                 if let Some(ty) = self.find_struct_tag(tag) {
                     return Ok(ty);
                 }
             }
-            // タグがないか、探しても見つからない時
-            Type::new_incomplete_struct(tag.clone(), Rc::new(RefCell::new(None)))
+            self.types.add_incomplete()
         };
-        if let Some(tag) = tag {
-            if !self.redefine_tag(&tag, TypeRef::Stmt) {
-                self.add_tag(tag, TypeRef::Stmt)
-            }
-        }
-        Ok(TypeRef::Stmt)
+        Ok(ty)
     }
     fn union_decl(&mut self) -> Result<TypeRef, ParseError> {
         let tag = self.consume_ident();
@@ -490,14 +482,14 @@ impl Parser<'_> {
         self.tag_scopes.last_mut().unwrap().push((tag, ty));
     }
     //
-    fn redefine_tag(&mut self, name: &String, ty: TypeRef) -> bool {
-        unimplemented!();
-        // var_scopeにあるtypedefのやつも書き換えたいが、
-        // 現状ではIncempleteStructがresolveされた形になっていて、一応動くのでいいか。
-        for (_name, _ty) in self.tag_scopes.last_mut().unwrap() {
-            if _name == name {}
+    fn redefine_tag(&mut self, name_: &str, ty_: Type2) -> Option<TypeRef> {
+        for (name, ty) in self.tag_scopes.last().unwrap() {
+            if name == name_ {
+                self.types.replace(*ty, ty_);
+                return Some(*ty);
+            }
         }
-        false
+        None
     }
     fn find_tag(&self, name: &String) -> Option<TypeRef> {
         self.tag_scopes
@@ -534,12 +526,12 @@ impl Parser<'_> {
         }
         return None;
     }
-    fn find_func(&self, name: &String) -> Option<TypeRef> {
+    fn find_func(&self, name: &String) -> Option<(Vec<TypeRef>, TypeRef)> {
         self.globals
             .iter()
             .flat_map(|v| v.get_var(&name))
-            .flat_map(|v| match self.types.get(v.ty).kind {
-                TypeKind::TyFunc { .. } => Some(v.ty),
+            .flat_map(|v| match &self.types.get(v.ty).kind {
+                TypeKind::TyFunc { args, ret } => Some((args.clone(), *ret)),
                 _ => None,
             })
             .next()
@@ -1705,12 +1697,10 @@ impl Parser<'_> {
             // 関数呼び出し
             if self.consume("(") {
                 // 関数呼び出しとわかったので、チェック
-                // let (ret, mut arg_types) = match self.find_func(&name) {
-                //     _ => unimplemented!(),
-                //     // _ => Err(self.raise_err("function not defined"))?,
-                // };
-                let mut arg_types: Vec<TypeRef> = vec![];
-                let mut args = Vec::new();
+                let (mut arg_types, ret) = self
+                    .find_func(&name)
+                    .ok_or(self.raise_err("function not defined"))?;
+                let mut args = vec![];
                 while !self.consume(")") {
                     let mut arg = self.assign()?;
                     if let Some(ty) = arg_types.pop() {
@@ -1726,7 +1716,7 @@ impl Parser<'_> {
                     }
                 }
                 Ok(Node::new_cast(
-                    TypeRef::Int,
+                    ret,
                     Node::new_funcall(name, args, self.head),
                     self.head,
                 ))

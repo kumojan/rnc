@@ -428,7 +428,7 @@ impl Node {
         };
         Self {
             kind: NodeKind::INum(val),
-            ty: TypeRef::Int,
+            ty,
             tok_no,
         }
     }

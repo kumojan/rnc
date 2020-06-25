@@ -1,4 +1,5 @@
 // use crate::parse::ParseError;
+use crate::util::align_to;
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
@@ -376,29 +377,24 @@ impl Default for TypeList {
         Self { list }
     }
 }
-
+impl fmt::Debug for TypeList {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, ty) in self.list.iter().enumerate() {
+            writeln!(f, "{}: {:?}", i, ty)?;
+        }
+        Ok(())
+    }
+}
 impl TypeList {
     fn last(&self) -> TypeRef {
         TypeRef(self.list.len() - 1)
     }
-    fn add_new(&mut self, ty: Type2) -> TypeRef {
+    pub fn add_new(&mut self, ty: Type2) -> TypeRef {
         self.list.push(ty);
         self.last()
     }
     pub fn get(&self, i: TypeRef) -> &Type2 {
         &self.list[i.0]
-    }
-    pub fn get_(&self, s: &'static str) -> &Type2 {
-        let id = match s {
-            "stmt" => 0,
-            "void" => 1,
-            "char" => 2,
-            "short" => 3,
-            "int" => 4,
-            "long" => 5,
-            _ => unimplemented!(),
-        };
-        &self.list[id]
     }
     pub fn is_integer(&self, ty: TypeRef) -> bool {
         self.get(ty).is_integer()
@@ -459,6 +455,31 @@ impl TypeList {
             self.add_new(ty)
         }
     }
+    pub fn add_incomplete(&mut self) -> TypeRef {
+        self.add_new(Type2 {
+            kind: TypeKind::TyIncomplete,
+            size: 0,
+            align: 0,
+        })
+    }
+    pub fn new_struct(&self, mut mems: Vec<Member2>) -> Type2 {
+        let mut offset = 0;
+        for m in mems.iter_mut() {
+            offset = align_to(offset, self.get(m.ty).align); // 新しく追加される型のアライメントにoffsetを合わせる
+            m.offset = offset; // メンバのoffsetを設定
+            offset += self.get(m.ty).size; // メンバのサイズだけoffsetをずらす
+        }
+        let align = mems.iter().map(|m| self.get(m.ty).align).max().unwrap_or(1);
+        let kind = TypeKind::TyStruct {
+            mems,
+            is_union: false,
+        };
+        Type2 {
+            kind,
+            align,
+            size: align_to(offset, align),
+        }
+    }
     pub fn update_array_length(&mut self, ty: TypeRef, len: usize) {
         if let TypeKind::TyArray(ref mut _len, ..) = self.list[ty.0].kind {
             *_len = Some(_len.unwrap_or(len));
@@ -494,5 +515,8 @@ impl TypeList {
             TypeKind::TyStruct { mems, .. } => mems.iter().filter(|m| m.name == name).next(),
             _ => None,
         }
+    }
+    pub fn replace(&mut self, ty: TypeRef, ty_: Type2) {
+        self.list[ty.0] = ty_;
     }
 }

@@ -1,5 +1,5 @@
 use crate::parse::node::{BinOp, Data, Function, Node, NodeKind, Var};
-use crate::r#type::{Type, Type2, TypeKind, TypeList};
+use crate::r#type::{Type2, TypeKind, TypeList};
 use crate::tokenize::{CString, Token};
 use crate::util::*;
 use std::rc::Rc;
@@ -196,16 +196,16 @@ impl CodeGenerator {
                 cast(self.types.get(expr.get_type()));
             }
             NodeKind::Addr(node) => self.gen_addr(node)?,
-            NodeKind::Deref(node) => {
+            NodeKind::Deref(_node) => {
                 // **x(2段回)だと、gen(x); load(); load();
                 // となる。つまりxの結果(xが変数ならば、その値)を取得し、
                 // それをアドレスとして値を取得、
                 // さらにそれをアドレスとして値を取得、となる
-                self.gen_expr(node)?;
+                self.gen_expr(_node)?;
                 // 元々の型(このnodeをderefした結果)がarrayなら、やはりアドレス(評価結果)をそのまま使う
                 // それ以外なら値を取得する
                 // TODO: とりあえずint
-                load(self.types.get_("int"));
+                load(self.types.get(node.get_type()));
             }
             NodeKind::BitNot(node) => {
                 self.gen_expr(node)?;
@@ -214,7 +214,7 @@ impl CodeGenerator {
             NodeKind::Assign(lhs, rhs) => {
                 self.gen_addr(lhs)?;
                 self.gen_expr(rhs)?;
-                store(self.types.get_("int")); // どの型に代入するかによってコードが異なる
+                store(self.types.get(lhs.get_type())); // どの型に代入するかによってコードが異なる
             }
             NodeKind::LogAnd(lhs, rhs) => {
                 let label = self.new_label();
@@ -275,9 +275,9 @@ impl CodeGenerator {
                 self.gen_stmt(stmts)?;
                 self.gen_expr(expr)?;
             }
-            NodeKind::Member { .. } => {
+            NodeKind::Member { mem, .. } => {
                 self.gen_addr(&node)?;
-                load(self.types.get_("int")) // TODO
+                load(self.types.get(mem.ty)) // TODO
             }
             NodeKind::Conditional {
                 condi,

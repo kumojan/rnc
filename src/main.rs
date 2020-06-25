@@ -58,6 +58,9 @@ fn compile(code: &String, print_tklist: bool, print_graph_: bool) -> Result<(), 
     if print_graph_ {
         print_graph(&functions);
     }
+    if print_tklist {
+        println!("{:?}", types);
+    }
     code_gen(functions, globals, string_literals, token_list, types)?;
     Ok(())
 }
