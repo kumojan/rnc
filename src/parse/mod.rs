@@ -364,8 +364,12 @@ impl Parser<'_> {
                 self.types.add_new(ty_)
             }
         } else {
-            if let Some(tag) = &tag {
-                if let Some(ty) = self.find_struct_tag(tag) {
+            if let Some(tag) = tag {
+                if let Some(ty) = self.find_struct_tag(&tag) {
+                    return Ok(ty);
+                } else {
+                    let ty = self.types.add_incomplete();
+                    self.add_tag(tag, ty);
                     return Ok(ty);
                 }
             }
@@ -480,16 +484,6 @@ impl Parser<'_> {
     }
     fn add_tag(&mut self, tag: String, ty: TypeRef) {
         self.tag_scopes.last_mut().unwrap().push((tag, ty));
-    }
-    //
-    fn redefine_tag(&mut self, name_: &str, ty_: Type2) -> Option<TypeRef> {
-        for (name, ty) in self.tag_scopes.last().unwrap() {
-            if name == name_ {
-                self.types.replace(*ty, ty_);
-                return Some(*ty);
-            }
-        }
-        None
     }
     fn find_tag(&self, name: &String) -> Option<TypeRef> {
         self.tag_scopes
@@ -1043,6 +1037,7 @@ impl Parser<'_> {
                         "deref",
                         Node::new_add(node, idx, tok_no, &self.types),
                         tok_no,
+                        &self.types,
                     )
                 }
                 Init::Member(name) => self.struct_ref(node, name)?,
@@ -1300,12 +1295,12 @@ impl Parser<'_> {
             let ty = self.types.ptr_of(lhs.get_type());
             let tmp = self.add_var("", ty);
             let tmp_node = || Node::new_var(tmp.clone(), self.head);
-            let tmp_deref = || Node::new_unary("deref", tmp_node(), self.head);
+            let tmp_deref = || Node::new_unary("deref", tmp_node(), self.head, &self.types);
 
             // tmp = &A
             let line1 = Node::new_assign(
                 tmp_node(),
-                Node::new_unary("addr", *lhs, self.head),
+                Node::new_unary("addr", *lhs, self.head, &self.types),
                 self.head,
             );
             // *tmp = *tmp op B
@@ -1523,8 +1518,16 @@ impl Parser<'_> {
                 let addr = self.skip().cast()?;
                 self.check_deref(addr)
             }
-            Some("&") => Ok(Node::new_unary("addr", self.skip().cast()?, self.head)),
-            Some("~") => Ok(Node::new_unary("bitnot", self.skip().cast()?, self.head)),
+            Some("&") => {
+                let node = self.skip().cast()?;
+                Ok(self.new_addr(node))
+            }
+            Some("~") => Ok(Node::new_unary(
+                "bitnot",
+                self.skip().cast()?,
+                self.head,
+                &self.types,
+            )),
             Some("!") => Ok(Node::new_bin(
                 BinOp::_Eq,
                 self.skip().cast()?,
@@ -1573,11 +1576,22 @@ impl Parser<'_> {
             tok_no: self.head,
         })
     }
+    fn new_addr(&mut self, node: Node) -> Node {
+        let ty = self.types.ptr_of(node.get_type());
+        Node {
+            ty,
+            kind: NodeKind::Addr(Box::new(node)),
+            tok_no: self.head,
+        }
+    }
     /// identを受けて構造体のメンバにアクセスする
     fn struct_ref(&self, node: Node, name: &String) -> Result<Node, ParseError> {
         let mem = match self.types.get_struct_mem(node.get_type(), name) {
             Some(mem) => mem,
-            _ => Err(self.raise_err(&format!("unknown member {}", name)))?,
+            _ => {
+                println!("{:?}", self.types);
+                Err(self.raise_err(&format!("unknown member {}", name)))?
+            }
         };
         Ok(Node::new_member_access(node, mem, self.head))
     }
@@ -1591,6 +1605,7 @@ impl Parser<'_> {
                     "deref",
                     Node::new_add(node, self.expr()?, self.head, &self.types),
                     self.head,
+                    &self.types,
                 );
                 self.expect("]")?;
             } else if self.consume(".") {
@@ -1599,7 +1614,7 @@ impl Parser<'_> {
             // x->yは(*x).yに同じ
             } else if self.consume("->") {
                 let name = &self.expect_ident()?;
-                node = Node::new_unary("deref", node, self.head);
+                node = Node::new_unary("deref", node, self.head, &self.types);
                 node = self.struct_ref(node, name)?;
             } else if self.consume("++") {
                 node = self.new_inc_dec(node, "+");
@@ -1617,31 +1632,23 @@ impl Parser<'_> {
         let tmp_ty = self.types.ptr_of(node.get_type());
         let tmp = self.add_var("", tmp_ty);
         let tmp_node = || Node::new_var(tmp.clone(), tok_no);
-        let tmp_deref = || Node::new_unary("deref", tmp_node(), tok_no);
-        let n1 = Node::new_assign(
-            tmp_node(),
-            Node::new_unary("addr", node, self.head),
-            self.head,
-        );
+        let n1 = Node::new_assign(tmp_node(), self.new_addr(node), self.head);
         let n2: Node;
+        macro_rules! tmp_deref {
+            () => {
+                Node::new_unary("deref", tmp_node(), tok_no, &self.types)
+            };
+        }
         let n3: Node;
         if op == "+" {
-            n2 = self.to_assign(Node::new_add(
-                tmp_deref(),
-                Node::new_num(1, tok_no),
-                tok_no,
-                &self.types,
-            ));
-            n3 = Node::new_sub(tmp_deref(), Node::new_num(1, tok_no), tok_no, &self.types);
+            let node = Node::new_add(tmp_deref!(), Node::new_num(1, tok_no), tok_no, &self.types);
+            n2 = self.to_assign(node);
+            n3 = Node::new_sub(tmp_deref!(), Node::new_num(1, tok_no), tok_no, &self.types);
         } else {
-            n2 = self.to_assign(Node::new_sub(
-                tmp_deref(),
-                Node::new_num(1, tok_no),
-                tok_no,
-                &self.types,
-            ));
+            let node = Node::new_sub(tmp_deref!(), Node::new_num(1, tok_no), tok_no, &self.types);
+            n2 = self.to_assign(node);
             n3 = Node::new_add(
-                tmp_deref(),
+                tmp_deref!(),
                 Node::new_num(1, self.head),
                 self.head,
                 &self.types,

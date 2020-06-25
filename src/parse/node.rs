@@ -498,21 +498,15 @@ impl Node {
             tok_no,
         }
     }
-    pub(super) fn new_unary(t: &str, node: Node, tok_no: usize) -> Self {
+    pub(super) fn new_unary(t: &str, node: Node, tok_no: usize, types: &TypeList) -> Self {
         Self {
             ty: match t {
                 "expr_stmt" => TypeRef::Stmt,
-                // "addr" => node.ty.clone().map(|t| t.to_ptr()),
-                // "deref" => node.ty.clone().map(|t| {
-                //     t.get_base()
-                //         .map(|b| b.clone())
-                //         .unwrap_or_else(|_| panic!("deref failed! at:{:?}", tok_no))
-                // }),
-                // "bitnot" => node.ty.as_ref().map(|t| t.cast_int()),
+                "deref" => types.get_base(node.get_type()).unwrap(),
+                "bitnot" => TypeRef::Int,
                 _ => unimplemented!(),
             },
             kind: match t {
-                "addr" => NodeKind::Addr(Box::new(node)),
                 "deref" => NodeKind::Deref(Box::new(node)),
                 "expr_stmt" => NodeKind::ExprStmt(Box::new(node)),
                 "bitnot" => NodeKind::BitNot(Box::new(node)),
