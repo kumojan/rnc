@@ -1,5 +1,5 @@
 use crate::parse::node::{BinOp, Data, Function, Node, NodeKind, Var};
-use crate::r#type::Type;
+use crate::r#type::{Type, Type2, TypeKind, TypeList};
 use crate::tokenize::{CString, Token};
 use crate::util::*;
 use std::rc::Rc;
@@ -35,17 +35,18 @@ struct CodeGenerator {
     var_offsets: Vec<usize>,
     func_stack_size: usize,
     pos: usize,
+    types: TypeList,
 }
-fn load(ty: &Type) {
-    if ty.is_array() {
+fn load(ty: &Type2) {
+    if let TypeKind::TyArray(..) = ty.kind {
         return;
     }
-    if let Type::TyStruct { .. } = ty {
+    if let TypeKind::TyStruct { .. } = ty.kind {
         return; // 構造体のloadもアドレス
     }
     // アドレスを取り出し、値を取得してpushし直す
     println!("  pop rax");
-    match ty.size() {
+    match ty.size {
         1 => println!("  movsx rax, byte ptr [rax]"),
         2 => println!("  movsx rax, word ptr [rax]"),
         4 => println!("  movsx rax, dword ptr [rax]"),
@@ -53,20 +54,20 @@ fn load(ty: &Type) {
     }
     println!("  push rax");
 }
-fn store(ty: &Type) {
+fn store(ty: &Type2) {
     // 下から 値 | アドレス と並んでいるときに、
     // 値をそのアドレスに格納し、その値をpush
     println!("  pop rdi  # store {:?}", ty);
     println!("  pop rax");
-    if let Type::TyStruct { size, .. } = ty {
+    if let TypeKind::TyStruct { .. } = ty.kind {
         // この時rax, rdiはそれぞれ左辺、右辺のアドレス
-        for i in 0..*size {
+        for i in 0..ty.size {
             println!("  mov dl, [rdi+{}]", i); // 右辺のアドレスから1バイト読み、
             println!("  mov [rax+{}], dl", i); // 左辺のアドレスの位置に1バイト書き込む。dlは汎用8ビットレジスタ
         }
     } else {
         // この時rax, rdiはそれぞれ左辺のアドレスと、右辺の値
-        let regname = match ty.size() {
+        let regname = match ty.size {
             1 => "dil",
             2 => "di",
             4 => "edi",
@@ -76,12 +77,12 @@ fn store(ty: &Type) {
     }
     println!("  push rdi");
 }
-fn cast(ty: &Type) {
-    if ty == &Type::TyVoid || ty.size() == 8 {
+fn cast(ty: &Type2) {
+    if ty.kind == TypeKind::TyVoid || ty.size == 8 {
         // 配列をポインタにキャストするときは何もしない
         return;
     }
-    if ty == &Type::TyBool {
+    if ty.kind == TypeKind::TyBool {
         println!("  pop rax");
         println!("  cmp rax, 0");
         println!("  setne al");
@@ -90,7 +91,7 @@ fn cast(ty: &Type) {
         return;
     }
     println!("  pop rax");
-    match ty.size() {
+    match ty.size {
         1 => println!("  movsx rax, al"),
         2 => println!("  movsx rax, ax"),
         4 => println!("  movsx rax, eax"),
@@ -160,8 +161,8 @@ impl CodeGenerator {
         self.var_offsets = vec![0; var_num];
         let mut offset = RESERVED_REGISTER_STACK_SIZE;
         for i in (0..var_num).rev() {
-            offset = align_to(offset, lvars[i].ty.align());
-            offset += lvars[i].ty.size();
+            offset = align_to(offset, self.types.get(lvars[i].ty).align);
+            offset += self.types.get(lvars[i].ty).size;
             self.var_offsets[i] = offset;
         }
         let offset = *self
@@ -185,18 +186,14 @@ impl CodeGenerator {
             }
             NodeKind::Var(var) => {
                 self.gen_addr(&node)?; // まず変数のアドレスを取得する
-                load(&var.ty); // 配列型の場合は、値を取り出さず、アドレスをそのまま使う
+                load(self.types.get(var.ty)); // 配列型の場合は、値を取り出さず、アドレスをそのまま使う
             }
             NodeKind::Literal { id, .. } => {
                 println!("  push offset .L.data.{}", id);
             }
             NodeKind::Cast(expr) => {
                 self.gen_expr(expr)?;
-                if let Some(ty) = &node.ty {
-                    cast(ty);
-                } else {
-                    unreachable!();
-                }
+                cast(self.types.get(expr.get_type()));
             }
             NodeKind::Addr(node) => self.gen_addr(node)?,
             NodeKind::Deref(node) => {
@@ -207,8 +204,8 @@ impl CodeGenerator {
                 self.gen_expr(node)?;
                 // 元々の型(このnodeをderefした結果)がarrayなら、やはりアドレス(評価結果)をそのまま使う
                 // それ以外なら値を取得する
-                // TODO: 型エラーの処理
-                load(&node.get_type().get_base().unwrap());
+                // TODO: とりあえずint
+                load(self.types.get_("int"));
             }
             NodeKind::BitNot(node) => {
                 self.gen_expr(node)?;
@@ -217,7 +214,7 @@ impl CodeGenerator {
             NodeKind::Assign(lhs, rhs) => {
                 self.gen_addr(lhs)?;
                 self.gen_expr(rhs)?;
-                store(&lhs.get_type()); // どの型に代入するかによってコードが異なる
+                store(self.types.get_("int")); // どの型に代入するかによってコードが異なる
             }
             NodeKind::LogAnd(lhs, rhs) => {
                 let label = self.new_label();
@@ -280,7 +277,7 @@ impl CodeGenerator {
             }
             NodeKind::Member { .. } => {
                 self.gen_addr(&node)?;
-                load(&node.get_type())
+                load(self.types.get_("int")) // TODO
             }
             NodeKind::Conditional {
                 condi,
@@ -502,9 +499,10 @@ pub fn code_gen(
     globals: Vec<Rc<Var>>,
     string_literals: Vec<CString>,
     token_list: Vec<Token>,
+    types: TypeList,
 ) -> Result<(), CodeGenError> {
-    fn global_var_header(var: &Var) {
-        println!(".align {}", var.ty.align());
+    fn global_var_header(var: &Var, cg: &CodeGenerator) {
+        println!(".align {}", cg.types.get(var.ty).align);
         if !var.is_static {
             // static local, static globalは.globlをつけない
             println!(".globl {}", var.name);
@@ -513,13 +511,14 @@ pub fn code_gen(
     }
     let mut cg = CodeGenerator::default();
     cg.tklist = token_list;
+    cg.types = types;
     println!(".intel_syntax noprefix");
     println!(".bss");
 
     for var in &globals {
-        if !var.ty.is_func() && var.init_data.is_none() {
-            global_var_header(var);
-            println!("  .zero {}", var.ty.size());
+        if !cg.types.is_func(var.ty) && var.init_data.is_none() {
+            global_var_header(var, &cg);
+            println!("  .zero {}", cg.types.get(var.ty).size);
         }
     }
     println!(".data");
@@ -530,11 +529,11 @@ pub fn code_gen(
         }
     }
     for var in &globals {
-        if var.ty.is_func() {
+        if cg.types.is_func(var.ty) {
             continue; // 関数はここでは宣言しない
         }
         if let Some(data) = &var.init_data {
-            global_var_header(var);
+            global_var_header(var, &cg);
             let mut quad_skip = 0; // quad命令が出現すると、+7されて、以下の7個(全てゼロ)はスキップされる。
                                    // これによりquadを8バイトと同様に扱うことができる
             for b in data.iter() {
@@ -581,7 +580,7 @@ pub fn code_gen(
         // となる
         // lvarsもvar_offsetもvar.idもあくまで出現順である
         for i in 0..func.params.len() {
-            let reg = match func.params[0].ty.size() {
+            let reg = match cg.types.get(func.params[0].ty).size {
                 1 => ARGREG8[i],
                 2 => ARGREG16[i],
                 4 => ARGREG32[i],

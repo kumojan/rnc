@@ -15,7 +15,7 @@ pub struct Member {
     pub offset: usize,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct EnumMem {
     pub name: String,
     pub val: i64,
@@ -232,6 +232,267 @@ impl Type {
             | Type::TyLong
             | Type::TyEnum { .. } => true,
             _ => false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct TypeRef(pub usize);
+impl TypeRef {
+    pub const Stmt: Self = TypeRef(0);
+    pub const Void: Self = TypeRef(1);
+    pub const Bool: Self = TypeRef(2);
+    pub const Char: Self = TypeRef(3);
+    pub const Short: Self = TypeRef(4);
+    pub const Int: Self = TypeRef(5);
+    pub const Long: Self = TypeRef(6);
+    fn to_ptr(self) -> Type2 {
+        Type2 {
+            kind: TypeKind::TyPtr(self),
+            size: 8,
+            align: 8,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct Member2 {
+    pub name: String,
+    pub ty: TypeRef,
+    pub offset: usize,
+}
+
+#[derive(PartialEq, Debug)]
+pub enum TypeKind {
+    Stmt, // 式ではなく文
+    TyVoid,
+    TyBool,
+    TyShort,
+    TyInt,
+    TyLong,
+    TyChar,
+    TyPtr(TypeRef),
+    TyArray(Option<usize>, TypeRef),
+    TyStruct { mems: Vec<Member2>, is_union: bool },
+    TyEnum(Vec<EnumMem>),
+    TyFunc { args: Vec<TypeRef>, ret: TypeRef },
+    TyIncomplete, // 不完全型
+}
+impl TypeKind {
+    pub fn is_integer(&self) -> bool {
+        use TypeKind::*;
+        match self {
+            TyVoid | TyBool | TyShort | TyInt | TyLong | TyChar | TyEnum(..) => true,
+            _ => false,
+        }
+    }
+    pub fn is_ptr(&self) -> bool {
+        match self {
+            TypeKind::TyPtr(..) => true,
+            _ => false,
+        }
+    }
+    pub fn is_array(&self) -> bool {
+        match self {
+            TypeKind::TyArray(..) => true,
+            _ => false,
+        }
+    }
+    pub fn is_ptr_like(&self) -> bool {
+        self.is_ptr() || self.is_array()
+    }
+    pub fn is_func(&self) -> bool {
+        match self {
+            TypeKind::TyFunc { .. } => true,
+            _ => false,
+        }
+    }
+}
+
+#[derive(PartialEq, Debug)]
+pub struct Type2 {
+    pub kind: TypeKind,
+    pub size: usize,
+    pub align: usize,
+}
+impl Type2 {
+    fn new(kind: TypeKind, size: usize, align: usize) -> Self {
+        Self { kind, size, align }
+    }
+    pub fn is_integer(&self) -> bool {
+        use TypeKind::*;
+        match self.kind {
+            TyVoid | TyBool | TyShort | TyInt | TyLong | TyChar | TyEnum(..) => true,
+            _ => false,
+        }
+    }
+    pub fn is_ptr(&self) -> bool {
+        match self.kind {
+            TypeKind::TyPtr(..) => true,
+            _ => false,
+        }
+    }
+    pub fn is_array(&self) -> bool {
+        match self.kind {
+            TypeKind::TyArray(..) => true,
+            _ => false,
+        }
+    }
+    pub fn is_ptr_like(&self) -> bool {
+        self.is_ptr() || self.is_array()
+    }
+    pub fn is_struct(&self) -> bool {
+        match self.kind {
+            TypeKind::TyStruct { .. } => true,
+            _ => false,
+        }
+    }
+    pub fn is_func(&self) -> bool {
+        match self.kind {
+            TypeKind::TyFunc { .. } => true,
+            _ => false,
+        }
+    }
+}
+
+/// あらゆる型を保持し、参照&Typeを貸し出す構造体
+/// これ以外のオブジェクトはこのリスト上のインデックス
+/// として型を保持する
+pub struct TypeList {
+    list: Vec<Type2>,
+}
+impl Default for TypeList {
+    fn default() -> Self {
+        use TypeKind::*;
+        let list = vec![
+            Type2::new(Stmt, 0, 0),
+            Type2::new(TyVoid, 0, 0),
+            Type2::new(TyBool, 1, 1),
+            Type2::new(TyChar, 1, 1),
+            Type2::new(TyShort, 2, 2),
+            Type2::new(TyInt, 4, 4),
+            Type2::new(TyLong, 8, 8),
+        ];
+        Self { list }
+    }
+}
+
+impl TypeList {
+    fn last(&self) -> TypeRef {
+        TypeRef(self.list.len() - 1)
+    }
+    fn add_new(&mut self, ty: Type2) -> TypeRef {
+        self.list.push(ty);
+        self.last()
+    }
+    pub fn get(&self, i: TypeRef) -> &Type2 {
+        &self.list[i.0]
+    }
+    pub fn get_(&self, s: &'static str) -> &Type2 {
+        let id = match s {
+            "stmt" => 0,
+            "void" => 1,
+            "char" => 2,
+            "short" => 3,
+            "int" => 4,
+            "long" => 5,
+            _ => unimplemented!(),
+        };
+        &self.list[id]
+    }
+    pub fn is_integer(&self, ty: TypeRef) -> bool {
+        self.get(ty).is_integer()
+    }
+    pub fn is_ptr(&self, ty: TypeRef) -> bool {
+        self.get(ty).is_ptr()
+    }
+    pub fn is_array(&self, ty: TypeRef) -> bool {
+        self.get(ty).is_array()
+    }
+    pub fn is_ptr_like(&self, ty: TypeRef) -> bool {
+        self.get(ty).is_ptr_like()
+    }
+    pub fn is_func(&self, ty: TypeRef) -> bool {
+        self.get(ty).is_func()
+    }
+    pub fn is_struct(&self, ty: TypeRef) -> bool {
+        self.get(ty).is_struct()
+    }
+    pub fn function_of(&mut self, args: Vec<TypeRef>, ret: TypeRef) -> TypeRef {
+        let kind = TypeKind::TyFunc { args, ret };
+        self.add_new(Type2 {
+            kind,
+            size: 0,
+            align: 0,
+        })
+    }
+    pub fn ptr_of(&mut self, ty: TypeRef) -> TypeRef {
+        let index = self.list.iter().position(|t| match t.kind {
+            TypeKind::TyPtr(_ty) => ty == _ty,
+            _ => false,
+        });
+        if let Some(index) = index {
+            TypeRef(index)
+        } else {
+            self.add_new(ty.to_ptr())
+        }
+    }
+    pub fn ptr_recursive(&mut self, mut ty: TypeRef, depth: usize) -> TypeRef {
+        for _ in 0..depth {
+            ty = self.ptr_of(ty);
+        }
+        ty
+    }
+    pub fn array_of(&mut self, ty: TypeRef, len: Option<usize>) -> TypeRef {
+        let index = self.list.iter().position(|t| match t.kind {
+            TypeKind::TyArray(_len, base) => base == ty && _len == len,
+            _ => false,
+        });
+        if let Some(index) = index {
+            TypeRef(index)
+        } else {
+            let ty = Type2 {
+                kind: TypeKind::TyArray(len, ty),
+                size: self.get(ty).size * len.unwrap_or(0), // 長さのない配列のサイズはゼロとする
+                align: self.get(ty).align,
+            };
+            self.add_new(ty)
+        }
+    }
+    pub fn update_array_length(&mut self, ty: TypeRef, len: usize) {
+        if let TypeKind::TyArray(ref mut _len, ..) = self.list[ty.0].kind {
+            *_len = Some(_len.unwrap_or(len));
+        }
+    }
+    pub fn array_to_ptr(&mut self, ty: TypeRef) -> TypeRef {
+        match self.get(ty).kind {
+            TypeKind::TyArray(.., base) => self.ptr_of(base),
+            _ => ty,
+        }
+    }
+    pub fn get_base(&self, ty: TypeRef) -> Result<TypeRef, TypeError> {
+        match self.get(ty).kind {
+            TypeKind::TyArray(.., base) => Ok(base),
+            TypeKind::TyPtr(base) => Ok(base),
+            _ => Err(TypeError {
+                msg: "cannot dereference".to_owned(),
+            }),
+        }
+    }
+    pub fn get_base_kind(&self, ty: TypeRef) -> Result<&Type2, TypeError> {
+        let base = match self.get(ty).kind {
+            TypeKind::TyArray(.., base) => base,
+            TypeKind::TyPtr(base) => base,
+            _ => Err(TypeError {
+                msg: "cannot dereference".to_owned(),
+            })?,
+        };
+        Ok(self.get(base))
+    }
+    pub fn get_struct_mem(&self, ty: TypeRef, name: &str) -> Option<&Member2> {
+        match &self.get(ty).kind {
+            TypeKind::TyStruct { mems, .. } => mems.iter().filter(|m| m.name == name).next(),
+            _ => None,
         }
     }
 }

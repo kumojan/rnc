@@ -37,9 +37,10 @@ pub struct Parser<'a> {
     globals: Vec<VarScope>,
     string_literals: Vec<CString>,
     var_scopes: Vec<Vec<VarScope>>, // 後方に内側のスコープがある(読むときはrevする)
-    tag_scopes: Vec<Vec<(String, Type)>>, // 前方に内側のスコープがある
+    tag_scopes: Vec<Vec<(String, TypeRef)>>, // 前方に内側のスコープがある
     cases: Vec<Vec<i64>>,
     switch_has_default: Vec<bool>,
+    types: TypeList,
     // var_attr: VarAttr,
     pub code: &'a str,            // debug用
     pub code_lines: Vec<&'a str>, // debug用
@@ -52,7 +53,7 @@ enum PtrDim {
 #[derive(Debug)]
 enum VarScope {
     Var(Rc<Var>),
-    Type(String, Type),
+    Type(String, TypeRef),
     Enum(String, i64),
 }
 
@@ -77,9 +78,9 @@ impl VarScope {
             _ => false,
         }
     }
-    fn get_type(&self, name: &str) -> Option<Type> {
+    fn get_type(&self, name: &str) -> Option<TypeRef> {
         match self {
-            Self::Type(_name, ty) if _name == name => Some(ty.clone()),
+            Self::Type(_name, ty) if _name == name => Some(*ty),
             _ => None,
         }
     }
@@ -280,7 +281,7 @@ impl Parser<'_> {
         self.consume_ident()
             .ok_or(self.raise_err("expected identifier"))
     }
-    fn typespec(&mut self) -> Result<Type, ParseError> {
+    fn typespec(&mut self) -> Result<TypeRef, ParseError> {
         match self.peek_reserved().as_deref() {
             Some("struct") => return self.skip().struct_decl(),
             Some("union") => return self.skip().union_decl(),
@@ -311,22 +312,24 @@ impl Parser<'_> {
             };
         }
         Ok(match counter {
-            VOID => Type::TyVoid,
-            BOOL => Type::TyBool,
-            CHAR => Type::TyChar,
-            0 | INT => Type::TyInt,
-            ref s if [SHORT, SHORT + INT].contains(s) => Type::TyShort,
-            ref l if [LONG, LONG + INT, LONG + LONG, LONG + LONG + INT].contains(l) => Type::TyLong,
+            VOID => TypeRef::Void,
+            BOOL => TypeRef::Bool,
+            CHAR => TypeRef::Char,
+            0 | INT => TypeRef::Int,
+            ref s if [SHORT, SHORT + INT].contains(s) => TypeRef::Short,
+            ref l if [LONG, LONG + INT, LONG + LONG, LONG + LONG + INT].contains(l) => {
+                TypeRef::Long
+            }
             _ => Err(self.raise_err("invalid type!"))?,
         })
     }
-    fn struct_list(&mut self) -> Result<Vec<Member>, ParseError> {
+    fn struct_list(&mut self) -> Result<Vec<Member2>, ParseError> {
         let mut mems = Vec::new();
         loop {
             let ty = self.typespec()?;
             loop {
                 let (name, ty) = self.declarator(ty.clone())?; // int *x[4]; のような型が確定する
-                mems.push(Member {
+                mems.push(Member2 {
                     ty,
                     name,
                     offset: 0,
@@ -342,23 +345,24 @@ impl Parser<'_> {
         }
         Ok(mems)
     }
-    fn struct_decl(&mut self) -> Result<Type, ParseError> {
+    fn struct_decl(&mut self) -> Result<TypeRef, ParseError> {
         let tag = self.consume_ident();
         let ty = if self.consume("{") {
             let mut mems = self.struct_list()?;
-            let mut offset = 0;
-            for m in mems.iter_mut() {
-                offset = align_to(offset, m.ty.align()); // 新しく追加される型のアライメントにoffsetを合わせる
-                m.offset = offset; // メンバのoffsetを設定
-                offset += m.ty.size(); // メンバのサイズだけoffsetをずらす
-            }
-            let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
-            Type::TyStruct {
-                mems: Box::new(mems),
-                align,
-                size: align_to(offset, align),
-                is_union: false,
-            }
+            unimplemented!();
+        // let mut offset = 0;
+        // for m in mems.iter_mut() {
+        //     offset = align_to(offset, m.ty.align()); // 新しく追加される型のアライメントにoffsetを合わせる
+        //     m.offset = offset; // メンバのoffsetを設定
+        //     offset += m.ty.size(); // メンバのサイズだけoffsetをずらす
+        // }
+        // let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
+        // TypeKind::TyStruct {
+        //     mems: Box::new(mems),
+        //     align,
+        //     size: align_to(offset, align),
+        //     is_union: false,
+        // }
         } else {
             if let Some(tag) = &tag {
                 // 宣言がない時、タグがあればそこから探す
@@ -371,28 +375,29 @@ impl Parser<'_> {
             Type::new_incomplete_struct(tag.clone(), Rc::new(RefCell::new(None)))
         };
         if let Some(tag) = tag {
-            if !self.redefine_tag(&tag, &ty) {
-                self.add_tag(tag, ty.clone())
+            if !self.redefine_tag(&tag, TypeRef::Stmt) {
+                self.add_tag(tag, TypeRef::Stmt)
             }
         }
-        Ok(ty)
+        Ok(TypeRef::Stmt)
     }
-    fn union_decl(&mut self) -> Result<Type, ParseError> {
+    fn union_decl(&mut self) -> Result<TypeRef, ParseError> {
         let tag = self.consume_ident();
         if self.consume("{") {
             let mems = self.struct_list()?;
-            let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
-            let size = mems.iter().map(|m| m.ty.size()).max().unwrap_or(1);
-            let ty = Type::TyStruct {
-                mems: Box::new(mems),
-                align,
-                size: align_to(size, align),
-                is_union: true,
-            };
-            if let Some(tag) = tag {
-                self.add_tag(tag, ty.clone());
-            }
-            Ok(ty)
+            unimplemented!();
+        // let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
+        // let size = mems.iter().map(|m| m.ty.size()).max().unwrap_or(1);
+        // let ty = Type::TyStruct {
+        //     mems: Box::new(mems),
+        //     align,
+        //     size: align_to(size, align),
+        //     is_union: true,
+        // };
+        // if let Some(tag) = tag {
+        //     self.add_tag(tag, ty.clone());
+        // }
+        // Ok(ty)
         } else if let Some(tag) = tag {
             self.find_union_tag(&tag)
                 .ok_or(self.raise_err("unknown union tag"))
@@ -400,7 +405,7 @@ impl Parser<'_> {
             Err(self.raise_err("expected identifier"))
         }
     }
-    fn enum_decl(&mut self) -> Result<Type, ParseError> {
+    fn enum_decl(&mut self) -> Result<TypeRef, ParseError> {
         let tag = self.consume_ident();
         if self.consume("{") {
             let mut val = 0;
@@ -422,9 +427,10 @@ impl Parser<'_> {
             }
             let ty = Type::new_enum(mems);
             if let Some(tag) = tag {
-                self.add_tag(tag, ty.clone());
+                self.add_tag(tag, TypeRef::Int);
             }
-            Ok(ty)
+            unimplemented!();
+        // Ok(ty)
         } else if let Some(tag) = tag {
             match self.find_enum_tag(&tag) {
                 Some(ty) => Ok(ty),
@@ -480,28 +486,20 @@ impl Parser<'_> {
             .flat_map(|v| v.get_union(name))
             .next()
     }
-    fn add_tag(&mut self, tag: String, ty: Type) {
+    fn add_tag(&mut self, tag: String, ty: TypeRef) {
         self.tag_scopes.last_mut().unwrap().push((tag, ty));
     }
     //
-    fn redefine_tag(&mut self, name: &String, ty: &Type) -> bool {
-        if ty.is_incomplete() {
-            return false;
-        }
+    fn redefine_tag(&mut self, name: &String, ty: TypeRef) -> bool {
+        unimplemented!();
         // var_scopeにあるtypedefのやつも書き換えたいが、
         // 現状ではIncempleteStructがresolveされた形になっていて、一応動くのでいいか。
         for (_name, _ty) in self.tag_scopes.last_mut().unwrap() {
-            if _name == name {
-                if let Type::IncompleteStruct { resolved_type, .. } = _ty {
-                    *resolved_type.borrow_mut() = Some(ty.clone()); // _tyを捨てる前に、その中の不完全型を解決しておく
-                }
-                *_ty = ty.clone();
-                return true;
-            }
+            if _name == name {}
         }
         false
     }
-    fn find_tag(&self, name: &String) -> Option<Type> {
+    fn find_tag(&self, name: &String) -> Option<TypeRef> {
         self.tag_scopes
             .iter()
             .rev()
@@ -510,46 +508,43 @@ impl Parser<'_> {
             .cloned()
             .map(|(_, ty)| ty)
     }
-    fn find_struct_tag(&self, name: &String) -> Option<Type> {
-        let ty = self.find_tag(name);
-        if let Some(Type::TyStruct {
-            is_union: false, ..
-        }) = ty
-        {
-            ty
-        } else if let Some(Type::IncompleteStruct { .. }) = ty {
-            ty
-        } else {
-            None
+    fn find_struct_tag(&self, name: &String) -> Option<TypeRef> {
+        if let Some(ty) = self.find_tag(name) {
+            if self.types.is_struct(ty) {
+                return Some(ty);
+            }
         }
+        return None;
     }
-    fn find_union_tag(&self, name: &String) -> Option<Type> {
-        let ty = self.find_tag(name);
-        if let Some(Type::TyStruct { is_union: true, .. }) = ty {
-            ty
-        } else {
-            None
+    fn find_union_tag(&self, name: &String) -> Option<TypeRef> {
+        unimplemented!();
+        if let Some(ty) = self.find_tag(name) {
+            if self.types.is_struct(ty) {
+                return Some(ty);
+            }
         }
+        return None;
     }
-    fn find_enum_tag(&self, name: &String) -> Option<Type> {
-        let ty = self.find_tag(name);
-        if let Some(Type::TyEnum { .. }) = ty {
-            ty
-        } else {
-            None
+    fn find_enum_tag(&self, name: &String) -> Option<TypeRef> {
+        unimplemented!();
+        if let Some(ty) = self.find_tag(name) {
+            if self.types.is_struct(ty) {
+                return Some(ty);
+            }
         }
+        return None;
     }
-    fn find_func(&self, name: &String) -> Option<Type> {
+    fn find_func(&self, name: &String) -> Option<TypeRef> {
         self.globals
             .iter()
             .flat_map(|v| v.get_var(&name))
-            .flat_map(|v| match v.ty {
-                Type::TyFunc { .. } => Some(v.ty.clone()),
+            .flat_map(|v| match self.types.get(v.ty).kind {
+                TypeKind::TyFunc { .. } => Some(v.ty),
                 _ => None,
             })
             .next()
     }
-    fn peek_typedef(&self) -> Option<Type> {
+    fn peek_typedef(&self) -> Option<TypeRef> {
         self.peek_ident().map_or(None, |name| {
             self.var_scopes
                 .iter()
@@ -560,10 +555,10 @@ impl Parser<'_> {
                 .next()
         })
     }
-    fn add_var(&mut self, name: &str, ty: Type) -> Rc<Var> {
+    fn add_var(&mut self, name: &str, ty: TypeRef) -> Rc<Var> {
         let var = Rc::new(Var {
             name: name.to_owned(),
-            ty,
+            ty, // とりあえず、全てint
             id: self.locals.len(),
             is_local: true,
             is_static: false,
@@ -577,7 +572,7 @@ impl Parser<'_> {
             .push(VarScope::Var(var.clone())); // scopeにも追加
         var
     }
-    fn add_typdef(&mut self, name: String, ty: Type) {
+    fn add_typdef(&mut self, name: String, ty: TypeRef) {
         self.var_scopes
             .last_mut()
             .unwrap()
@@ -593,7 +588,7 @@ impl Parser<'_> {
     fn add_global(
         &mut self,
         name: String,
-        ty: Type,
+        ty: TypeRef,
         init_data: Option<Vec<Data>>,
         is_static: bool,
         is_extern: bool,
@@ -617,7 +612,7 @@ impl Parser<'_> {
     fn add_static(
         &mut self,
         name: String,
-        ty: Type,
+        ty: TypeRef,
         init_data: Option<Vec<Data>>,
     ) -> Result<Rc<Var>, ParseError> {
         let var = Rc::new(Var {
@@ -636,7 +631,7 @@ impl Parser<'_> {
         self.statics.push(var.clone()); // 初期化はglobal
         Ok(var)
     }
-    fn add_global_typedef(&mut self, name: String, ty: Type) -> Result<(), ParseError> {
+    fn add_global_typedef(&mut self, name: String, ty: TypeRef) -> Result<(), ParseError> {
         if self.globals.iter().find(|v| v.name() == &name).is_some() {
             Err(self.raise_err("global var/type or func redefined!"))
         } else {
@@ -650,7 +645,7 @@ impl Parser<'_> {
                 ty: Type::TyChar.to_complete_array(data.0.len()),
                 id: self.string_literals.len(),
             },
-            ty: Some(Type::TyChar.to_complete_array(data.0.len())),
+            ty: self.types.array_of(TypeRef::Char, Some(data.0.len())),
             tok_no: self.head,
         };
         self.string_literals.push(data);
@@ -659,7 +654,16 @@ impl Parser<'_> {
     // コード生成
     pub fn program(
         mut self,
-    ) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<CString>, Vec<Token>), ParseError> {
+    ) -> Result<
+        (
+            Vec<Function>,
+            Vec<Rc<Var>>,
+            Vec<CString>,
+            Vec<Token>,
+            TypeList,
+        ),
+        ParseError,
+    > {
         self.enter_scope(); // ファイルスコープ
         let mut code = vec![];
         while !self.is_eof() {
@@ -686,7 +690,7 @@ impl Parser<'_> {
             })
             .chain(self.statics.into_iter()) // static変数も追加
             .collect();
-        Ok((code, globals, self.string_literals, self.tklist))
+        Ok((code, globals, self.string_literals, self.tklist, self.types))
     }
     fn funcargs(&mut self) -> Result<(), ParseError> {
         self.expect("(")?;
@@ -696,12 +700,9 @@ impl Parser<'_> {
         }
         if !self.consume(")") {
             loop {
-                // TODO: 関数の引数では配列は本当には配列にならない
                 let ty = self.typespec()?;
                 let (name, mut ty) = self.declarator(ty)?;
-                if let Type::TyArray { base, .. } = ty {
-                    ty = base.to_ptr();
-                }
+                ty = self.types.array_to_ptr(ty);
                 self.add_var(&name, ty);
                 if !self.consume(",") {
                     break; // 宣言終了
@@ -731,11 +732,8 @@ impl Parser<'_> {
             self.enter_scope();
             self.funcargs()?;
             let params: Vec<_> = self.locals.iter().cloned().collect();
-            let arg = params.iter().map(|p| p.ty.clone()).collect();
-            let ty = Type::TyFunc {
-                arg: Box::new(arg),
-                ret: Box::new(ty),
-            };
+            let arg = params.iter().map(|p| p.ty).collect();
+            let ty = self.types.function_of(arg, ty);
             self.add_global(name.clone(), ty.clone(), None, is_static, is_extern)?;
             if self.consume(";") {
                 // int func();のように関数の宣言のみの場合
@@ -770,21 +768,16 @@ impl Parser<'_> {
     fn global_vardef(
         &mut self,
         name: String,
-        mut ty: Type,
+        ty: TypeRef,
         is_static: bool,
         is_extern: bool,
     ) -> Result<(), ParseError> {
         let init = if self.consume("=") {
             let init = self.initializer()?;
-            if let Type::TyArray { mut len, base } = ty {
-                if let InitKind::List(v) = &init.kind {
-                    if len.is_none() {
-                        len = Some(v.len());
-                    }
-                }
-                ty = Type::TyArray { len, base };
+            if let InitKind::List(l) = &init.kind {
+                self.types.update_array_length(ty, l.len());
             }
-            init.eval(&ty)
+            init.eval(ty, &self.types)
                 .map(Some)
                 .map_err(|(tok_no, msg)| ParseError::new(self.tklist[tok_no].pos, msg))?
         } else {
@@ -794,12 +787,12 @@ impl Parser<'_> {
         Ok(())
     }
     /// declarator = ptr ("(" declarator ")" | ident) ("[" num "]")*
-    fn declarator(&mut self, mut ty: Type) -> Result<(String, Type), ParseError> {
+    fn declarator(&mut self, mut ty: TypeRef) -> Result<(String, TypeRef), ParseError> {
         let (name, v) = self.get_name_ptr_dim()?;
         for i in v {
             ty = match i {
-                PtrDim::Ptr(depth) => ty.to_ptr_recursive(depth as u8),
-                PtrDim::Dim(dim) => ty.to_array(dim),
+                PtrDim::Ptr(depth) => self.types.ptr_recursive(ty, depth),
+                PtrDim::Dim(dim) => self.types.array_of(ty, dim),
             }
         }
         let name = if let Some(name) = name {
@@ -809,12 +802,12 @@ impl Parser<'_> {
         };
         Ok((name, ty))
     }
-    fn abstruct_declarator(&mut self, mut ty: Type) -> Result<Type, ParseError> {
+    fn abstruct_declarator(&mut self, mut ty: TypeRef) -> Result<TypeRef, ParseError> {
         let (name, v) = self.get_name_ptr_dim()?;
         for i in v {
             ty = match i {
-                PtrDim::Ptr(depth) => ty.to_ptr_recursive(depth as u8),
-                PtrDim::Dim(dim) => ty.to_array(dim),
+                PtrDim::Ptr(depth) => self.types.ptr_recursive(ty, depth),
+                PtrDim::Dim(dim) => self.types.array_of(ty, dim),
             }
         }
         if name.is_some() {
@@ -881,18 +874,13 @@ impl Parser<'_> {
     fn static_vardef(&mut self) -> Result<(), ParseError> {
         let basety = self.typespec()?;
         loop {
-            let (name, mut ty) = self.declarator(basety.clone())?;
+            let (name, ty) = self.declarator(basety.clone())?;
             let init = if self.consume("=") {
                 let init = self.initializer()?;
-                if let Type::TyArray { mut len, base } = ty {
-                    if let InitKind::List(v) = &init.kind {
-                        if len.is_none() {
-                            len = Some(v.len());
-                        }
-                    }
-                    ty = Type::TyArray { len, base };
+                if let InitKind::List(l) = &init.kind {
+                    self.types.update_array_length(ty, l.len());
                 }
-                init.eval(&ty)
+                init.eval(ty, &self.types)
                     .map(Some)
                     .map_err(|(tok_no, msg)| ParseError::new(self.tklist[tok_no].pos, msg))?
             } else {
@@ -911,23 +899,18 @@ impl Parser<'_> {
         let mut stmts = vec![];
         if !self.consume(";") {
             loop {
-                let (name, mut ty) = self.declarator(basety.clone())?;
-                if ty == Type::TyVoid {
+                let (name, ty) = self.declarator(basety.clone())?;
+                if TypeKind::TyVoid == self.types.get(ty).kind {
                     Err(self.raise_err("variable decleared void"))?
                 }
                 if self.consume("=") {
                     let init = self.initializer()?;
-                    if let Type::TyArray { mut len, base } = ty {
-                        if let InitKind::List(v) = &init.kind {
-                            if len.is_none() {
-                                len = Some(v.len());
-                            }
-                        }
-                        ty = Type::TyArray { len, base };
+                    if let InitKind::List(l) = &init.kind {
+                        self.types.update_array_length(ty, l.len());
                     }
                     let var = self.add_var(&name, ty);
                     let mut nodes = vec![];
-                    self.init_stmt(&var, init, vec![], &mut nodes, &var.ty)?;
+                    self.init_stmt(&var, init, vec![], &mut nodes, var.ty)?;
                     stmts.extend(nodes);
                 } else {
                     self.add_var(&name, ty);
@@ -972,43 +955,40 @@ impl Parser<'_> {
     }
     /// x[1][2] = a; というような代入文を生成する。
     fn init_stmt(
-        &mut self,
+        &self,
         var: &Rc<Var>,
         i: Initializer,
         mut v: Vec<Init>,
         nodes: &mut Vec<Node>,
-        ty: &Type,
+        ty: TypeRef,
     ) -> Result<Vec<Init>, ParseError> {
         let Initializer { kind, tok_no } = i;
         // 配列または構造体に代入している時は分ける
         // TODO: union
-        match ty {
-            Type::TyArray {
-                len: Some(len),
-                base,
-            } => match kind {
+        match &self.types.get(ty).kind {
+            TypeKind::TyArray(Some(len), base) => match kind {
                 InitKind::List(list) => {
                     if *len < list.len() {
                         Err(self.raise_err("initializer too long"))?;
                     }
                     for d in list.len()..*len {
                         v.push(Init::Index(d));
-                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, base)?;
+                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, *base)?;
                     }
                     for (d, i) in list.into_iter().enumerate() {
                         v.push(Init::Index(d));
-                        v = self.init_stmt(var, i, v, nodes, base)?;
+                        v = self.init_stmt(var, i, v, nodes, *base)?;
                     }
                 }
                 InitKind::Zero => {
                     for d in 0..*len {
                         v.push(Init::Index(d));
-                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, base)?;
+                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, *base)?;
                     }
                 }
                 _ => Err(self.raise_err("array must be initialized with braces"))?,
             },
-            Type::TyStruct {
+            TypeKind::TyStruct {
                 mems,
                 is_union: false,
                 ..
@@ -1019,17 +999,17 @@ impl Parser<'_> {
                     }
                     for m in mems.iter().skip(list.len()) {
                         v.push(Init::Member(m.name.clone()));
-                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, &m.ty)?;
+                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, m.ty)?;
                     }
                     for (i, m) in list.into_iter().zip(mems.iter()) {
                         v.push(Init::Member(m.name.clone()));
-                        v = self.init_stmt(var, i, v, nodes, &m.ty)?;
+                        v = self.init_stmt(var, i, v, nodes, m.ty)?;
                     }
                 }
                 InitKind::Zero => {
                     for m in mems.iter() {
                         v.push(Init::Member(m.name.clone()));
-                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, &m.ty)?;
+                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, m.ty)?;
                     }
                 }
                 InitKind::Leaf(val) => {
@@ -1055,7 +1035,7 @@ impl Parser<'_> {
         Ok(v)
     }
     fn init_leaf(
-        &mut self,
+        &self,
         var: Rc<Var>,
         val: Node,
         nodes: &mut Vec<Node>,
@@ -1067,7 +1047,11 @@ impl Parser<'_> {
             node = match d {
                 Init::Index(idx) => {
                     let idx = Node::new_num(*idx, tok_no);
-                    Node::new_unary("deref", Node::new_add(node, idx, tok_no), tok_no)
+                    Node::new_unary(
+                        "deref",
+                        Node::new_add(node, idx, tok_no, &self.types),
+                        tok_no,
+                    )
                 }
                 Init::Member(name) => self.struct_ref(node, name)?,
             };
@@ -1170,14 +1154,14 @@ impl Parser<'_> {
             self.expect(";")?;
             Node {
                 kind: NodeKind::Break,
-                ty: None,
+                ty: TypeRef::Stmt,
                 tok_no: self.head,
             }
         } else if self.consume("continue") {
             self.expect(";")?;
             Node {
                 kind: NodeKind::Continue,
-                ty: None,
+                ty: TypeRef::Stmt,
                 tok_no: self.head,
             }
         } else if self.consume("goto") {
@@ -1185,7 +1169,7 @@ impl Parser<'_> {
             self.expect(";")?;
             Node {
                 kind: NodeKind::Goto(label),
-                ty: None,
+                ty: TypeRef::Stmt,
                 tok_no: self.head,
             }
         } else if self.peek_ident().is_some()
@@ -1196,7 +1180,7 @@ impl Parser<'_> {
             self.expect(":")?;
             Node {
                 kind: NodeKind::Label(label, Box::new(self.stmt()?)),
-                ty: None,
+                ty: TypeRef::Stmt,
                 tok_no,
             }
         } else if self.consume("switch") {
@@ -1213,7 +1197,7 @@ impl Parser<'_> {
                     cases: self.cases.pop().unwrap(),
                     has_default: self.switch_has_default.pop().unwrap(),
                 },
-                ty: None,
+                ty: TypeRef::Stmt,
             }
         } else if self.consume("case") {
             let val = self.const_expr()?;
@@ -1229,7 +1213,7 @@ impl Parser<'_> {
                     id,
                     stmt: Box::new(self.stmt()?),
                 },
-                ty: None,
+                ty: TypeRef::Stmt,
             }
         } else if self.consume("default") {
             self.expect(":")?;
@@ -1245,7 +1229,7 @@ impl Parser<'_> {
             Node {
                 tok_no: self.head,
                 kind: NodeKind::Default_(Box::new(self.stmt()?)),
-                ty: None,
+                ty: TypeRef::Stmt,
             }
         } else {
             Node::new_expr_stmt(read_until(self, ";")?, self.head)
@@ -1275,13 +1259,29 @@ impl Parser<'_> {
         }
         macro_rules! to_assign_op {
             ($op:expr) => {{
-                to_assign!(Node::new_bin($op, node, self.skip().assign()?, self.head))
+                to_assign!(Node::new_bin(
+                    $op,
+                    node,
+                    self.skip().assign()?,
+                    self.head,
+                    &self.types
+                ))
             }};
         }
         Ok(match self.peek_reserved().as_deref() {
             Some("=") => Node::new_assign(node, self.skip().assign()?, self.head),
-            Some("+=") => to_assign!(Node::new_add(node, self.skip().assign()?, self.head)),
-            Some("-=") => to_assign!(Node::new_sub(node, self.skip().assign()?, self.head)),
+            Some("+=") => to_assign!(Node::new_add(
+                node,
+                self.skip().assign()?,
+                self.head,
+                &self.types
+            )),
+            Some("-=") => to_assign!(Node::new_sub(
+                node,
+                self.skip().assign()?,
+                self.head,
+                &self.types
+            )),
             Some("*=") => to_assign_op!(BinOp::Mul),
             Some("/=") => to_assign_op!(BinOp::Div),
             Some("%=") => to_assign_op!(BinOp::Mod),
@@ -1305,7 +1305,7 @@ impl Parser<'_> {
             ..
         } = binop
         {
-            let ty = lhs.get_type().clone().to_ptr();
+            let ty = self.types.ptr_of(lhs.get_type());
             let tmp = self.add_var("", ty);
             let tmp_node = || Node::new_var(tmp.clone(), self.head);
             let tmp_deref = || Node::new_unary("deref", tmp_node(), self.head);
@@ -1319,7 +1319,7 @@ impl Parser<'_> {
             // *tmp = *tmp op B
             let line2 = Node::new_assign(
                 tmp_deref(),
-                Node::new_bin(op, tmp_deref(), *rhs, self.head),
+                Node::new_bin(op, tmp_deref(), *rhs, self.head, &self.types),
                 self.head,
             );
             Node::new_comma(line1, line2, self.head)
@@ -1342,7 +1342,7 @@ impl Parser<'_> {
     }
     fn const_expr(&mut self) -> Result<i64, ParseError> {
         self.conditional()?
-            .eval()
+            .eval(&self.types)
             .map_err(|(tok_no, msg)| ParseError::new(self.tklist[tok_no].pos, msg))
     }
     /// logor = logand ("&&" logand)*
@@ -1365,7 +1365,7 @@ impl Parser<'_> {
     fn bitor(&mut self) -> Result<Node, ParseError> {
         let mut node = self.bitxor()?;
         while self.consume("|") {
-            node = Node::new_bin(BinOp::Or, node, self.bitxor()?, self.head)
+            node = Node::new_bin(BinOp::Or, node, self.bitxor()?, self.head, &self.types)
         }
         Ok(node)
     }
@@ -1373,7 +1373,7 @@ impl Parser<'_> {
     fn bitxor(&mut self) -> Result<Node, ParseError> {
         let mut node = self.bitand()?;
         while self.consume("^") {
-            node = Node::new_bin(BinOp::Xor, node, self.bitand()?, self.head)
+            node = Node::new_bin(BinOp::Xor, node, self.bitand()?, self.head, &self.types)
         }
         Ok(node)
     }
@@ -1381,7 +1381,7 @@ impl Parser<'_> {
     fn bitand(&mut self) -> Result<Node, ParseError> {
         let mut node = self.equality()?;
         while self.consume("&") {
-            node = Node::new_bin(BinOp::And, node, self.equality()?, self.head)
+            node = Node::new_bin(BinOp::And, node, self.equality()?, self.head, &self.types)
         }
         Ok(node)
     }
@@ -1389,8 +1389,20 @@ impl Parser<'_> {
         let mut node = self.relational()?;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("==") => Node::new_bin(BinOp::_Eq, node, self.skip().relational()?, self.head),
-                Some("!=") => Node::new_bin(BinOp::Neq, node, self.skip().relational()?, self.head),
+                Some("==") => Node::new_bin(
+                    BinOp::_Eq,
+                    node,
+                    self.skip().relational()?,
+                    self.head,
+                    &self.types,
+                ),
+                Some("!=") => Node::new_bin(
+                    BinOp::Neq,
+                    node,
+                    self.skip().relational()?,
+                    self.head,
+                    &self.types,
+                ),
                 _ => return Ok(node),
             }
         }
@@ -1400,10 +1412,34 @@ impl Parser<'_> {
         let mut node = self.shift()?;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("<") => Node::new_bin(BinOp::Lt, node, self.skip().shift()?, self.head),
-                Some("<=") => Node::new_bin(BinOp::Le, node, self.skip().shift()?, self.head),
-                Some(">") => Node::new_bin(BinOp::Lt, self.skip().shift()?, node, self.head),
-                Some(">=") => Node::new_bin(BinOp::Le, self.skip().shift()?, node, self.head),
+                Some("<") => Node::new_bin(
+                    BinOp::Lt,
+                    node,
+                    self.skip().shift()?,
+                    self.head,
+                    &self.types,
+                ),
+                Some("<=") => Node::new_bin(
+                    BinOp::Le,
+                    node,
+                    self.skip().shift()?,
+                    self.head,
+                    &self.types,
+                ),
+                Some(">") => Node::new_bin(
+                    BinOp::Lt,
+                    self.skip().shift()?,
+                    node,
+                    self.head,
+                    &self.types,
+                ),
+                Some(">=") => Node::new_bin(
+                    BinOp::Le,
+                    self.skip().shift()?,
+                    node,
+                    self.head,
+                    &self.types,
+                ),
                 _ => return Ok(node),
             }
         }
@@ -1413,8 +1449,12 @@ impl Parser<'_> {
         let mut node = self.add()?;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("<<") => Node::new_bin(BinOp::Shl, node, self.skip().add()?, self.head),
-                Some(">>") => Node::new_bin(BinOp::Shr, node, self.skip().add()?, self.head),
+                Some("<<") => {
+                    Node::new_bin(BinOp::Shl, node, self.skip().add()?, self.head, &self.types)
+                }
+                Some(">>") => {
+                    Node::new_bin(BinOp::Shr, node, self.skip().add()?, self.head, &self.types)
+                }
                 _ => return Ok(node),
             }
         }
@@ -1424,8 +1464,8 @@ impl Parser<'_> {
         let mut node = self.mul()?;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("+") => Node::new_add(node, self.skip().mul()?, self.head),
-                Some("-") => Node::new_sub(node, self.skip().mul()?, self.head),
+                Some("+") => Node::new_add(node, self.skip().mul()?, self.head, &self.types),
+                Some("-") => Node::new_sub(node, self.skip().mul()?, self.head, &self.types),
                 _ => return Ok(node),
             }
         }
@@ -1435,9 +1475,27 @@ impl Parser<'_> {
         let mut node = self.cast()?;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("*") => Node::new_bin(BinOp::Mul, node, self.skip().cast()?, self.head),
-                Some("/") => Node::new_bin(BinOp::Div, node, self.skip().cast()?, self.head),
-                Some("%") => Node::new_bin(BinOp::Mod, node, self.skip().cast()?, self.head),
+                Some("*") => Node::new_bin(
+                    BinOp::Mul,
+                    node,
+                    self.skip().cast()?,
+                    self.head,
+                    &self.types,
+                ),
+                Some("/") => Node::new_bin(
+                    BinOp::Div,
+                    node,
+                    self.skip().cast()?,
+                    self.head,
+                    &self.types,
+                ),
+                Some("%") => Node::new_bin(
+                    BinOp::Mod,
+                    node,
+                    self.skip().cast()?,
+                    self.head,
+                    &self.types,
+                ),
                 _ => return Ok(node),
             };
         }
@@ -1467,6 +1525,7 @@ impl Parser<'_> {
                 Node::new_num(0, self.head),
                 self.skip().cast()?,
                 self.head,
+                &self.types,
             )),
             Some("*") => {
                 let addr = self.skip().cast()?;
@@ -1479,28 +1538,39 @@ impl Parser<'_> {
                 self.skip().cast()?,
                 Node::new_num(0, self.head),
                 self.head,
+                &self.types,
             )),
             Some("++") => {
                 // ++i => i+=1
                 let cast = self.skip().cast()?;
                 let tok = self.head;
-                Ok(self.to_assign(Node::new_add(cast, Node::new_num(1, self.head), tok)))
+                Ok(self.to_assign(Node::new_add(
+                    cast,
+                    Node::new_num(1, self.head),
+                    tok,
+                    &self.types,
+                )))
             }
             Some("--") => {
                 // --i => i-=1
                 let cast = self.skip().cast()?;
                 let tok = self.head;
-                Ok(self.to_assign(Node::new_sub(cast, Node::new_num(1, self.head), tok)))
+                Ok(self.to_assign(Node::new_sub(
+                    cast,
+                    Node::new_num(1, self.head),
+                    tok,
+                    &self.types,
+                )))
             }
             _ => self.postfix(),
         }
     }
     fn check_deref(&self, addr: Node) -> Result<Node, ParseError> {
-        let ty = if let Ok(ty) = addr.get_type().get_base() {
-            if ty == &Type::TyVoid {
+        let ty = if let Ok(ty) = self.types.get_base(addr.get_type()) {
+            if ty == TypeRef::Void {
                 return Err(self.raise_err("dereferencing void pointer!"));
             }
-            Some(ty.clone())
+            ty
         } else {
             println!("kind:{:?} type:{:?}", addr.kind, addr.get_type());
             return Err(self.raise_err("cannot dereference"));
@@ -1512,8 +1582,8 @@ impl Parser<'_> {
         })
     }
     /// identを受けて構造体のメンバにアクセスする
-    fn struct_ref(&mut self, node: Node, name: &String) -> Result<Node, ParseError> {
-        let mem = match node.get_type().get_struct_mem(name) {
+    fn struct_ref(&self, node: Node, name: &String) -> Result<Node, ParseError> {
+        let mem = match self.types.get_struct_mem(node.get_type(), name) {
             Some(mem) => mem,
             _ => Err(self.raise_err(&format!("unknown member {}", name)))?,
         };
@@ -1527,7 +1597,7 @@ impl Parser<'_> {
             if self.consume("[") {
                 node = Node::new_unary(
                     "deref",
-                    Node::new_add(node, self.expr()?, self.head),
+                    Node::new_add(node, self.expr()?, self.head, &self.types),
                     self.head,
                 );
                 self.expect("]")?;
@@ -1552,7 +1622,8 @@ impl Parser<'_> {
     /// ++Aと違って、A+=1としたあと、A-1という単なる値が返ることに注意
     fn new_inc_dec(&mut self, node: Node, op: &str) -> Node {
         let tok_no = self.head;
-        let tmp = self.add_var("", node.get_type().clone().to_ptr());
+        let tmp_ty = self.types.ptr_of(node.get_type());
+        let tmp = self.add_var("", tmp_ty);
         let tmp_node = || Node::new_var(tmp.clone(), tok_no);
         let tmp_deref = || Node::new_unary("deref", tmp_node(), tok_no);
         let n1 = Node::new_assign(
@@ -1563,11 +1634,26 @@ impl Parser<'_> {
         let n2: Node;
         let n3: Node;
         if op == "+" {
-            n2 = self.to_assign(Node::new_add(tmp_deref(), Node::new_num(1, tok_no), tok_no));
-            n3 = Node::new_sub(tmp_deref(), Node::new_num(1, tok_no), tok_no);
+            n2 = self.to_assign(Node::new_add(
+                tmp_deref(),
+                Node::new_num(1, tok_no),
+                tok_no,
+                &self.types,
+            ));
+            n3 = Node::new_sub(tmp_deref(), Node::new_num(1, tok_no), tok_no, &self.types);
         } else {
-            n2 = self.to_assign(Node::new_sub(tmp_deref(), Node::new_num(1, tok_no), tok_no));
-            n3 = Node::new_add(tmp_deref(), Node::new_num(1, self.head), self.head);
+            n2 = self.to_assign(Node::new_sub(
+                tmp_deref(),
+                Node::new_num(1, tok_no),
+                tok_no,
+                &self.types,
+            ));
+            n3 = Node::new_add(
+                tmp_deref(),
+                Node::new_num(1, self.head),
+                self.head,
+                &self.types,
+            );
         }
         Node::new_comma(n1, Node::new_comma(n2, n3, self.head), self.head)
     }
@@ -1596,7 +1682,7 @@ impl Parser<'_> {
                     let mut ty = self.typespec()?;
                     ty = self.abstruct_declarator(ty)?;
                     self.expect(")")?;
-                    return Ok(Node::new_num(ty.size(), self.head));
+                    return Ok(Node::new_num(self.types.get(ty).size, self.head));
                 } else {
                     self.unshift(); // 型名ではなかったので、戻す
                 }
@@ -1604,28 +1690,32 @@ impl Parser<'_> {
             // このnodeは型のサイズを取得するためのみに使われ、
             // 実際には評価されない
             let node = self.unary()?;
-            Ok(Node::new_num(node.get_type().size(), self.head))
+            Ok(Node::new_num(
+                self.types.get(node.get_type()).size,
+                self.head,
+            ))
         } else if self.consume("alignof") {
             self.expect("(")?;
             let mut ty = self.typespec()?;
             ty = self.abstruct_declarator(ty)?;
             self.expect(")")?;
-            Ok(Node::new_num(ty.align(), self.head))
+            Ok(Node::new_num(self.types.get(ty).align, self.head))
         } else {
             let name = self.expect_ident()?;
             // 関数呼び出し
             if self.consume("(") {
                 // 関数呼び出しとわかったので、チェック
-                let (ret, mut arg_types) = match self.find_func(&name) {
-                    Some(Type::TyFunc { ret, arg }) => (*ret, *arg),
-                    _ => Err(self.raise_err("function not defined"))?,
-                };
+                // let (ret, mut arg_types) = match self.find_func(&name) {
+                //     _ => unimplemented!(),
+                //     // _ => Err(self.raise_err("function not defined"))?,
+                // };
+                let mut arg_types: Vec<TypeRef> = vec![];
                 let mut args = Vec::new();
                 while !self.consume(")") {
                     let mut arg = self.assign()?;
                     if let Some(ty) = arg_types.pop() {
                         // 足りない型は無視する(可変長引数未対応)
-                        if &ty != arg.get_type() {
+                        if ty != arg.get_type() {
                             arg = Node::new_cast(ty, arg, self.head);
                         }
                     }
@@ -1636,7 +1726,7 @@ impl Parser<'_> {
                     }
                 }
                 Ok(Node::new_cast(
-                    ret,
+                    TypeRef::Int,
                     Node::new_funcall(name, args, self.head),
                     self.head,
                 ))
