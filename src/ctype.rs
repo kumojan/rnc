@@ -170,9 +170,6 @@ impl TypeList {
     pub fn is_ptr(&self, ty: TypeRef) -> bool {
         self.get(ty).is_ptr()
     }
-    // pub fn is_ptr_like(&self, ty: TypeRef) -> bool {
-    //     self.get(ty).is_ptr_like()
-    // }
     pub fn is_func(&self, ty: TypeRef) -> bool {
         self.get(ty).is_func()
     }
@@ -222,28 +219,27 @@ impl TypeList {
     pub fn add_incomplete(&mut self) -> TypeRef {
         self.add_new(Type::new(TypeKind::TyIncomplete, 0, 0))
     }
-    pub fn new_struct(&self, mut mems: Vec<Member2>) -> Type {
-        let mut offset = 0;
-        for m in mems.iter_mut() {
-            offset = align_to(offset, self.get(m.ty).align); // 新しく追加される型のアライメントにoffsetを合わせる
-            m.offset = offset; // メンバのoffsetを設定
-            offset += self.get(m.ty).size; // メンバのサイズだけoffsetをずらす
-        }
+    pub fn new_struct_union(&self, mut mems: Vec<Member2>, is_union: bool) -> Type {
         let align = mems.iter().map(|m| self.get(m.ty).align).max().unwrap_or(1);
+        let size = if is_union {
+            align_to(
+                mems.iter().map(|m| self.get(m.ty).size).max().unwrap_or(1),
+                align,
+            )
+        } else {
+            let mut offset = 0;
+            for m in mems.iter_mut() {
+                offset = align_to(offset, self.get(m.ty).align); // 新しく追加される型のアライメントにoffsetを合わせる
+                m.offset = offset; // メンバのoffsetを設定
+                offset += self.get(m.ty).size; // メンバのサイズだけoffsetをずらす
+            }
+            align_to(offset, align)
+        };
         let kind = TypeKind::TyStruct {
             mems,
             is_union: false,
         };
-        Type::new(kind, align_to(offset, align), align)
-    }
-    pub fn new_union(&self, mems: Vec<Member2>) -> Type {
-        let align = mems.iter().map(|m| self.get(m.ty).align).max().unwrap_or(1);
-        let size = mems.iter().map(|m| self.get(m.ty).size).max().unwrap_or(1);
-        let kind = TypeKind::TyStruct {
-            mems,
-            is_union: true,
-        };
-        Type::new(kind, align_to(size, align), align)
+        Type::new(kind, size, align)
     }
     pub fn add_enum(&mut self, mems: Vec<EnumMem>) -> TypeRef {
         self.add_new(Type {
@@ -271,15 +267,6 @@ impl TypeList {
         match self.get(ty).kind {
             TypeKind::TyArray(.., base) => self.ptr_of(base),
             _ => ty,
-        }
-    }
-    pub fn get_base(&self, ty: TypeRef) -> Result<TypeRef, TypeError> {
-        match self.get(ty).kind {
-            TypeKind::TyArray(.., base) => Ok(base),
-            TypeKind::TyPtr(base) => Ok(base),
-            _ => Err(TypeError {
-                msg: "cannot dereference".to_owned(),
-            }),
         }
     }
     pub fn get_base_kind(&self, ty: TypeRef) -> Result<&Type, TypeError> {

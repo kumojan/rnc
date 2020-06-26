@@ -500,7 +500,7 @@ impl Node {
         Self {
             ty: match t {
                 "expr_stmt" => TypeRef::STMT,
-                "deref" => types.get_base(node.ty).unwrap(),
+                "deref" => types.get(node.ty).base.unwrap(),
                 "bitnot" => TypeRef::INT,
                 _ => unimplemented!(),
             },

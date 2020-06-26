@@ -23,6 +23,48 @@ impl fmt::Display for ParseError {
         write!(f, "parse failed at {}", self.pos)
     }
 }
+#[derive(PartialEq, Debug)]
+enum TagKind {
+    Struct,
+    Union,
+    Enum,
+}
+struct Tag {
+    name: String,
+    kind: TagKind,
+    ty: TypeRef,
+}
+impl Tag {
+    fn new_struct(name: String, ty: TypeRef) -> Self {
+        Self {
+            name,
+            ty,
+            kind: TagKind::Struct,
+        }
+    }
+    fn new_union(name: String, ty: TypeRef) -> Self {
+        Self {
+            name,
+            ty,
+            kind: TagKind::Union,
+        }
+    }
+    fn new_enum(name: String, ty: TypeRef) -> Self {
+        Self {
+            name,
+            ty,
+            kind: TagKind::Enum,
+        }
+    }
+    fn new_struct_union(name: String, ty: TypeRef, is_union: bool) -> Self {
+        if is_union {
+            Self::new_union(name, ty)
+        } else {
+            Self::new_struct(name, ty)
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Parser<'a> {
     cur_line: (usize, &'a str),
@@ -35,7 +77,7 @@ pub struct Parser<'a> {
     globals: Vec<VarScope>,
     string_literals: Vec<CString>,
     var_scopes: Vec<Vec<VarScope>>, // 後方に内側のスコープがある(読むときはrevする)
-    tag_scopes: Vec<Vec<(String, TypeRef)>>, // 前方に内側のスコープがある
+    tag_scopes: Vec<Vec<Tag>>,      // 前方に内側のスコープがある
     cases: Vec<Vec<i64>>,
     switch_has_default: Vec<bool>,
     types: TypeList,
@@ -274,8 +316,8 @@ impl Parser<'_> {
     }
     fn typespec(&mut self) -> Result<TypeRef, ParseError> {
         match self.peek_reserved().as_deref() {
-            Some("struct") => return self.skip().struct_union_decl("struct"),
-            Some("union") => return self.skip().struct_union_decl("union"),
+            Some("struct") => return self.skip().struct_union_decl(false),
+            Some("union") => return self.skip().struct_union_decl(true),
             Some("enum") => return self.skip().enum_decl(),
             _ => (),
         };
@@ -336,36 +378,44 @@ impl Parser<'_> {
         }
         Ok(mems)
     }
-    fn struct_union_decl(&mut self, which: &'static str) -> Result<TypeRef, ParseError> {
+    fn struct_union_decl(&mut self, is_union: bool) -> Result<TypeRef, ParseError> {
         let tag = self.consume_ident();
         let ty = if self.consume("{") {
             let mems = self.struct_list()?;
-            let ty_ = match which {
-                "struct" => self.types.new_struct(mems),
-                "union" => self.types.new_union(mems),
-                &_ => unimplemented!(),
-            };
-            if let Some(tag) = tag {
+            let ty_ = self.types.new_struct_union(mems, is_union);
+            if let Some(name_) = tag {
                 // redefine or add
-                for (name, ty) in self.tag_scopes.last().unwrap() {
-                    if name == &tag {
-                        self.types.replace(*ty, ty_);
-                        return Ok(*ty);
+                for Tag { name, kind, ty } in self.tag_scopes.last().unwrap() {
+                    if name == &name_ {
+                        if *kind
+                            == if is_union {
+                                TagKind::Union
+                            } else {
+                                TagKind::Struct
+                            }
+                        {
+                            self.types.replace(*ty, ty_);
+                            return Ok(*ty);
+                        } else {
+                            return Err(
+                                self.raise_err(&format!("tag {} defined as {:?}", name, kind))
+                            );
+                        }
                     }
                 }
                 let ty = self.types.add_new(ty_);
-                self.add_tag(tag, ty);
+                self.add_tag(Tag::new_struct_union(name_, ty, is_union));
                 ty
             } else {
                 self.types.add_new(ty_)
             }
         } else {
-            if let Some(tag) = tag {
-                if let Some(ty) = self.find_struct_union_tag(&tag, which) {
+            if let Some(name) = tag {
+                if let Some(ty) = self.find_struct_union_tag(&name, is_union) {
                     return Ok(ty);
                 } else {
                     let ty = self.types.add_incomplete();
-                    self.add_tag(tag, ty);
+                    self.add_tag(Tag::new_struct_union(name, ty, is_union));
                     return Ok(ty);
                 }
             }
@@ -394,8 +444,8 @@ impl Parser<'_> {
                 self.add_enum(name.clone(), *val);
             }
             let ty = self.types.add_enum(mems);
-            if let Some(tag) = tag {
-                self.add_tag(tag, ty);
+            if let Some(name) = tag {
+                self.add_tag(Tag::new_enum(name, ty));
             }
             Ok(ty)
         } else if let Some(tag) = tag {
@@ -455,28 +505,21 @@ impl Parser<'_> {
             .flat_map(|v| v.get_union(name))
             .next()
     }
-    fn add_tag(&mut self, tag: String, ty: TypeRef) {
-        self.tag_scopes.last_mut().unwrap().push((tag, ty));
+    fn add_tag(&mut self, tag: Tag) {
+        self.tag_scopes.last_mut().unwrap().push(tag);
     }
-    fn find_tag(&self, name: &str) -> Option<TypeRef> {
+    fn find_tag(&self, name_: &str) -> Option<TypeRef> {
         self.tag_scopes
             .iter()
             .rev()
             .flat_map(|scope| scope.iter().rev())
-            .find(|(_name, _)| name == _name)
-            .cloned()
-            .map(|(_, ty)| ty)
+            .flat_map(|Tag { name, ty, .. }| if name == name_ { Some(*ty) } else { None })
+            .next()
     }
-    fn find_struct_union_tag(&self, name: &str, which: &'static str) -> Option<TypeRef> {
+    fn find_struct_union_tag(&self, name: &str, is_union_: bool) -> Option<TypeRef> {
         self.find_tag(name)
             .filter(|ty| match self.types.get(*ty).kind {
-                TypeKind::TyStruct { is_union, .. } => {
-                    if which == "struct" {
-                        !is_union
-                    } else {
-                        is_union
-                    }
-                }
+                TypeKind::TyStruct { is_union, .. } => is_union_ == is_union,
                 _ => false,
             })
     }
@@ -1259,7 +1302,7 @@ impl Parser<'_> {
         } = binop
         {
             let tok_no = self.head;
-            let ptr_ty = self.types.ptr_of(lhs.get_type());
+            let ptr_ty = self.types.ptr_of(lhs.ty);
             let tmp = self.add_var("", ptr_ty);
             let tmp_node = || Node::new_var(tmp.clone(), tok_no);
             let tmp_deref = || Node::new_unary("deref", tmp_node(), tok_no, &self.types);
@@ -1523,13 +1566,13 @@ impl Parser<'_> {
         }
     }
     fn check_deref(&self, addr: Node) -> Result<Node, ParseError> {
-        let ty = if let Ok(ty) = self.types.get_base(addr.get_type()) {
+        let ty = if let Some(ty) = self.types.get(addr.ty).base {
             if ty == TypeRef::VOID {
                 return Err(self.raise_err("dereferencing void pointer!"));
             }
             ty
         } else {
-            println!("kind:{:?} type:{:?}", addr.kind, addr.get_type());
+            println!("kind:{:?} type:{:?}", addr.kind, addr.ty);
             return Err(self.raise_err("cannot dereference"));
         };
         Ok(Node {
@@ -1539,7 +1582,7 @@ impl Parser<'_> {
         })
     }
     fn new_addr(&mut self, node: Node) -> Node {
-        let ty = self.types.ptr_of(node.get_type());
+        let ty = self.types.ptr_of(node.ty);
         Node {
             ty,
             kind: NodeKind::Addr(Box::new(node)),
@@ -1548,7 +1591,7 @@ impl Parser<'_> {
     }
     /// identを受けて構造体のメンバにアクセスする
     fn struct_ref(&self, node: Node, name: &str) -> Result<Node, ParseError> {
-        let mem = match self.types.get_struct_mem(node.get_type(), name) {
+        let mem = match self.types.get_struct_mem(node.ty, name) {
             Some(mem) => mem,
             _ => {
                 println!("{:?}", self.types);
@@ -1591,7 +1634,7 @@ impl Parser<'_> {
     /// ++Aと違って、A+=1としたあと、A-1という単なる値が返ることに注意
     fn new_inc_dec(&mut self, node: Node, op: &str) -> Node {
         let tok_no = self.head;
-        let tmp_ty = self.types.ptr_of(node.get_type());
+        let tmp_ty = self.types.ptr_of(node.ty);
         let tmp = self.add_var("", tmp_ty);
         let tmp_node = || Node::new_var(tmp.clone(), tok_no);
         let n1 = Node::new_assign(tmp_node(), self.new_addr(node), self.head);
@@ -1653,10 +1696,7 @@ impl Parser<'_> {
             // このnodeは型のサイズを取得するためのみに使われ、
             // 実際には評価されない
             let node = self.unary()?;
-            Ok(Node::new_num(
-                self.types.get(node.get_type()).size,
-                self.head,
-            ))
+            Ok(Node::new_num(self.types.get(node.ty).size, self.head))
         } else if self.consume("alignof") {
             self.expect("(")?;
             let mut ty = self.typespec()?;
@@ -1676,7 +1716,7 @@ impl Parser<'_> {
                     let mut arg = self.assign()?;
                     if let Some(ty) = arg_types.pop() {
                         // 足りない型は無視する(可変長引数未対応)
-                        if ty != arg.get_type() {
+                        if ty != arg.ty {
                             arg = Node::new_cast(ty, arg, self.head);
                         }
                     }
