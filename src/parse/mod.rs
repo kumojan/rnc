@@ -29,6 +29,7 @@ enum TagKind {
     Union,
     Enum,
 }
+#[derive(Debug)]
 struct Tag {
     name: String,
     kind: TagKind,
@@ -382,44 +383,33 @@ impl Parser<'_> {
         let tag = self.consume_ident();
         let ty = if self.consume("{") {
             let mems = self.struct_list()?;
-            let ty_ = self.types.new_struct_union(mems, is_union);
-            if let Some(name_) = tag {
-                // redefine or add
-                for Tag { name, kind, ty } in self.tag_scopes.last().unwrap() {
-                    if name == &name_ {
-                        if *kind
-                            == if is_union {
-                                TagKind::Union
-                            } else {
-                                TagKind::Struct
-                            }
-                        {
-                            self.types.replace(*ty, ty_);
-                            return Ok(*ty);
-                        } else {
-                            return Err(
-                                self.raise_err(&format!("tag {} defined as {:?}", name, kind))
-                            );
-                        }
-                    }
+            if let Some(name) = tag {
+                // 同じスコープ内で同じ種類、かつ不完全に定義されていたら、おきかえる
+                // 同じスコープ内で別の種類(enum, struct, union)として定義されていたらerr
+                // 同じスコープ内に同名が存在しない時、置き換えずに新たに宣言して、追加
+                let replace_with = self.find_tag_to_replace(&name, is_union)?;
+                let ty = self.types.new_struct_union(mems, is_union, replace_with); // すでにタグが存在している場合、置き換える
+                if replace_with.is_none() {
+                    // 置き換えなかった時は、新規タグとして追加
+                    self.add_tag(Tag::new_struct_union(name, ty, is_union));
                 }
-                let ty = self.types.add_new(ty_);
-                self.add_tag(Tag::new_struct_union(name_, ty, is_union));
                 ty
             } else {
-                self.types.add_new(ty_)
+                self.types.new_struct_union(mems, is_union, None)
             }
         } else {
+            // 定義がついてない場合
             if let Some(name) = tag {
                 if let Some(ty) = self.find_struct_union_tag(&name, is_union) {
-                    return Ok(ty);
+                    ty
                 } else {
-                    let ty = self.types.add_incomplete();
+                    let ty = self.types.new_placeholder();
                     self.add_tag(Tag::new_struct_union(name, ty, is_union));
-                    return Ok(ty);
+                    ty
                 }
+            } else {
+                return Err(self.raise_err("expected struct tag!"));
             }
-            self.types.add_incomplete()
         };
         Ok(ty)
     }
@@ -487,7 +477,6 @@ impl Parser<'_> {
         self.var_scopes.pop();
     }
     fn find_var(&self, name: &str) -> Option<Rc<Var>> {
-        // println!("searching {} in {:?}", name, self.var_scopes);
         self.var_scopes
             .iter()
             .rev()
@@ -508,27 +497,57 @@ impl Parser<'_> {
     fn add_tag(&mut self, tag: Tag) {
         self.tag_scopes.last_mut().unwrap().push(tag);
     }
-    fn find_tag(&self, name_: &str) -> Option<TypeRef> {
+    fn find_tag(&self, name: &str) -> Option<&Tag> {
         self.tag_scopes
             .iter()
             .rev()
             .flat_map(|scope| scope.iter().rev())
-            .flat_map(|Tag { name, ty, .. }| if name == name_ { Some(*ty) } else { None })
+            .filter(|tag| tag.name == name)
             .next()
     }
-    fn find_struct_union_tag(&self, name: &str, is_union_: bool) -> Option<TypeRef> {
-        self.find_tag(name)
-            .filter(|ty| match self.types.get(*ty).kind {
-                TypeKind::TyStruct { is_union, .. } => is_union_ == is_union,
-                _ => false,
-            })
+    fn find_tag_to_replace(
+        &self,
+        name: &str,
+        is_union: bool,
+    ) -> Result<Option<TypeRef>, ParseError> {
+        let kind = if is_union {
+            TagKind::Union
+        } else {
+            TagKind::Struct
+        };
+        match self
+            .tag_scopes
+            .last()
+            .unwrap()
+            .iter()
+            .rev()
+            .filter(|tag| tag.name == name)
+            .next()
+        {
+            Some(tag) if tag.kind != kind => {
+                return Err(
+                    self.raise_err(&format!("tag {:} was declared as {:?}", tag.name, tag.kind))
+                );
+            }
+            Some(tag) if self.types.get(tag.ty).kind == TypeKind::Placeholder => Ok(Some(tag.ty)),
+            _ => Ok(None),
+        }
+    }
+    fn find_struct_union_tag(&self, name: &str, is_union: bool) -> Option<TypeRef> {
+        if let Some(Tag { kind, ty, .. }) = self.find_tag(name) {
+            if is_union && kind == &TagKind::Union || !is_union && kind == &TagKind::Struct {
+                return Some(*ty);
+            }
+        }
+        None
     }
     fn find_enum_tag(&self, name: &str) -> Option<TypeRef> {
-        self.find_tag(name)
-            .filter(|ty| match self.types.get(*ty).kind {
-                TypeKind::TyEnum(..) => true,
-                _ => false,
-            })
+        if let Some(Tag { kind, ty, .. }) = self.find_tag(name) {
+            if kind == &TagKind::Enum {
+                return Some(*ty);
+            }
+        }
+        None
     }
     fn find_func(&self, name: &str) -> Option<(Vec<TypeRef>, TypeRef)> {
         self.globals
@@ -737,6 +756,8 @@ impl Parser<'_> {
             }
             let stmts = self.compound_stmt(false)?;
             self.leave_scope();
+            // dbg!(&self.types);
+            // dbg!(&self.locals);
             return Ok(Some(Function::new(
                 ty,
                 name,

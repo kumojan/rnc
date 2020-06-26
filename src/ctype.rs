@@ -60,7 +60,7 @@ pub enum TypeKind {
     TyStruct { mems: Vec<Member2>, is_union: bool },
     TyEnum(Vec<EnumMem>),
     TyFunc { args: Vec<TypeRef>, ret: TypeRef },
-    TyIncomplete, // 不完全型
+    Placeholder, // 不完全型
 }
 impl TypeKind {
     pub fn is_integer(&self) -> bool {
@@ -86,11 +86,11 @@ pub struct Type {
     pub base: Option<TypeRef>,
 }
 impl Type {
-    fn new(kind: TypeKind, size: usize, align: usize) -> Self {
+    fn new(kind: TypeKind, size: usize) -> Self {
         Self {
             kind,
             size,
-            align,
+            align: size,
             base: None,
         }
     }
@@ -131,13 +131,13 @@ impl Default for TypeList {
     fn default() -> Self {
         use TypeKind::*;
         let list = vec![
-            Type::new(Stmt, 0, 0),
-            Type::new(TyVoid, 0, 0),
-            Type::new(TyBool, 1, 1),
-            Type::new(TyChar, 1, 1),
-            Type::new(TyShort, 2, 2),
-            Type::new(TyInt, 4, 4),
-            Type::new(TyLong, 8, 8),
+            Type::new(Stmt, 0),
+            Type::new(TyVoid, 0),
+            Type::new(TyBool, 1),
+            Type::new(TyChar, 1),
+            Type::new(TyShort, 2),
+            Type::new(TyInt, 4),
+            Type::new(TyLong, 8),
         ];
         Self { list }
     }
@@ -175,7 +175,7 @@ impl TypeList {
     }
     pub fn function_of(&mut self, args: Vec<TypeRef>, ret: TypeRef) -> TypeRef {
         let kind = TypeKind::TyFunc { args, ret };
-        self.add_new(Type::new(kind, 0, 0))
+        self.add_new(Type::new(kind, 0))
     }
     pub fn ptr_of(&mut self, ty: TypeRef) -> TypeRef {
         let index = self.list.iter().position(|t| match t.kind {
@@ -216,10 +216,15 @@ impl TypeList {
             self.add_new(ty)
         }
     }
-    pub fn add_incomplete(&mut self) -> TypeRef {
-        self.add_new(Type::new(TypeKind::TyIncomplete, 0, 0))
+    pub fn new_placeholder(&mut self) -> TypeRef {
+        self.add_new(Type::new(TypeKind::Placeholder, 0))
     }
-    pub fn new_struct_union(&self, mut mems: Vec<Member2>, is_union: bool) -> Type {
+    pub fn new_struct_union(
+        &mut self,
+        mut mems: Vec<Member2>,
+        is_union: bool,
+        replace_with: Option<TypeRef>,
+    ) -> TypeRef {
         let align = mems.iter().map(|m| self.get(m.ty).align).max().unwrap_or(1);
         let size = if is_union {
             align_to(
@@ -235,11 +240,19 @@ impl TypeList {
             }
             align_to(offset, align)
         };
-        let kind = TypeKind::TyStruct {
-            mems,
-            is_union: false,
+        let kind = TypeKind::TyStruct { mems, is_union };
+        let ty = Type {
+            kind,
+            size,
+            align,
+            base: None,
         };
-        Type::new(kind, size, align)
+        if let Some(ty_) = replace_with {
+            self.list[ty_.0] = ty;
+            return ty_;
+        } else {
+            self.add_new(ty)
+        }
     }
     pub fn add_enum(&mut self, mems: Vec<EnumMem>) -> TypeRef {
         self.add_new(Type {
@@ -284,9 +297,6 @@ impl TypeList {
             TypeKind::TyStruct { mems, .. } => mems.iter().filter(|m| m.name == name).next(),
             _ => None,
         }
-    }
-    pub fn replace(&mut self, ty: TypeRef, ty_: Type) {
-        self.list[ty.0] = ty_;
     }
     pub fn common_ty(&self, ty1: TypeRef, ty2: TypeRef) -> TypeRef {
         // TODO: いろいろ不十分だと思う。
