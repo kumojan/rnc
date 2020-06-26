@@ -1,7 +1,6 @@
-use crate::r#type::*;
+use crate::ctype::*;
 use crate::tokenize::*;
 use node::*;
-use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 pub mod node;
@@ -56,15 +55,8 @@ enum VarScope {
     Enum(String, i64),
 }
 
-// typedef, static, externなど
-// #[derive(Default)]
-// struct VarAttr {
-//     is_typedef: bool,
-//     is_static: bool,
-// }
-
 impl VarScope {
-    fn name(&self) -> &String {
+    fn name(&self) -> &str {
         match self {
             Self::Type(name, ..) => name,
             Self::Enum(name, ..) => name,
@@ -282,8 +274,8 @@ impl Parser<'_> {
     }
     fn typespec(&mut self) -> Result<TypeRef, ParseError> {
         match self.peek_reserved().as_deref() {
-            Some("struct") => return self.skip().struct_decl(),
-            Some("union") => return self.skip().union_decl(),
+            Some("struct") => return self.skip().struct_union_decl("struct"),
+            Some("union") => return self.skip().struct_union_decl("union"),
             Some("enum") => return self.skip().enum_decl(),
             _ => (),
         };
@@ -311,13 +303,13 @@ impl Parser<'_> {
             };
         }
         Ok(match counter {
-            VOID => TypeRef::Void,
-            BOOL => TypeRef::Bool,
-            CHAR => TypeRef::Char,
-            0 | INT => TypeRef::Int,
-            ref s if [SHORT, SHORT + INT].contains(s) => TypeRef::Short,
+            VOID => TypeRef::VOID,
+            BOOL => TypeRef::BOOL,
+            CHAR => TypeRef::CHAR,
+            0 | INT => TypeRef::INT,
+            ref s if [SHORT, SHORT + INT].contains(s) => TypeRef::SHORT,
             ref l if [LONG, LONG + INT, LONG + LONG, LONG + LONG + INT].contains(l) => {
-                TypeRef::Long
+                TypeRef::LONG
             }
             _ => Err(self.raise_err("invalid type!"))?,
         })
@@ -344,11 +336,15 @@ impl Parser<'_> {
         }
         Ok(mems)
     }
-    fn struct_decl(&mut self) -> Result<TypeRef, ParseError> {
+    fn struct_union_decl(&mut self, which: &'static str) -> Result<TypeRef, ParseError> {
         let tag = self.consume_ident();
         let ty = if self.consume("{") {
             let mems = self.struct_list()?;
-            let ty_ = self.types.new_struct(mems);
+            let ty_ = match which {
+                "struct" => self.types.new_struct(mems),
+                "union" => self.types.new_union(mems),
+                &_ => unimplemented!(),
+            };
             if let Some(tag) = tag {
                 // redefine or add
                 for (name, ty) in self.tag_scopes.last().unwrap() {
@@ -365,7 +361,7 @@ impl Parser<'_> {
             }
         } else {
             if let Some(tag) = tag {
-                if let Some(ty) = self.find_struct_tag(&tag) {
+                if let Some(ty) = self.find_struct_union_tag(&tag, which) {
                     return Ok(ty);
                 } else {
                     let ty = self.types.add_incomplete();
@@ -377,30 +373,6 @@ impl Parser<'_> {
         };
         Ok(ty)
     }
-    fn union_decl(&mut self) -> Result<TypeRef, ParseError> {
-        let tag = self.consume_ident();
-        if self.consume("{") {
-            let mems = self.struct_list()?;
-            unimplemented!();
-        // let align = mems.iter().map(|m| m.ty.align()).max().unwrap_or(1);
-        // let size = mems.iter().map(|m| m.ty.size()).max().unwrap_or(1);
-        // let ty = Type::TyStruct {
-        //     mems: Box::new(mems),
-        //     align,
-        //     size: align_to(size, align),
-        //     is_union: true,
-        // };
-        // if let Some(tag) = tag {
-        //     self.add_tag(tag, ty.clone());
-        // }
-        // Ok(ty)
-        } else if let Some(tag) = tag {
-            self.find_union_tag(&tag)
-                .ok_or(self.raise_err("unknown union tag"))
-        } else {
-            Err(self.raise_err("expected identifier"))
-        }
-    }
     fn enum_decl(&mut self) -> Result<TypeRef, ParseError> {
         let tag = self.consume_ident();
         if self.consume("{") {
@@ -409,7 +381,7 @@ impl Parser<'_> {
             loop {
                 let name = self.expect_ident()?;
                 if self.consume("=") {
-                    val = self.const_expr()?; // 実際は負の数とかも定義できるっぽいが...
+                    val = self.const_expr()?;
                 }
                 mems.push(EnumMem { name, val });
                 val += 1;
@@ -421,12 +393,11 @@ impl Parser<'_> {
             for EnumMem { name, val } in &mems {
                 self.add_enum(name.clone(), *val);
             }
-            let ty = Type::new_enum(mems);
+            let ty = self.types.add_enum(mems);
             if let Some(tag) = tag {
-                self.add_tag(tag, TypeRef::Int);
+                self.add_tag(tag, ty);
             }
-            unimplemented!();
-        // Ok(ty)
+            Ok(ty)
         } else if let Some(tag) = tag {
             match self.find_enum_tag(&tag) {
                 Some(ty) => Ok(ty),
@@ -437,21 +408,23 @@ impl Parser<'_> {
         }
     }
     fn raise_err(&self, msg: &str) -> ParseError {
-        // panic!();
+        // println!("{:?}", self.types);
+        // panic!("{}", msg);
         ParseError {
             pos: self.tklist[self.head].pos,
             msg: msg.to_owned(),
         }
     }
+    fn cast_err(&self, e: (usize, &'static str)) -> ParseError {
+        println!("{:?}", self.types);
+        println!("{:?}", self.locals);
+        ParseError {
+            pos: self.tklist[e.0].pos,
+            msg: e.1.to_owned(),
+        }
+    }
     fn head_kind(&self) -> &TokenKind {
         &self.tklist[self.head].kind
-    }
-    /// shiftによってtokenが格納されているときは
-    /// それを出して、Noneに置き換える
-    /// あるいはそのままNoneが取り出される
-    /// tokenは一つのNodeにしか渡らない
-    fn tok(&mut self) -> usize {
-        0
     }
     /// 必ずleave_scopeと対にして使うこと
     fn enter_scope(&mut self) {
@@ -463,7 +436,7 @@ impl Parser<'_> {
         self.tag_scopes.pop();
         self.var_scopes.pop();
     }
-    fn find_var(&self, name: &String) -> Option<Rc<Var>> {
+    fn find_var(&self, name: &str) -> Option<Rc<Var>> {
         // println!("searching {} in {:?}", name, self.var_scopes);
         self.var_scopes
             .iter()
@@ -473,7 +446,7 @@ impl Parser<'_> {
             .flat_map(|v| v.get_var(name))
             .next()
     }
-    fn find_enum(&self, name: &String) -> Option<i64> {
+    fn find_enum(&self, name: &str) -> Option<i64> {
         self.var_scopes
             .iter()
             .rev()
@@ -485,7 +458,7 @@ impl Parser<'_> {
     fn add_tag(&mut self, tag: String, ty: TypeRef) {
         self.tag_scopes.last_mut().unwrap().push((tag, ty));
     }
-    fn find_tag(&self, name: &String) -> Option<TypeRef> {
+    fn find_tag(&self, name: &str) -> Option<TypeRef> {
         self.tag_scopes
             .iter()
             .rev()
@@ -494,33 +467,27 @@ impl Parser<'_> {
             .cloned()
             .map(|(_, ty)| ty)
     }
-    fn find_struct_tag(&self, name: &String) -> Option<TypeRef> {
-        if let Some(ty) = self.find_tag(name) {
-            if self.types.is_struct(ty) {
-                return Some(ty);
-            }
-        }
-        return None;
+    fn find_struct_union_tag(&self, name: &str, which: &'static str) -> Option<TypeRef> {
+        self.find_tag(name)
+            .filter(|ty| match self.types.get(*ty).kind {
+                TypeKind::TyStruct { is_union, .. } => {
+                    if which == "struct" {
+                        !is_union
+                    } else {
+                        is_union
+                    }
+                }
+                _ => false,
+            })
     }
-    fn find_union_tag(&self, name: &String) -> Option<TypeRef> {
-        unimplemented!();
-        if let Some(ty) = self.find_tag(name) {
-            if self.types.is_struct(ty) {
-                return Some(ty);
-            }
-        }
-        return None;
+    fn find_enum_tag(&self, name: &str) -> Option<TypeRef> {
+        self.find_tag(name)
+            .filter(|ty| match self.types.get(*ty).kind {
+                TypeKind::TyEnum(..) => true,
+                _ => false,
+            })
     }
-    fn find_enum_tag(&self, name: &String) -> Option<TypeRef> {
-        unimplemented!();
-        if let Some(ty) = self.find_tag(name) {
-            if self.types.is_struct(ty) {
-                return Some(ty);
-            }
-        }
-        return None;
-    }
-    fn find_func(&self, name: &String) -> Option<(Vec<TypeRef>, TypeRef)> {
+    fn find_func(&self, name: &str) -> Option<(Vec<TypeRef>, TypeRef)> {
         self.globals
             .iter()
             .flat_map(|v| v.get_var(&name))
@@ -628,10 +595,9 @@ impl Parser<'_> {
     fn add_string_literal(&mut self, data: CString) -> Node {
         let n = Node {
             kind: NodeKind::Literal {
-                ty: Type::TyChar.to_complete_array(data.0.len()),
                 id: self.string_literals.len(),
             },
-            ty: self.types.array_of(TypeRef::Char, Some(data.0.len())),
+            ty: self.types.array_of(TypeRef::CHAR, Some(data.0.len())),
             tok_no: self.head,
         };
         self.string_literals.push(data);
@@ -1081,7 +1047,7 @@ impl Parser<'_> {
             Ok(if self_.consume(s) {
                 None
             } else {
-                let tok = self_.tok();
+                let tok = self_.head;
                 let n = Some((self_.expr()?, tok));
                 self_.expect(s)?;
                 n
@@ -1141,14 +1107,14 @@ impl Parser<'_> {
             self.expect(";")?;
             Node {
                 kind: NodeKind::Break,
-                ty: TypeRef::Stmt,
+                ty: TypeRef::STMT,
                 tok_no: self.head,
             }
         } else if self.consume("continue") {
             self.expect(";")?;
             Node {
                 kind: NodeKind::Continue,
-                ty: TypeRef::Stmt,
+                ty: TypeRef::STMT,
                 tok_no: self.head,
             }
         } else if self.consume("goto") {
@@ -1156,7 +1122,7 @@ impl Parser<'_> {
             self.expect(";")?;
             Node {
                 kind: NodeKind::Goto(label),
-                ty: TypeRef::Stmt,
+                ty: TypeRef::STMT,
                 tok_no: self.head,
             }
         } else if self.peek_ident().is_some()
@@ -1167,7 +1133,7 @@ impl Parser<'_> {
             self.expect(":")?;
             Node {
                 kind: NodeKind::Label(label, Box::new(self.stmt()?)),
-                ty: TypeRef::Stmt,
+                ty: TypeRef::STMT,
                 tok_no,
             }
         } else if self.consume("switch") {
@@ -1184,7 +1150,7 @@ impl Parser<'_> {
                     cases: self.cases.pop().unwrap(),
                     has_default: self.switch_has_default.pop().unwrap(),
                 },
-                ty: TypeRef::Stmt,
+                ty: TypeRef::STMT,
             }
         } else if self.consume("case") {
             let val = self.const_expr()?;
@@ -1200,7 +1166,7 @@ impl Parser<'_> {
                     id,
                     stmt: Box::new(self.stmt()?),
                 },
-                ty: TypeRef::Stmt,
+                ty: TypeRef::STMT,
             }
         } else if self.consume("default") {
             self.expect(":")?;
@@ -1216,7 +1182,7 @@ impl Parser<'_> {
             Node {
                 tok_no: self.head,
                 kind: NodeKind::Default_(Box::new(self.stmt()?)),
-                ty: TypeRef::Stmt,
+                ty: TypeRef::STMT,
             }
         } else {
             Node::new_expr_stmt(read_until(self, ";")?, self.head)
@@ -1263,12 +1229,12 @@ impl Parser<'_> {
                 self.head,
                 &self.types
             )),
-            Some("-=") => to_assign!(Node::new_sub(
-                node,
-                self.skip().assign()?,
-                self.head,
-                &self.types
-            )),
+            Some("-=") => {
+                to_assign!(
+                    Node::new_sub(node, self.skip().assign()?, self.head, &self.types)
+                        .map_err(|e| self.cast_err(e))?
+                )
+            }
             Some("*=") => to_assign_op!(BinOp::Mul),
             Some("/=") => to_assign_op!(BinOp::Div),
             Some("%=") => to_assign_op!(BinOp::Mod),
@@ -1292,24 +1258,21 @@ impl Parser<'_> {
             ..
         } = binop
         {
-            let ty = self.types.ptr_of(lhs.get_type());
-            let tmp = self.add_var("", ty);
-            let tmp_node = || Node::new_var(tmp.clone(), self.head);
-            let tmp_deref = || Node::new_unary("deref", tmp_node(), self.head, &self.types);
+            let tok_no = self.head;
+            let ptr_ty = self.types.ptr_of(lhs.get_type());
+            let tmp = self.add_var("", ptr_ty);
+            let tmp_node = || Node::new_var(tmp.clone(), tok_no);
+            let tmp_deref = || Node::new_unary("deref", tmp_node(), tok_no, &self.types);
 
             // tmp = &A
-            let line1 = Node::new_assign(
-                tmp_node(),
-                Node::new_unary("addr", *lhs, self.head, &self.types),
-                self.head,
-            );
+            let line1 = Node::new_assign(tmp_node(), Node::new_addr(*lhs, tok_no, ptr_ty), tok_no);
             // *tmp = *tmp op B
             let line2 = Node::new_assign(
                 tmp_deref(),
-                Node::new_bin(op, tmp_deref(), *rhs, self.head, &self.types),
-                self.head,
+                Node::new_bin(op, tmp_deref(), *rhs, tok_no, &self.types),
+                tok_no,
             );
-            Node::new_comma(line1, line2, self.head)
+            Node::new_comma(line1, line2, tok_no)
         } else {
             let msg = format!("line:{:?} at:{}", self.cur_line, self.cur_pos);
             unimplemented!("expected binop! {}", msg)
@@ -1323,7 +1286,7 @@ impl Parser<'_> {
             let then_ = self.expr()?;
             self.expect(":")?;
             let else_ = self.conditional()?;
-            node = Node::new_conditional(node, then_, else_, tok);
+            node = Node::new_conditional(node, then_, else_, tok, &self.types);
         }
         Ok(node)
     }
@@ -1452,7 +1415,8 @@ impl Parser<'_> {
         loop {
             node = match self.peek_reserved().as_deref() {
                 Some("+") => Node::new_add(node, self.skip().mul()?, self.head, &self.types),
-                Some("-") => Node::new_sub(node, self.skip().mul()?, self.head, &self.types),
+                Some("-") => Node::new_sub(node, self.skip().mul()?, self.head, &self.types)
+                    .map_err(|e| self.cast_err(e))?,
                 _ => return Ok(node),
             }
         }
@@ -1550,19 +1514,17 @@ impl Parser<'_> {
                 // --i => i-=1
                 let cast = self.skip().cast()?;
                 let tok = self.head;
-                Ok(self.to_assign(Node::new_sub(
-                    cast,
-                    Node::new_num(1, self.head),
-                    tok,
-                    &self.types,
-                )))
+                Ok(self.to_assign(
+                    Node::new_sub(cast, Node::new_num(1, self.head), tok, &self.types)
+                        .map_err(|e| self.cast_err(e))?,
+                ))
             }
             _ => self.postfix(),
         }
     }
     fn check_deref(&self, addr: Node) -> Result<Node, ParseError> {
         let ty = if let Ok(ty) = self.types.get_base(addr.get_type()) {
-            if ty == TypeRef::Void {
+            if ty == TypeRef::VOID {
                 return Err(self.raise_err("dereferencing void pointer!"));
             }
             ty
@@ -1585,7 +1547,7 @@ impl Parser<'_> {
         }
     }
     /// identを受けて構造体のメンバにアクセスする
-    fn struct_ref(&self, node: Node, name: &String) -> Result<Node, ParseError> {
+    fn struct_ref(&self, node: Node, name: &str) -> Result<Node, ParseError> {
         let mem = match self.types.get_struct_mem(node.get_type(), name) {
             Some(mem) => mem,
             _ => {
@@ -1643,9 +1605,11 @@ impl Parser<'_> {
         if op == "+" {
             let node = Node::new_add(tmp_deref!(), Node::new_num(1, tok_no), tok_no, &self.types);
             n2 = self.to_assign(node);
-            n3 = Node::new_sub(tmp_deref!(), Node::new_num(1, tok_no), tok_no, &self.types);
+            n3 =
+                Node::new_sub(tmp_deref!(), Node::new_num(1, tok_no), tok_no, &self.types).unwrap();
         } else {
-            let node = Node::new_sub(tmp_deref!(), Node::new_num(1, tok_no), tok_no, &self.types);
+            let node =
+                Node::new_sub(tmp_deref!(), Node::new_num(1, tok_no), tok_no, &self.types).unwrap();
             n2 = self.to_assign(node);
             n3 = Node::new_add(
                 tmp_deref!(),

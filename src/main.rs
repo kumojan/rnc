@@ -3,10 +3,10 @@ extern crate getopts;
 use getopts::Options;
 
 mod codegen;
+mod ctype;
 mod err;
 mod parse;
 mod tokenize;
-mod r#type;
 mod util;
 use crate::codegen::{code_gen, print_graph};
 use crate::err::*;

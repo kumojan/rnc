@@ -1,5 +1,5 @@
+use crate::ctype::{Type, TypeKind, TypeList};
 use crate::parse::node::{BinOp, Data, Function, Node, NodeKind, Var};
-use crate::r#type::{Type2, TypeKind, TypeList};
 use crate::tokenize::{CString, Token};
 use crate::util::*;
 use std::rc::Rc;
@@ -37,7 +37,7 @@ struct CodeGenerator {
     pos: usize,
     types: TypeList,
 }
-fn load(ty: &Type2) {
+fn load(ty: &Type) {
     if let TypeKind::TyArray(..) = ty.kind {
         return;
     }
@@ -54,7 +54,7 @@ fn load(ty: &Type2) {
     }
     println!("  push rax");
 }
-fn store(ty: &Type2) {
+fn store(ty: &Type) {
     // 下から 値 | アドレス と並んでいるときに、
     // 値をそのアドレスに格納し、その値をpush
     println!("  pop rdi  # store {:?}", ty);
@@ -77,10 +77,10 @@ fn store(ty: &Type2) {
     }
     println!("  push rdi");
 }
-fn cast(ty: &Type2) {
+fn cast(ty: &Type) -> Result<(), &'static str> {
     if ty.kind == TypeKind::TyVoid || ty.size == 8 {
         // 配列をポインタにキャストするときは何もしない
-        return;
+        return Ok(());
     }
     if ty.kind == TypeKind::TyBool {
         println!("  pop rax");
@@ -88,16 +88,17 @@ fn cast(ty: &Type2) {
         println!("  setne al");
         println!("  movzx rax, al");
         println!("  push rax");
-        return;
+        return Ok(());
     }
     println!("  pop rax");
     match ty.size {
         1 => println!("  movsx rax, al"),
         2 => println!("  movsx rax, ax"),
         4 => println!("  movsx rax, eax"),
-        _ => unimplemented!(),
+        _ => return Err("invalid cast"),
     }
     println!("  push rax");
+    Ok(())
 }
 
 impl CodeGenerator {
@@ -105,6 +106,10 @@ impl CodeGenerator {
         let label = self.label_count;
         self.label_count += 1;
         label
+    }
+    fn raise_err(&self, msg: String) -> CodeGenError {
+        println!("{:?}", self.types);
+        CodeGenError { pos: self.pos, msg }
     }
     fn update_pos(&mut self, tok_no: usize) {
         let cur_tok = &self.tklist[tok_no];
@@ -148,10 +153,7 @@ impl CodeGenerator {
                 println!("  pop rax");
                 self.gen_addr(rhs)?;
             }
-            _ => Err(CodeGenError {
-                pos: self.pos,
-                msg: format!("not a left value! {:?}", node.kind),
-            })?,
+            _ => Err(self.raise_err(format!("not a left value! {:?}", node.kind)))?,
         };
         Ok(())
     }
@@ -193,7 +195,7 @@ impl CodeGenerator {
             }
             NodeKind::Cast(expr) => {
                 self.gen_expr(expr)?;
-                cast(self.types.get(expr.get_type()));
+                cast(self.types.get(node.ty)).map_err(|msg| self.raise_err(msg.to_owned()))?;
             }
             NodeKind::Addr(node) => self.gen_addr(node)?,
             NodeKind::Deref(_node) => {
@@ -205,7 +207,7 @@ impl CodeGenerator {
                 // 元々の型(このnodeをderefした結果)がarrayなら、やはりアドレス(評価結果)をそのまま使う
                 // それ以外なら値を取得する
                 // TODO: とりあえずint
-                load(self.types.get(node.get_type()));
+                load(self.types.get(node.ty));
             }
             NodeKind::BitNot(node) => {
                 self.gen_expr(node)?;
@@ -257,10 +259,10 @@ impl CodeGenerator {
             }
             NodeKind::FunCall { name, args } => {
                 if args.len() > ARGLEN {
-                    return Err(CodeGenError {
-                        pos: self.pos,
-                        msg: format!("too many arguments for func {} (must be less than 7)", name),
-                    });
+                    return Err(self.raise_err(format!(
+                        "too many arguments for func {} (must be less than 7)",
+                        name
+                    )));
                 }
                 for arg in &**args {
                     self.gen_expr(arg)?; // 生成されたexprが8バイトずつ格納されている (本来のサイズにかかわらず)
@@ -319,12 +321,7 @@ impl CodeGenerator {
                 println!("{}", code);
                 println!("  push rax")
             }
-            _ => {
-                return Err(CodeGenError {
-                    pos: self.pos,
-                    msg: "not an expression!".to_owned(),
-                })
-            }
+            _ => return Err(self.raise_err("not an expression!".to_owned())),
         }
         Ok(())
     }
@@ -431,10 +428,7 @@ impl CodeGenerator {
                 if let Some(label) = self.continue_label.last() {
                     println!("  jmp .L.continue.{}", label);
                 } else {
-                    return Err(CodeGenError {
-                        pos: self.pos,
-                        msg: "stray continue".to_owned(),
-                    });
+                    return Err(self.raise_err("stray continue".to_owned()));
                 }
             }
             NodeKind::Goto(label) => {
@@ -485,10 +479,7 @@ impl CodeGenerator {
                 self.gen_stmt(stmt)?;
             }
             _ => {
-                return Err(CodeGenError {
-                    pos: self.pos,
-                    msg: "not a statement!".to_owned(),
-                })
+                return Err(self.raise_err("not a statement".to_owned()));
             }
         }
         Ok(())
