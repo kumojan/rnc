@@ -17,13 +17,6 @@ pub struct CodeGenError {
     pub msg: String,
     pub pos: usize,
 }
-// impl CodeGenError {
-//     fn new(node: &Node) -> Self {
-//         Self {
-//             msg: format!("{:?}", node),
-//         }
-//     }
-// }
 #[derive(Default)]
 struct CodeGenerator {
     label_count: usize,

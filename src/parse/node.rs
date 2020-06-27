@@ -714,11 +714,12 @@ impl Node {
             tok_no,
         }
     }
-    pub(super) fn new_funcall(name: String, args: Vec<Node>, tok_no: usize) -> Self {
-        Self {
+    pub(super) fn new_funcall(ret: TypeRef, name: String, args: Vec<Node>, tok_no: usize) -> Self {
+        let node = Self {
             kind: NodeKind::FunCall { name, args },
-            ty: TypeRef::INT,
+            ty: TypeRef::LONG,
             tok_no,
-        }
+        };
+        Node::new_cast(ret, node, tok_no)
     }
 }

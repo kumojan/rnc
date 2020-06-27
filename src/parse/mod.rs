@@ -11,10 +11,10 @@ pub struct ParseError {
     pub msg: String,
 }
 impl ParseError {
-    fn new(pos: usize, msg: &str) -> ParseError {
+    fn new<S: Into<String>>(pos: usize, msg: S) -> ParseError {
         ParseError {
             pos,
-            msg: msg.to_owned(),
+            msg: msg.into(),
         }
     }
 }
@@ -98,19 +98,6 @@ enum VarScope {
 }
 
 impl VarScope {
-    fn name(&self) -> &str {
-        match self {
-            Self::Type(name, ..) => name,
-            Self::Enum(name, ..) => name,
-            Self::Var(var) => &var.name,
-        }
-    }
-    fn is_type(&self, name: &str) -> bool {
-        match self {
-            Self::Type(_name, ..) => _name == name,
-            _ => false,
-        }
-    }
     fn get_type(&self, name: &str) -> Option<TypeRef> {
         match self {
             Self::Type(_name, ty) if _name == name => Some(*ty),
@@ -256,12 +243,12 @@ impl Parser<'_> {
         return self.peek_base_type().is_some()
             || self // typedefされた型であるかを調べる
                 .peek_ident()
-                .map_or(false, |s| {
+                .map_or(false, |name| {
                     self.var_scopes
                         .iter()
                         .rev()
                         .flat_map(|scope| scope.iter().rev())
-                        .any(|v| v.is_type(&s))
+                        .any(|v| v.get_type(&name).is_some())
                 });
     }
     /// 次がTkReserved(c) (cは指定)の場合は、1つずれてtrue, それ以外はずれずにfalse
@@ -454,18 +441,12 @@ impl Parser<'_> {
     fn raise_err(&self, msg: &str) -> ParseError {
         // println!("{:?}", self.types);
         // panic!("{}", msg);
-        ParseError {
-            pos: self.tklist[self.head].pos,
-            msg: msg.to_owned(),
-        }
+        ParseError::new(self.tklist[self.head].pos, msg)
     }
     fn cast_err<S: Into<String>>(&self, e: (usize, S)) -> ParseError {
         println!("{:?}", self.types);
         println!("{:?}", self.locals);
-        ParseError {
-            pos: self.tklist[e.0].pos,
-            msg: e.1.into(),
-        }
+        ParseError::new(self.tklist[e.0].pos, e.1)
     }
     fn head_kind(&self) -> &TokenKind {
         &self.tklist[self.head].kind
@@ -773,7 +754,7 @@ impl Parser<'_> {
             }
             init.eval(ty, &self.types)
                 .map(Some)
-                .map_err(|(tok_no, msg)| ParseError::new(self.tklist[tok_no].pos, msg))?
+                .map_err(|e| self.cast_err(e))?
         } else {
             None
         };
@@ -872,7 +853,7 @@ impl Parser<'_> {
                 }
                 init.eval(ty, &self.types)
                     .map(Some)
-                    .map_err(|(tok_no, msg)| ParseError::new(self.tklist[tok_no].pos, msg))?
+                    .map_err(|e| self.cast_err(e))?
             } else {
                 None
             };
@@ -1322,7 +1303,7 @@ impl Parser<'_> {
     fn const_expr(&mut self) -> Result<i64, ParseError> {
         self.conditional()?
             .eval(&self.types)
-            .map_err(|(tok_no, msg)| ParseError::new(self.tklist[tok_no].pos, msg))
+            .map_err(|e| self.cast_err(e))
     }
     /// logor = logand ("&&" logand)*
     fn logor(&mut self) -> Result<Node, ParseError> {
@@ -1639,11 +1620,7 @@ impl Parser<'_> {
                         break;
                     }
                 }
-                Ok(Node::new_cast(
-                    ret,
-                    Node::new_funcall(name, args, self.head),
-                    self.head,
-                ))
+                Ok(Node::new_funcall(ret, name, args, self.head))
             } else {
                 // 変数、またはenum定数
                 if let Some(var) = self.find_var(&name) {
