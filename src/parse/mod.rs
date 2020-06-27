@@ -916,7 +916,7 @@ impl Parser<'_> {
         &self,
         var: &Rc<Var>,
         i: Initializer,
-        mut v: Vec<Init>,
+        mut v: Vec<Init>, // 配列や構造体のどの要素を初期化するか記録している
         nodes: &mut Vec<Node>,
         ty: TypeRef,
     ) -> Result<Vec<Init>, ParseError> {
@@ -926,16 +926,14 @@ impl Parser<'_> {
         match &self.types.get(ty).kind {
             TypeKind::TyArray(Some(len), base) => match kind {
                 InitKind::List(list) => {
-                    if *len < list.len() {
-                        Err(self.raise_err("initializer too long"))?;
-                    }
-                    for d in list.len()..*len {
+                    let mut list = list.into_iter(); // 先頭から取り出していく
+                    for d in 0..*len {
                         v.push(Init::Index(d));
-                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, *base)?;
-                    }
-                    for (d, i) in list.into_iter().enumerate() {
-                        v.push(Init::Index(d));
+                        let i = list.next().unwrap_or(Initializer::new_zero(tok_no));
                         v = self.init_stmt(var, i, v, nodes, *base)?;
+                    }
+                    if list.next().is_some() {
+                        Err(self.raise_err("initializer too long"))?;
                     }
                 }
                 InitKind::Zero => {
@@ -944,7 +942,7 @@ impl Parser<'_> {
                         v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, *base)?;
                     }
                 }
-                _ => Err(self.raise_err("array must be initialized with braces"))?,
+                _ => Err(self.raise_err("invalid initializer for an array!"))?,
             },
             TypeKind::TyStruct {
                 mems,
@@ -952,20 +950,18 @@ impl Parser<'_> {
                 ..
             } => match kind {
                 InitKind::List(list) => {
-                    if mems.len() < list.len() {
-                        Err(self.raise_err("initializer too long"))?;
-                    }
-                    for m in mems.iter().skip(list.len()) {
+                    let mut list = list.into_iter(); // 先頭から取り出していく
+                    for m in mems {
                         v.push(Init::Member(m.name.clone()));
-                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, m.ty)?;
-                    }
-                    for (i, m) in list.into_iter().zip(mems.iter()) {
-                        v.push(Init::Member(m.name.clone()));
+                        let i = list.next().unwrap_or(Initializer::new_zero(tok_no));
                         v = self.init_stmt(var, i, v, nodes, m.ty)?;
+                    }
+                    if list.next().is_some() {
+                        Err(self.raise_err("initializer too long"))?;
                     }
                 }
                 InitKind::Zero => {
-                    for m in mems.iter() {
+                    for m in mems {
                         v.push(Init::Member(m.name.clone()));
                         v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, m.ty)?;
                     }
