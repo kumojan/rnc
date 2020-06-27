@@ -21,7 +21,7 @@ pub enum TokenKind {
 pub struct CString(pub Vec<u8>); // Vec<u8>のエイリアス
 impl fmt::Debug for CString {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", String::from_utf8_lossy(&self.0).escape_debug())
+        write!(f, "\"{}\"", String::from_utf8_lossy(&self.0).escape_debug())
     }
 }
 impl Default for TokenKind {
@@ -30,15 +30,20 @@ impl Default for TokenKind {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Token {
+#[derive(Default)]
+pub struct Token<'a> {
     pub kind: TokenKind,
-    pub pos: usize,      // charとしての位置
-    pub len: usize,      // byteでの長さ
-    pub line_no: usize,  // 行番号0始まり
-    pub byte_len: usize, // byteでの位置
+    pub pos: usize,     // charとしての位置
+    pub len: usize,     // byteでの長さ
+    pub line_no: usize, // 行番号0始まり
+    pub tok: &'a str,
 }
-impl Token {
+impl fmt::Debug for Token<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "line({}): {:?}", self.line_no, self.kind)
+    }
+}
+impl Token<'_> {
     fn new_num(val: usize, pos: usize, len: usize) -> Self {
         Self {
             kind: TkNum(val),
@@ -108,15 +113,17 @@ impl TokenizeError {
 fn is_alnum(c: &char) -> bool {
     ('a'..='z').contains(c) || ('A'..='Z').contains(c) || ('0'..='9').contains(c) || *c == '_'
 }
-pub struct Lexer {
-    code: Vec<char>,
+pub struct Lexer<'a> {
+    code: &'a str,
+    chars: Vec<char>,
     pos: usize,
 }
 
-impl Lexer {
-    pub fn new(code: &String) -> Self {
+impl<'a> Lexer<'a> {
+    pub fn new(code: &'a str) -> Self {
         Self {
-            code: code.chars().collect(),
+            chars: code.chars().collect(),
+            code,
             pos: 0,
         }
     }
@@ -134,20 +141,20 @@ impl Lexer {
             }
     }
     fn is_at_end(&self) -> bool {
-        self.pos >= self.code.len()
+        self.pos >= self.chars.len()
     }
     fn consume(&mut self) -> char {
-        let c = self.code[self.pos];
+        let c = self.chars[self.pos];
         self.pos += 1;
         c
     }
     /// 現在位置からn文字目の文字を読み取る
     fn peek_char(&self, n: usize) -> char {
-        self.code[self.pos + n]
+        self.chars[self.pos + n]
     }
     /// 現在位置からn文字読み取る
     fn peek_str(&self, n: usize) -> String {
-        self.code[self.pos..self.pos + n].to_vec().iter().collect()
+        self.chars[self.pos..self.pos + n].to_vec().iter().collect()
     }
     fn read_whitespace(&mut self) -> bool {
         if self.peek_char(0).is_whitespace() {
@@ -171,7 +178,7 @@ impl Lexer {
         if base == 2 || base == 16 {
             self.pos += 2;
         }
-        let n: String = self.code[self.pos..]
+        let n: String = self.chars[self.pos..]
             .iter()
             .take_while(|c| {
                 ('a'..='z').contains(c) || ('A'..='Z').contains(c) || ('0'..='9').contains(c)
@@ -186,7 +193,7 @@ impl Lexer {
         .ok_or(self.raise_err(&format!("expected number of base {}", base)))
     }
     fn read_ident(&mut self) -> Option<String> {
-        let s: String = self.code[self.pos..]
+        let s: String = self.chars[self.pos..]
             .iter()
             .take_while(|c| is_alnum(&c))
             .collect();
@@ -200,7 +207,7 @@ impl Lexer {
     fn read_punct(&mut self) -> Option<String> {
         // 記号読み取り
         // 3文字
-        if self.pos < self.code.len() - 2 {
+        if self.pos < self.chars.len() - 2 {
             let s = self.peek_str(3);
             if [">>=", "<<="].contains(&&s[..]) {
                 self.pos += 3;
@@ -208,7 +215,7 @@ impl Lexer {
             }
         }
         // 2文字
-        if self.pos < self.code.len() - 1 {
+        if self.pos < self.chars.len() - 1 {
             let s = self.peek_str(2);
             if [
                 "==", "!=", "<=", ">=", "->", "+=", "-=", "*=", "/=", "++", "--", "%=", "&=", "|=",
@@ -230,7 +237,7 @@ impl Lexer {
     }
     fn read_word(&mut self) -> Option<String> {
         for l in &[2, 3, 4, 5, 6, 7, 8] {
-            if self.pos + l < self.code.len() {
+            if self.pos + l < self.chars.len() {
                 let s = self.peek_str(*l);
                 if self.check_res_word(&s, *l) {
                     self.pos += l;
@@ -284,7 +291,7 @@ impl Lexer {
     }
 
     fn read_octal(&mut self) -> Option<u8> {
-        let s: String = self.code[self.pos..]
+        let s: String = self.chars[self.pos..]
             .iter()
             .take(3) // octalは最大3桁しか読まない
             .take_while(|c| ('0'..='7').contains(c))
@@ -298,7 +305,7 @@ impl Lexer {
         }
     }
     fn read_hexadecimal(&mut self) -> Result<u8, TokenizeError> {
-        let s: String = self.code[self.pos..]
+        let s: String = self.chars[self.pos..]
             .iter()
             .take_while(|c| {
                 // hexadecimalは何桁でも読む
@@ -348,13 +355,13 @@ impl Lexer {
         }
     }
     fn read_comment(&mut self) -> Result<bool, TokenizeError> {
-        if self.pos == self.code.len() - 1 {
+        if self.pos == self.chars.len() - 1 {
             // 残り1文字の時
             return Ok(false);
         }
         if &self.peek_str(2) == "//" {
             self.pos += 2;
-            self.pos += self.code[self.pos..]
+            self.pos += self.chars[self.pos..]
                 .iter()
                 .position(|c| c == &'\n')
                 .unwrap()
@@ -363,9 +370,9 @@ impl Lexer {
         } else if &self.peek_str(2) == "/*" {
             let start_pos = self.pos;
             self.pos += 2;
-            self.pos += self.code[self.pos..]
+            self.pos += self.chars[self.pos..]
                 .iter()
-                .zip(self.code[self.pos + 1..].iter())
+                .zip(self.chars[self.pos + 1..].iter())
                 .position(|c| c == (&'*', &'/'))
                 .ok_or(TokenizeError::new("unclosed block comment", start_pos))?
                 + 2;
@@ -374,7 +381,7 @@ impl Lexer {
         Ok(false)
     }
     fn byte_len(&self, start: usize) -> usize {
-        self.code[start..self.pos]
+        self.chars[start..self.pos]
             .iter()
             .map(|c| c.len_utf8())
             .sum()
@@ -382,7 +389,7 @@ impl Lexer {
     fn raise_err(&self, msg: &str) -> TokenizeError {
         TokenizeError::new(msg, self.pos)
     }
-    pub fn tokenize(&mut self) -> Result<Vec<Token>, TokenizeError> {
+    pub fn tokenize(&mut self) -> Result<Vec<Token<'a>>, TokenizeError> {
         let mut list: Vec<Token> = Vec::new();
         while !self.is_at_end() {
             let tk_head = self.pos;
@@ -406,7 +413,7 @@ impl Lexer {
         }
         list.push(Token {
             kind: TkEOF,
-            pos: self.code.len(),
+            pos: self.chars.len(),
             ..Default::default()
         });
         // 行番号を計算してトークンに付加
@@ -414,16 +421,16 @@ impl Lexer {
         let mut line_no = 0;
         let mut byte_len = 0;
         for mut tk in list.iter_mut() {
-            byte_len += self.code[head..tk.pos]
+            byte_len += self.chars[head..tk.pos]
                 .iter()
                 .map(|c| c.len_utf8())
                 .sum::<usize>();
-            line_no += self.code[head..tk.pos]
+            line_no += self.chars[head..tk.pos]
                 .iter()
                 .filter(|c| **c == '\n')
                 .count();
             tk.line_no = line_no;
-            tk.byte_len = byte_len;
+            tk.tok = &self.code[byte_len..];
             head = tk.pos;
         }
         Ok(list)

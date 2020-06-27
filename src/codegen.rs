@@ -18,9 +18,9 @@ pub struct CodeGenError {
     pub pos: usize,
 }
 #[derive(Default)]
-struct CodeGenerator {
+struct CodeGenerator<'a> {
     label_count: usize,
-    tklist: Vec<Token>,
+    tklist: Vec<Token<'a>>,
     break_label: Vec<usize>,
     continue_label: Vec<usize>,
     case_label: Vec<usize>,
@@ -94,7 +94,7 @@ fn cast(ty: &Type) -> Result<(), &'static str> {
     Ok(())
 }
 
-impl CodeGenerator {
+impl CodeGenerator<'_> {
     fn new_label(&mut self) -> usize {
         let label = self.label_count;
         self.label_count += 1;

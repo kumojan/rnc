@@ -50,10 +50,8 @@ fn compile(code: &String, print_tklist: bool, print_graph_: bool) -> Result<(), 
             println!("{:?}", tk);
         }
     }
-    let mut parser = Parser::new(token_list);
-    parser.code_lines = code.split('\n').collect();
-    parser.code = &code;
-    let (functions, globals, string_literals, token_list, types) = parser.program()?;
+    let parser = Parser::new(&token_list, code.split('\n').collect());
+    let (functions, globals, string_literals, types) = parser.program()?;
     if print_graph_ {
         print_graph(&functions);
     }

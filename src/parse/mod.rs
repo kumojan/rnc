@@ -68,22 +68,20 @@ impl Tag {
 
 #[derive(Default)]
 pub struct Parser<'a> {
-    cur_line: (usize, &'a str),
-    cur_pos: &'a str, // 現在のトークン以降のコード
-    cur_tok: &'a str, // 現在のトークン
-    head: usize,      // 読んでいるtokenのtklist上の位置
-    tklist: Vec<Token>,
-    locals: Vec<Rc<Var>>,  // 現在定義中の関数のローカル変数
-    static_label: usize,   // ローカルなstatic変数をアセンブリで宣言するためのラベル
-    globals: Vec<Rc<Var>>, // グローバル変数と、ローカルなstatic変数
-    string_literals: Vec<CString>,
+    cur_line: (usize, &'a str),     // 現在の行とその内容(デバッグ用)
+    cur_tok: (&'a str, &'a str),    // 現在のトークンと、それ以降のコード(デバッグ用)
+    head: usize,                    // 読んでいるtokenのtklist上の位置
+    tklist: &'a [Token<'a>],        // トークン列
+    locals: Vec<Rc<Var>>,           // 現在定義中の関数のローカル変数
+    static_label: usize,            // ローカルなstatic変数をアセンブリで宣言するためのラベル
+    globals: Vec<Rc<Var>>,          // グローバル変数と、ローカルなstatic変数
+    string_literals: Vec<CString>,  // 文字列リテラル
     var_scopes: Vec<Vec<VarScope>>, // 前方に内側のスコープがある
     tag_scopes: Vec<Vec<Tag>>,      // 前方に内側のスコープがある
-    cases: Vec<Vec<i64>>,
-    switch_has_default: Vec<bool>,
-    types: TypeList,
-    pub code: &'a str,            // debug用
-    pub code_lines: Vec<&'a str>, // debug用
+    cases: Vec<Vec<i64>>,           // 現在のswitch文が持っているcase
+    switch_has_default: Vec<bool>,  // 現在のswitchがdfaultを持つか
+    types: TypeList,                // プログラムに出現した型のリスト
+    code_lines: Vec<&'a str>,       // プログラムの各行への参照(デバッグ用)
 }
 
 enum PtrDim {
@@ -176,10 +174,11 @@ enum Init {
 ///     | "alignof" "(" type ")"
 ///     | "(" "{" stmt* expr ";" "}" ")"
 ///
-impl Parser<'_> {
-    pub fn new(tklist: Vec<Token>) -> Self {
+impl<'a> Parser<'a> {
+    pub fn new(tklist: &'a [Token<'a>], code_lines: Vec<&'a str>) -> Self {
         Self {
             tklist,
+            code_lines,
             ..Self::default()
         }
     }
@@ -193,8 +192,7 @@ impl Parser<'_> {
         if self.head < self.tklist.len() {
             let head = &self.tklist[self.head];
             self.cur_line = (head.line_no + 1, self.code_lines[head.line_no]);
-            self.cur_pos = &self.code[head.byte_len..];
-            self.cur_tok = &self.code[head.byte_len..head.byte_len + head.len];
+            self.cur_tok = (&head.tok[..head.len], head.tok);
         }
     }
     /// トークンを一つ読んで、すすむ
@@ -625,16 +623,7 @@ impl Parser<'_> {
     // コード生成
     pub fn program(
         mut self,
-    ) -> Result<
-        (
-            Vec<Function>,
-            Vec<Rc<Var>>,
-            Vec<CString>,
-            Vec<Token>,
-            TypeList,
-        ),
-        ParseError,
-    > {
+    ) -> Result<(Vec<Function>, Vec<Rc<Var>>, Vec<CString>, TypeList), ParseError> {
         self.enter_scope(); // ファイルスコープ
         let mut code = vec![];
         while !self.is_eof() {
@@ -652,13 +641,7 @@ impl Parser<'_> {
         if self.tag_scopes.len() > 0 {
             return Err(self.raise_err("tagscope remains!"));
         }
-        Ok((
-            code,
-            self.globals,
-            self.string_literals,
-            self.tklist,
-            self.types,
-        ))
+        Ok((code, self.globals, self.string_literals, self.types))
     }
     fn funcargs(&mut self) -> Result<(), ParseError> {
         self.expect("(")?;
@@ -1267,7 +1250,7 @@ impl Parser<'_> {
             );
             Node::new_comma(line1, line2, tok_no)
         } else {
-            let msg = format!("line:{:?} at:{}", self.cur_line, self.cur_pos);
+            let msg = format!("line:{:?} at:{}", self.cur_line, 0);
             unimplemented!("expected binop! {}", msg)
         }
     }
