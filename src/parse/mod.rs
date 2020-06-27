@@ -75,9 +75,9 @@ pub struct Parser<'a> {
     tklist: Vec<Token>,
     locals: Vec<Rc<Var>>,  // Node::Varと共有する。
     statics: Vec<Rc<Var>>, // static variables
-    globals: Vec<VarScope>,
+    globals: Vec<Rc<Var>>,
     string_literals: Vec<CString>,
-    var_scopes: Vec<Vec<VarScope>>, // 後方に内側のスコープがある(読むときはrevする)
+    var_scopes: Vec<Vec<VarScope>>, // 前方に内側のスコープがある
     tag_scopes: Vec<Vec<Tag>>,      // 前方に内側のスコープがある
     cases: Vec<Vec<i64>>,
     switch_has_default: Vec<bool>,
@@ -261,7 +261,6 @@ impl Parser<'_> {
                         .iter()
                         .rev()
                         .flat_map(|scope| scope.iter().rev())
-                        .chain(self.globals.iter())
                         .any(|v| v.is_type(&s))
                 });
     }
@@ -486,7 +485,6 @@ impl Parser<'_> {
             .iter()
             .rev()
             .flat_map(|scope| scope.iter().rev()) // 後ろから順に走査する
-            .chain(self.globals.iter())
             .flat_map(|v| v.get_var(name))
             .next()
     }
@@ -495,7 +493,6 @@ impl Parser<'_> {
             .iter()
             .rev()
             .flat_map(|scope| scope.iter().rev()) // 後ろから順に走査する
-            .chain(self.globals.iter())
             .flat_map(|v| v.get_union(name))
             .next()
     }
@@ -557,7 +554,7 @@ impl Parser<'_> {
     fn find_func(&self, name: &str) -> Option<(Vec<TypeRef>, TypeRef)> {
         self.globals
             .iter()
-            .flat_map(|v| v.get_var(&name))
+            .filter(|v| v.name == name)
             .flat_map(|v| match &self.types.get(v.ty).kind {
                 TypeKind::TyFunc { args, ret } => Some((args.clone(), *ret)),
                 _ => None,
@@ -570,7 +567,6 @@ impl Parser<'_> {
                 .iter()
                 .rev()
                 .flat_map(|scope| scope.iter().rev()) // 後ろから順に走査する
-                .chain(self.globals.iter())
                 .flat_map(|v| v.get_type(&name))
                 .next()
         })
@@ -604,8 +600,8 @@ impl Parser<'_> {
         is_static: bool,
         is_extern: bool,
     ) -> Result<Rc<Var>, ParseError> {
-        if self.globals.iter().find(|v| v.name() == &name).is_some() {
-            Err(self.raise_err("global var/type or func redefined!"))
+        if self.globals.iter().find(|v| v.name == name).is_some() {
+            Err(self.raise_err("global var or func redefined!"))
         } else {
             let var = Rc::new(Var {
                 name: name.clone(),
@@ -616,7 +612,8 @@ impl Parser<'_> {
                 init_data,
                 is_extern,
             });
-            self.globals.push(VarScope::Var(var.clone()));
+            self.globals.push(var.clone());
+            self.var_scope().push(VarScope::Var(var.clone()));
             Ok(var)
         }
     }
@@ -638,14 +635,6 @@ impl Parser<'_> {
         self.var_scope().push(VarScope::Var(var.clone())); // var_scopeに追加
         self.statics.push(var.clone()); // 初期化はglobal
         Ok(var)
-    }
-    fn add_global_typedef(&mut self, name: String, ty: TypeRef) -> Result<(), ParseError> {
-        if self.globals.iter().find(|v| v.name() == &name).is_some() {
-            Err(self.raise_err("global var/type or func redefined!"))
-        } else {
-            self.globals.push(VarScope::Type(name, ty));
-            Ok(())
-        }
     }
     fn add_string_literal(&mut self, data: CString) -> Node {
         let n = Node {
@@ -675,7 +664,7 @@ impl Parser<'_> {
         let mut code = vec![];
         while !self.is_eof() {
             if self.consume("typedef") {
-                self.typedef(true)?; // is_global=true
+                self.typedef()?; //
             }
             if let Some(func) = self.funcdef()? {
                 code.push(func); // グローバル変数か関数
@@ -691,11 +680,7 @@ impl Parser<'_> {
         let globals = self
             .globals
             .into_iter()
-            .flat_map(|v| match v {
-                VarScope::Var(var) => Some(var),
-                _ => None,
-            })
-            .chain(self.statics.into_iter()) // static変数も追加
+            .chain(self.statics) // static変数も追加
             .collect();
         Ok((code, globals, self.string_literals, self.tklist, self.types))
     }
@@ -862,16 +847,12 @@ impl Parser<'_> {
         v.extend(inner);
         Ok((name, v))
     }
-    fn typedef(&mut self, is_global: bool) -> Result<(), ParseError> {
+    fn typedef(&mut self) -> Result<(), ParseError> {
         let basety = self.typespec()?;
         if !self.consume(";") {
             loop {
                 let (name, ty) = self.declarator(basety.clone())?;
-                if is_global {
-                    self.add_global_typedef(name, ty)?;
-                } else {
-                    self.add_typdef(name, ty);
-                }
+                self.add_typdef(name, ty);
                 if !self.consume(",") {
                     break; // 宣言終了
                 }
@@ -1078,7 +1059,7 @@ impl Parser<'_> {
             } else if self.consume("static") {
                 self.static_vardef()?;
             } else if self.consume("typedef") {
-                self.typedef(false)?;
+                self.typedef()?;
             } else {
                 block.push(self.stmt()?);
             }
