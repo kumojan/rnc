@@ -107,9 +107,12 @@ impl CodeGenerator {
         self.label_count += 1;
         label
     }
-    fn raise_err(&self, msg: String) -> CodeGenError {
+    fn raise_err<S: Into<String>>(&self, msg: S) -> CodeGenError {
         println!("{:?}", self.types);
-        CodeGenError { pos: self.pos, msg }
+        CodeGenError {
+            pos: self.pos,
+            msg: msg.into(),
+        }
     }
     fn update_pos(&mut self, tok_no: usize) {
         let cur_tok = &self.tklist[tok_no];
@@ -195,7 +198,7 @@ impl CodeGenerator {
             }
             NodeKind::Cast(expr) => {
                 self.gen_expr(expr)?;
-                cast(self.types.get(node.ty)).map_err(|msg| self.raise_err(msg.to_owned()))?;
+                cast(self.types.get(node.ty)).map_err(|msg| self.raise_err(msg))?;
             }
             NodeKind::Addr(node) => self.gen_addr(node)?,
             NodeKind::Deref(_node) => {
@@ -216,7 +219,7 @@ impl CodeGenerator {
             NodeKind::Assign(lhs, rhs) => {
                 self.gen_addr(lhs)?;
                 self.gen_expr(rhs)?;
-                store(self.types.get(lhs.get_type())); // どの型に代入するかによってコードが異なる
+                store(self.types.get(lhs.ty)); // どの型に代入するかによってコードが異なる
             }
             NodeKind::LogAnd(lhs, rhs) => {
                 let label = self.new_label();
@@ -321,7 +324,7 @@ impl CodeGenerator {
                 println!("{}", code);
                 println!("  push rax")
             }
-            _ => return Err(self.raise_err("not an expression!".to_owned())),
+            _ => return Err(self.raise_err("not an expression!")),
         }
         Ok(())
     }
@@ -479,7 +482,7 @@ impl CodeGenerator {
                 self.gen_stmt(stmt)?;
             }
             _ => {
-                return Err(self.raise_err("not a statement".to_owned()));
+                return Err(self.raise_err("not a statement"));
             }
         }
         Ok(())

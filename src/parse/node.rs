@@ -323,13 +323,6 @@ impl fmt::Debug for Node {
     }
 }
 impl Node {
-    pub fn get_type(&self) -> TypeRef {
-        if self.ty.0 > 0 {
-            self.ty
-        } else {
-            unimplemented!("called get_type for statements!")
-        }
-    }
     #[allow(overflowing_literals)] // 数値のキャストでオーバーフローを許す
     pub(super) fn eval(&self, types: &TypeList) -> Result<i64, (usize, &'static str)> {
         let cast_int = |b: bool| if b { 1 } else { 0 };
@@ -496,22 +489,43 @@ impl Node {
             tok_no,
         }
     }
-    pub(super) fn new_unary(t: &str, node: Node, tok_no: usize, types: &TypeList) -> Self {
+    pub(super) fn new_unary(t: &str, node: Node, tok_no: usize) -> Self {
         Self {
             ty: match t {
                 "expr_stmt" => TypeRef::STMT,
-                "deref" => types.get(node.ty).base.unwrap(),
                 "bitnot" => TypeRef::INT,
                 _ => unimplemented!(),
             },
             kind: match t {
-                "deref" => NodeKind::Deref(Box::new(node)),
                 "expr_stmt" => NodeKind::ExprStmt(Box::new(node)),
                 "bitnot" => NodeKind::BitNot(Box::new(node)),
                 _ => unimplemented!(),
             },
             tok_no,
         }
+    }
+    pub(super) fn new_deref(
+        node: Node,
+        tok_no: usize,
+        types: &TypeList,
+    ) -> Result<Self, (usize, String)> {
+        let ty = if let Some(ty) = types.get(node.ty).base {
+            if ty == TypeRef::VOID {
+                return Err((tok_no, "dereferencing void pontier!".to_owned()));
+            } else {
+                ty
+            }
+        } else {
+            return Err((
+                tok_no,
+                format!("tryied to dereference {:?}", types.get(node.ty)),
+            ));
+        };
+        Ok(Node {
+            kind: NodeKind::Deref(Box::new(node)),
+            tok_no,
+            ty,
+        })
     }
     /// アドレスnodeを作る前に、ポインタ型を作成して渡すこと
     pub(super) fn new_addr(node: Node, tok_no: usize, ptr_ty: TypeRef) -> Self {

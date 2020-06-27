@@ -82,7 +82,6 @@ pub struct Parser<'a> {
     cases: Vec<Vec<i64>>,
     switch_has_default: Vec<bool>,
     types: TypeList,
-    // var_attr: VarAttr,
     pub code: &'a str,            // debug用
     pub code_lines: Vec<&'a str>, // debug用
 }
@@ -177,7 +176,7 @@ enum Init {
 /// shift = add ("<<" add | ">>" add)*
 /// add = mul (("+" | "-") mul)*
 /// mul = cast ("*" cast | "/" cast)*
-/// cast = "(" type-name ")" cast | unary
+/// cast = "(" type-name ")" initializer | "(" type-name ")" cast | unary
 /// unary = ("+" | "-" | "*" | "&") unary
 ///       | postfix
 /// postfix = primary ("[" expr "]" | "." ident )*
@@ -196,6 +195,12 @@ impl Parser<'_> {
             tklist,
             ..Self::default()
         }
+    }
+    fn var_scope(&mut self) -> &mut Vec<VarScope> {
+        self.var_scopes.last_mut().unwrap()
+    }
+    fn tag_scope(&mut self) -> &mut Vec<Tag> {
+        self.tag_scopes.last_mut().unwrap()
     }
     fn set_tok(&mut self) {
         if self.head < self.tklist.len() {
@@ -455,12 +460,12 @@ impl Parser<'_> {
             msg: msg.to_owned(),
         }
     }
-    fn cast_err(&self, e: (usize, &'static str)) -> ParseError {
+    fn cast_err<S: Into<String>>(&self, e: (usize, S)) -> ParseError {
         println!("{:?}", self.types);
         println!("{:?}", self.locals);
         ParseError {
             pos: self.tklist[e.0].pos,
-            msg: e.1.to_owned(),
+            msg: e.1.into(),
         }
     }
     fn head_kind(&self) -> &TokenKind {
@@ -495,7 +500,7 @@ impl Parser<'_> {
             .next()
     }
     fn add_tag(&mut self, tag: Tag) {
-        self.tag_scopes.last_mut().unwrap().push(tag);
+        self.tag_scope().push(tag);
     }
     fn find_tag(&self, name: &str) -> Option<&Tag> {
         self.tag_scopes
@@ -573,7 +578,7 @@ impl Parser<'_> {
     fn add_var(&mut self, name: &str, ty: TypeRef) -> Rc<Var> {
         let var = Rc::new(Var {
             name: name.to_owned(),
-            ty, // とりあえず、全てint
+            ty,
             id: self.locals.len(),
             is_local: true,
             is_static: false,
@@ -581,23 +586,14 @@ impl Parser<'_> {
             init_data: None,
         });
         self.locals.push(var.clone());
-        self.var_scopes
-            .last_mut()
-            .unwrap()
-            .push(VarScope::Var(var.clone())); // scopeにも追加
+        self.var_scope().push(VarScope::Var(var.clone())); // scopeにも追加
         var
     }
     fn add_typdef(&mut self, name: String, ty: TypeRef) {
-        self.var_scopes
-            .last_mut()
-            .unwrap()
-            .push(VarScope::Type(name, ty));
+        self.var_scope().push(VarScope::Type(name, ty));
     }
     fn add_enum(&mut self, name: String, num: i64) {
-        self.var_scopes
-            .last_mut()
-            .unwrap()
-            .push(VarScope::Enum(name, num));
+        self.var_scope().push(VarScope::Enum(name, num));
     }
     // グローバル変数は重複して宣言できない
     fn add_global(
@@ -639,10 +635,7 @@ impl Parser<'_> {
             is_extern: false,
             init_data,
         });
-        self.var_scopes
-            .last_mut()
-            .unwrap()
-            .push(VarScope::Var(var.clone())); // var_scopeに追加
+        self.var_scope().push(VarScope::Var(var.clone())); // var_scopeに追加
         self.statics.push(var.clone()); // 初期化はglobal
         Ok(var)
     }
@@ -693,7 +686,7 @@ impl Parser<'_> {
             return Err(self.raise_err("varscope remains!"));
         }
         if self.tag_scopes.len() > 0 {
-            return Err(self.raise_err("tagscopes remains!"));
+            return Err(self.raise_err("tagscope remains!"));
         }
         let globals = self
             .globals
@@ -1063,12 +1056,8 @@ impl Parser<'_> {
             node = match d {
                 Init::Index(idx) => {
                     let idx = Node::new_num(*idx, tok_no);
-                    Node::new_unary(
-                        "deref",
-                        Node::new_add(node, idx, tok_no, &self.types),
-                        tok_no,
-                        &self.types,
-                    )
+                    let node = Node::new_add(node, idx, tok_no, &self.types);
+                    Node::new_deref(node, self.head, &self.types).map_err(|e| self.cast_err(e))?
                 }
                 Init::Member(name) => self.struct_ref(node, name)?,
             };
@@ -1276,13 +1265,8 @@ impl Parser<'_> {
         }
         macro_rules! to_assign_op {
             ($op:expr) => {{
-                to_assign!(Node::new_bin(
-                    $op,
-                    node,
-                    self.skip().assign()?,
-                    self.head,
-                    &self.types
-                ))
+                let node2 = self.skip().assign()?;
+                to_assign!(Node::new_bin($op, node, node2, self.head, &self.types))
             }};
         }
         Ok(match self.peek_reserved().as_deref() {
@@ -1326,7 +1310,7 @@ impl Parser<'_> {
             let ptr_ty = self.types.ptr_of(lhs.ty);
             let tmp = self.add_var("", ptr_ty);
             let tmp_node = || Node::new_var(tmp.clone(), tok_no);
-            let tmp_deref = || Node::new_unary("deref", tmp_node(), tok_no, &self.types);
+            let tmp_deref = || Node::new_deref(tmp_node(), tok_no, &self.types).unwrap();
 
             // tmp = &A
             let line1 = Node::new_assign(tmp_node(), Node::new_addr(*lhs, tok_no, ptr_ty), tok_no);
@@ -1401,22 +1385,15 @@ impl Parser<'_> {
     }
     fn equality(&mut self) -> Result<Node, ParseError> {
         let mut node = self.relational()?;
+        use BinOp::*;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("==") => Node::new_bin(
-                    BinOp::_Eq,
-                    node,
-                    self.skip().relational()?,
-                    self.head,
-                    &self.types,
-                ),
-                Some("!=") => Node::new_bin(
-                    BinOp::Neq,
-                    node,
-                    self.skip().relational()?,
-                    self.head,
-                    &self.types,
-                ),
+                Some("==") => {
+                    Node::new_bin(_Eq, node, self.skip().relational()?, self.head, &self.types)
+                }
+                Some("!=") => {
+                    Node::new_bin(Neq, node, self.skip().relational()?, self.head, &self.types)
+                }
                 _ => return Ok(node),
             }
         }
@@ -1424,36 +1401,13 @@ impl Parser<'_> {
     /// relational = shift ("<" shift | "<=" shift | ">" shift | ">=" shift)*
     fn relational(&mut self) -> Result<Node, ParseError> {
         let mut node = self.shift()?;
+        use BinOp::*;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("<") => Node::new_bin(
-                    BinOp::Lt,
-                    node,
-                    self.skip().shift()?,
-                    self.head,
-                    &self.types,
-                ),
-                Some("<=") => Node::new_bin(
-                    BinOp::Le,
-                    node,
-                    self.skip().shift()?,
-                    self.head,
-                    &self.types,
-                ),
-                Some(">") => Node::new_bin(
-                    BinOp::Lt,
-                    self.skip().shift()?,
-                    node,
-                    self.head,
-                    &self.types,
-                ),
-                Some(">=") => Node::new_bin(
-                    BinOp::Le,
-                    self.skip().shift()?,
-                    node,
-                    self.head,
-                    &self.types,
-                ),
+                Some("<") => Node::new_bin(Lt, node, self.skip().shift()?, self.head, &self.types),
+                Some("<=") => Node::new_bin(Le, node, self.skip().shift()?, self.head, &self.types),
+                Some(">") => Node::new_bin(Lt, self.skip().shift()?, node, self.head, &self.types),
+                Some(">=") => Node::new_bin(Le, self.skip().shift()?, node, self.head, &self.types),
                 _ => return Ok(node),
             }
         }
@@ -1461,14 +1415,11 @@ impl Parser<'_> {
     /// shift = add ("<<" add | ">>" add)*
     fn shift(&mut self) -> Result<Node, ParseError> {
         let mut node = self.add()?;
+        use BinOp::*;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("<<") => {
-                    Node::new_bin(BinOp::Shl, node, self.skip().add()?, self.head, &self.types)
-                }
-                Some(">>") => {
-                    Node::new_bin(BinOp::Shr, node, self.skip().add()?, self.head, &self.types)
-                }
+                Some("<<") => Node::new_bin(Shl, node, self.skip().add()?, self.head, &self.types),
+                Some(">>") => Node::new_bin(Shr, node, self.skip().add()?, self.head, &self.types),
                 _ => return Ok(node),
             }
         }
@@ -1488,29 +1439,12 @@ impl Parser<'_> {
     /// mul = cast ("*" cast | "/" cast | "%" cast)*
     fn mul(&mut self) -> Result<Node, ParseError> {
         let mut node = self.cast()?;
+        use BinOp::*;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("*") => Node::new_bin(
-                    BinOp::Mul,
-                    node,
-                    self.skip().cast()?,
-                    self.head,
-                    &self.types,
-                ),
-                Some("/") => Node::new_bin(
-                    BinOp::Div,
-                    node,
-                    self.skip().cast()?,
-                    self.head,
-                    &self.types,
-                ),
-                Some("%") => Node::new_bin(
-                    BinOp::Mod,
-                    node,
-                    self.skip().cast()?,
-                    self.head,
-                    &self.types,
-                ),
+                Some("*") => Node::new_bin(Mul, node, self.skip().cast()?, self.head, &self.types),
+                Some("/") => Node::new_bin(Div, node, self.skip().cast()?, self.head, &self.types),
+                Some("%") => Node::new_bin(Mod, node, self.skip().cast()?, self.head, &self.types),
                 _ => return Ok(node),
             };
         }
@@ -1544,18 +1478,13 @@ impl Parser<'_> {
             )),
             Some("*") => {
                 let addr = self.skip().cast()?;
-                self.check_deref(addr)
+                Node::new_deref(addr, self.head, &self.types).map_err(|e| self.cast_err(e))
             }
             Some("&") => {
                 let node = self.skip().cast()?;
                 Ok(self.new_addr(node))
             }
-            Some("~") => Ok(Node::new_unary(
-                "bitnot",
-                self.skip().cast()?,
-                self.head,
-                &self.types,
-            )),
+            Some("~") => Ok(Node::new_unary("bitnot", self.skip().cast()?, self.head)),
             Some("!") => Ok(Node::new_bin(
                 BinOp::_Eq,
                 self.skip().cast()?,
@@ -1586,22 +1515,6 @@ impl Parser<'_> {
             _ => self.postfix(),
         }
     }
-    fn check_deref(&self, addr: Node) -> Result<Node, ParseError> {
-        let ty = if let Some(ty) = self.types.get(addr.ty).base {
-            if ty == TypeRef::VOID {
-                return Err(self.raise_err("dereferencing void pointer!"));
-            }
-            ty
-        } else {
-            println!("kind:{:?} type:{:?}", addr.kind, addr.ty);
-            return Err(self.raise_err("cannot dereference"));
-        };
-        Ok(Node {
-            kind: NodeKind::Deref(Box::new(addr)),
-            ty,
-            tok_no: self.head,
-        })
-    }
     fn new_addr(&mut self, node: Node) -> Node {
         let ty = self.types.ptr_of(node.ty);
         Node {
@@ -1627,12 +1540,9 @@ impl Parser<'_> {
         loop {
             // x[y] は *(x+y)に同じ
             if self.consume("[") {
-                node = Node::new_unary(
-                    "deref",
-                    Node::new_add(node, self.expr()?, self.head, &self.types),
-                    self.head,
-                    &self.types,
-                );
+                node = Node::new_add(node, self.expr()?, self.head, &self.types);
+                node =
+                    Node::new_deref(node, self.head, &self.types).map_err(|e| self.cast_err(e))?;
                 self.expect("]")?;
             } else if self.consume(".") {
                 let name = &self.expect_ident()?;
@@ -1640,7 +1550,8 @@ impl Parser<'_> {
             // x->yは(*x).yに同じ
             } else if self.consume("->") {
                 let name = &self.expect_ident()?;
-                node = Node::new_unary("deref", node, self.head, &self.types);
+                node =
+                    Node::new_deref(node, self.head, &self.types).map_err(|e| self.cast_err(e))?;
                 node = self.struct_ref(node, name)?;
             } else if self.consume("++") {
                 node = self.new_inc_dec(node, "+");
@@ -1662,7 +1573,7 @@ impl Parser<'_> {
         let n2: Node;
         macro_rules! tmp_deref {
             () => {
-                Node::new_unary("deref", tmp_node(), tok_no, &self.types)
+                Node::new_deref(tmp_node(), self.head, &self.types).unwrap()
             };
         }
         let n3: Node;
