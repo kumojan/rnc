@@ -73,9 +73,9 @@ pub struct Parser<'a> {
     cur_tok: &'a str, // 現在のトークン
     head: usize,      // 読んでいるtokenのtklist上の位置
     tklist: Vec<Token>,
-    locals: Vec<Rc<Var>>,  // Node::Varと共有する。
-    statics: Vec<Rc<Var>>, // static variables
-    globals: Vec<Rc<Var>>,
+    locals: Vec<Rc<Var>>,  // 現在定義中の関数のローカル変数
+    static_label: usize,   // ローカルなstatic変数をアセンブリで宣言するためのラベル
+    globals: Vec<Rc<Var>>, // グローバル変数と、ローカルなstatic変数
     string_literals: Vec<CString>,
     var_scopes: Vec<Vec<VarScope>>, // 前方に内側のスコープがある
     tag_scopes: Vec<Vec<Tag>>,      // 前方に内側のスコープがある
@@ -572,7 +572,19 @@ impl Parser<'_> {
     fn add_enum(&mut self, name: String, num: i64) {
         self.var_scope().push(VarScope::Enum(name, num));
     }
-    // グローバル変数は重複して宣言できない
+    fn check_global_name(&self, name: &str) -> Result<(), ParseError> {
+        if self
+            .globals
+            .iter()
+            .find(|v| !v.is_local && v.name == name)
+            .is_some()
+        {
+            Err(self.raise_err("global var or func redefined!"))
+        } else {
+            Ok(())
+        }
+    }
+    /// グローバル変数とstaticローカル変数
     fn add_global(
         &mut self,
         name: String,
@@ -580,41 +592,23 @@ impl Parser<'_> {
         init_data: Option<Vec<Data>>,
         is_static: bool,
         is_extern: bool,
+        is_local: bool,
     ) -> Result<Rc<Var>, ParseError> {
-        if self.globals.iter().find(|v| v.name == name).is_some() {
-            Err(self.raise_err("global var or func redefined!"))
-        } else {
-            let var = Rc::new(Var {
-                name: name.clone(),
-                ty,
-                id: 0,
-                is_local: false,
-                is_static,
-                init_data,
-                is_extern,
-            });
-            self.globals.push(var.clone());
-            self.var_scope().push(VarScope::Var(var.clone()));
-            Ok(var)
-        }
-    }
-    fn add_static(
-        &mut self,
-        name: String,
-        ty: TypeRef,
-        init_data: Option<Vec<Data>>,
-    ) -> Result<Rc<Var>, ParseError> {
+        let id = if is_local { self.static_label } else { 0 };
         let var = Rc::new(Var {
             name: name.clone(),
             ty,
-            id: self.statics.len(), // static変数の通し番号
-            is_local: true,
-            is_static: true,
-            is_extern: false,
+            id,
+            is_local,
+            is_static,
+            is_extern,
             init_data,
         });
-        self.var_scope().push(VarScope::Var(var.clone())); // var_scopeに追加
-        self.statics.push(var.clone()); // 初期化はglobal
+        if is_local {
+            self.static_label += 1;
+        }
+        self.globals.push(var.clone());
+        self.var_scope().push(VarScope::Var(var.clone()));
         Ok(var)
     }
     fn add_string_literal(&mut self, data: CString) -> Node {
@@ -658,12 +652,13 @@ impl Parser<'_> {
         if self.tag_scopes.len() > 0 {
             return Err(self.raise_err("tagscope remains!"));
         }
-        let globals = self
-            .globals
-            .into_iter()
-            .chain(self.statics) // static変数も追加
-            .collect();
-        Ok((code, globals, self.string_literals, self.tklist, self.types))
+        Ok((
+            code,
+            self.globals,
+            self.string_literals,
+            self.tklist,
+            self.types,
+        ))
     }
     fn funcargs(&mut self) -> Result<(), ParseError> {
         self.expect("(")?;
@@ -699,6 +694,7 @@ impl Parser<'_> {
             return Ok(None);
         }
         let (name, ty) = self.declarator(basety.clone())?;
+        self.check_global_name(&name)?;
         // 次に関数の有無を見る
         if self.peek("(") {
             // 関数の宣言
@@ -707,7 +703,7 @@ impl Parser<'_> {
             let params: Vec<_> = self.locals.iter().cloned().collect();
             let arg = params.iter().map(|p| p.ty).collect();
             let ty = self.types.function_of(arg, ty);
-            self.add_global(name.clone(), ty.clone(), None, is_static, is_extern)?;
+            self.add_global(name.clone(), ty.clone(), None, is_static, is_extern, false)?;
             if self.consume(";") {
                 // int func();のように関数の宣言のみの場合
                 self.leave_scope(); // スコープは全く使わずに捨てる
@@ -727,39 +723,19 @@ impl Parser<'_> {
             )));
         }
         // 関数でないとしたら、グローバル変数が続いている
-        self.global_vardef(name, ty, is_static, is_extern)?;
+        self.global_vardef(name, ty, is_static, is_extern, false)?;
         if !self.consume(";") {
             loop {
                 self.expect(",")?;
                 let (name, ty) = self.declarator(basety.clone())?;
-                self.global_vardef(name, ty, is_static, is_extern)?;
+                self.check_global_name(&name)?;
+                self.global_vardef(name, ty, is_static, is_extern, false)?;
                 if self.consume(";") {
                     break;
                 }
             }
         }
         Ok(None)
-    }
-    fn global_vardef(
-        &mut self,
-        name: String,
-        ty: TypeRef,
-        is_static: bool,
-        is_extern: bool,
-    ) -> Result<(), ParseError> {
-        let init = if self.consume("=") {
-            let init = self.initializer()?;
-            if let InitKind::List(l) = &init.kind {
-                self.types.update_array_length(ty, l.len());
-            }
-            init.eval(ty, &self.types)
-                .map(Some)
-                .map_err(|e| self.cast_err(e))?
-        } else {
-            None
-        };
-        self.add_global(name, ty, init, is_static, is_extern)?;
-        Ok(())
     }
     /// declarator = ptr ("(" declarator ")" | ident) ("[" num "]")*
     fn declarator(&mut self, mut ty: TypeRef) -> Result<(String, TypeRef), ParseError> {
@@ -842,22 +818,33 @@ impl Parser<'_> {
         };
         Ok(())
     }
+    fn global_vardef(
+        &mut self,
+        name: String,
+        ty: TypeRef,
+        is_static: bool,
+        is_extern: bool,
+        is_local: bool,
+    ) -> Result<(), ParseError> {
+        let init = if self.consume("=") {
+            let init = self.initializer()?;
+            if let InitKind::List(l) = &init.kind {
+                self.types.update_array_length(ty, l.len());
+            }
+            init.eval(ty, &self.types)
+                .map(Some)
+                .map_err(|e| self.cast_err(e))?
+        } else {
+            None
+        };
+        self.add_global(name, ty, init, is_static, is_extern, is_local)?;
+        Ok(())
+    }
     fn static_vardef(&mut self) -> Result<(), ParseError> {
         let basety = self.typespec()?;
         loop {
             let (name, ty) = self.declarator(basety.clone())?;
-            let init = if self.consume("=") {
-                let init = self.initializer()?;
-                if let InitKind::List(l) = &init.kind {
-                    self.types.update_array_length(ty, l.len());
-                }
-                init.eval(ty, &self.types)
-                    .map(Some)
-                    .map_err(|e| self.cast_err(e))?
-            } else {
-                None
-            };
-            self.add_static(name, ty, init)?;
+            self.global_vardef(name, ty, true, false, true)?; // static, extern, local
             if self.consume(";") {
                 break;
             }
