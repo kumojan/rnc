@@ -1,8 +1,6 @@
 use crate::codegen::CodeGenError;
 use crate::parse::ParseError;
 use crate::tokenize::TokenizeError;
-use std::borrow::Borrow;
-// use std::fmt;
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -49,21 +47,21 @@ fn get_line_number(code: &String, pos: usize) -> (usize, usize) {
     (n, pos - line_start)
 }
 
-pub fn error_at<T: Borrow<str>>(
+pub fn error_at<S: Into<String>>(
     code: &String,
     pos: usize,
-    msg: T,
+    msg: S,
     filename: &String,
 ) -> Result<(), String> {
     let (n, pos) = get_line_number(&code, pos);
     let line = code.split('\n').nth(n).unwrap();
     let header = format!("{}:{}: ", filename, n);
     eprintln!("{}{}", header, line);
-    eprintln!("{}^ {}", " ".repeat(pos + header.len()), msg.borrow()); // 前の行のヘッダの分ずらす
+    eprintln!("{}^ {}", " ".repeat(pos + header.len()), msg.into()); // 前の行のヘッダの分ずらす
     Err("compile failed".to_owned())
 }
 
-pub fn error<T: Borrow<str>>(msg: T) -> Result<(), String> {
-    eprintln!("{}", msg.borrow());
+pub fn error<S: Into<String>>(msg: S) -> Result<(), String> {
+    eprintln!("{}", msg.into());
     Err("compile failed".to_owned())
 }

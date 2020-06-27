@@ -16,9 +16,8 @@ use crate::tokenize::*;
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     let mut opts = Options::new();
-    opts.optflag("t", "", "print token list");
+    opts.optflag("t", "", "print token list and types");
     opts.optflag("g", "", "print node graph");
-    // opts.optopt("c", "", "code to compile", "CODE");
     // 最初(プログラム名)と最後(入力)は無視する
     let matches = match opts.parse(&args[1..args.len()]) {
         Ok(m) => m,

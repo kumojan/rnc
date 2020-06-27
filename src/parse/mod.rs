@@ -69,7 +69,7 @@ impl Tag {
 #[derive(Default)]
 pub struct Parser<'a> {
     cur_line: (usize, &'a str),
-    cur_pos: &'a str, // 現在のトークンからのコード
+    cur_pos: &'a str, // 現在のトークン以降のコード
     cur_tok: &'a str, // 現在のトークン
     head: usize,      // 読んでいるtokenのtklist上の位置
     tklist: Vec<Token>,
@@ -110,7 +110,7 @@ impl VarScope {
             _ => None,
         }
     }
-    fn get_union(&self, name: &str) -> Option<i64> {
+    fn get_enum(&self, name: &str) -> Option<i64> {
         match self {
             Self::Enum(_name, val) if _name == name => Some(*val),
             _ => None,
@@ -119,8 +119,8 @@ impl VarScope {
 }
 
 enum Init {
-    Index(usize),
-    Member(String),
+    Index(usize),   // 配列のインデックス
+    Member(String), // 構造体のメンバ
 }
 
 ///
@@ -474,7 +474,7 @@ impl Parser<'_> {
             .iter()
             .rev()
             .flat_map(|scope| scope.iter().rev()) // 後ろから順に走査する
-            .flat_map(|v| v.get_union(name))
+            .flat_map(|v| v.get_enum(name))
             .next()
     }
     fn add_tag(&mut self, tag: Tag) {
