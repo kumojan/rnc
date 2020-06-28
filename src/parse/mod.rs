@@ -74,6 +74,7 @@ pub struct Parser<'a> {
     tklist: &'a [Token<'a>],        // トークン列
     locals: Vec<Rc<Var>>,           // 現在定義中の関数のローカル変数
     static_label: usize,            // ローカルなstatic変数をアセンブリで宣言するためのラベル
+    tmp_gvar_label: usize,          // 一時的なグローバル変数に対する通し番号
     globals: Vec<Rc<Var>>,          // グローバル変数と、ローカルなstatic変数
     string_literals: Vec<CString>,  // 文字列リテラル
     var_scopes: Vec<Vec<VarScope>>, // 前方に内側のスコープがある
@@ -187,6 +188,11 @@ impl<'a> Parser<'a> {
     }
     fn tag_scope(&mut self) -> &mut Vec<Tag> {
         self.tag_scopes.last_mut().unwrap()
+    }
+    fn new_tmp_gvar_label(&mut self) -> String {
+        let label = self.tmp_gvar_label;
+        self.tmp_gvar_label += 1;
+        format!(".L.tmp.{}", label)
     }
     fn set_tok(&mut self) {
         if self.head < self.tklist.len() {
@@ -550,9 +556,9 @@ impl<'a> Parser<'a> {
                 .next()
         })
     }
-    fn add_var(&mut self, name: &str, ty: TypeRef) -> Rc<Var> {
+    fn add_var<S: Into<String>>(&mut self, name: S, ty: TypeRef) -> Rc<Var> {
         let var = Rc::new(Var {
-            name: name.to_owned(),
+            name: name.into(),
             ty,
             id: self.locals.len(),
             is_local: true,
@@ -1384,7 +1390,7 @@ impl<'a> Parser<'a> {
                 let mut ty = self.typespec()?;
                 ty = self.abstruct_declarator(ty)?;
                 self.expect(")")?;
-                if self.peek("{") {
+                return if self.peek("{") {
                     let init = self.initializer()?;
                     if let InitKind::List(l) = &init.kind {
                         self.types.update_array_length(ty, l.len());
@@ -1396,16 +1402,29 @@ impl<'a> Parser<'a> {
                     // tmp　　に変換する。正確には
                     // ({tmpへの代入コードたち, tmp})に変換する
                     // statement_expressionを使うと良さそう
-                    let tmp = self.add_var("", ty); // int tmp[3]; に対応
-                    let mut nodes = vec![];
-                    self.init_stmt(&tmp, init, vec![], &mut nodes, ty)?;
-                    return Ok(Node::new_stmt_expr(
-                        nodes,
-                        Node::new_var(tmp, self.head),
-                        self.head,
-                    ));
-                }
-                return Ok(Node::new_cast(ty, self.cast()?, self.head));
+                    if self.var_scopes.len() == 1 {
+                        // グローバル変数の場合
+                        let data = init.eval(ty, &self.types).map_err(|e| self.cast_err(e))?;
+                        let name = self.new_tmp_gvar_label();
+                        let tmp = self.add_global(name, ty, Some(data), false, false, false)?;
+                        Ok(Node::new_var(tmp, self.head)) // これはグローバル変数の初期化に渡される。
+                    } else {
+                        // ローカル変数の場合
+                        let tmp = self.add_var("", ty); // int tmp[3]; に対応
+                        let mut nodes = vec![];
+                        self.init_stmt(&tmp, init, vec![], &mut nodes, ty)?;
+                        // 初期化文たちをコンマに入れるために、ダミーのnode_num(0)を挿入
+                        let stmt_expr =
+                            Node::new_stmt_expr(nodes, Node::new_num(0, self.head), self.head);
+                        Ok(Node::new_comma(
+                            stmt_expr,
+                            Node::new_var(tmp, self.head),
+                            self.head,
+                        ))
+                    }
+                } else {
+                    Ok(Node::new_cast(ty, self.cast()?, self.head))
+                };
             } else {
                 self.unshift();
             }

@@ -149,10 +149,6 @@ impl CodeGenerator<'_> {
                 println!("  pop rax");
                 self.gen_addr(rhs)?;
             }
-            NodeKind::StmtExpr { stmts, expr } => {
-                self.gen_stmt(stmts)?;
-                self.gen_addr(expr)?;
-            }
             _ => Err(self.raise_err(format!("not a left value! {:?}", node.kind)))?,
         };
         Ok(())

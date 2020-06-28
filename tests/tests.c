@@ -36,6 +36,22 @@ int g26[] = {1, 2, 3};
 int *g27 = g26 + 1;
 struct {int a[2]; struct { long *a; char c[3]; int x; } y; } g27_[2] = {{}, {{1} ,{&g6, {1,2,100}, 4}}};
 
+typedef struct Tree {
+   int val;
+   struct Tree *lhs;
+   struct Tree *rhs;
+} Tree;
+
+Tree *tree = &(Tree){
+  1,
+  &(Tree){
+    2,
+    &(Tree){ 3, 0, 0 },
+    &(Tree){ 4, 0, 0 }
+  },
+  0
+};
+
 extern int ext1;
 extern int *ext2;
 // static global variable
@@ -804,6 +820,16 @@ int main() {
   assert(2, ((int[]){0,1,2})[2], "((int[]){0,1,2})[2]");
   assert('a', ((struct {char a; int b;}){'a', 3}).a, "((struct {char a; int b;}){'a', 3}).a");
   assert(2, ((int[]){ ({struct { int a, b;} x = {2,3}; x.a;}), 3})[0], "((int[]){ ({struct { int a, b;} x = {2,3}; x.a;}), 3})[0]");
+
+  // グローバルな複合リテラル
+  assert(1, tree->val, "tree->val");
+  assert(2, tree->lhs->val, "tree->lhs->val");
+  assert(3, tree->lhs->lhs->val, "tree->lhs->lhs->val");
+  assert(4, tree->lhs->rhs->val, "tree->lhs->rhs->val");
+  tree->lhs = &(Tree){5,0,0};
+  tree->rhs = &(Tree){6,0,0};
+  assert(5, tree->lhs->val, "tree->lhs->val");
+  assert(6, tree->rhs->val, "tree->lhs->val");
 
   printf("OK\n");
   return 0;
