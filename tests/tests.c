@@ -800,6 +800,11 @@ int main() {
   ext2 = &ext1;
   assert(5, *ext2, "*ext2");
 
+  // ローカルな複合リテラル
+  assert(2, ((int[]){0,1,2})[2], "((int[]){0,1,2})[2]");
+  assert('a', ((struct {char a; int b;}){'a', 3}).a, "((struct {char a; int b;}){'a', 3}).a");
+  assert(2, ((int[]){ ({struct { int a, b;} x = {2,3}; x.a;}), 3})[0], "((int[]){ ({struct { int a, b;} x = {2,3}; x.a;}), 3})[0]");
+
   printf("OK\n");
   return 0;
 }

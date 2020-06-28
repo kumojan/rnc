@@ -1377,13 +1377,34 @@ impl<'a> Parser<'a> {
             };
         }
     }
-    /// cast = "(" type-name ")" cast | unary
+    /// cast = "(" type-name ")" cast | "(" type-name ")" initializer | unary
     fn cast(&mut self) -> Result<Node, ParseError> {
         if self.consume("(") {
             if self.peek_type() {
                 let mut ty = self.typespec()?;
                 ty = self.abstruct_declarator(ty)?;
                 self.expect(")")?;
+                if self.peek("{") {
+                    let init = self.initializer()?;
+                    if let InitKind::List(l) = &init.kind {
+                        self.types.update_array_length(ty, l.len());
+                    }
+                    // ローカル変数を生成して一旦そこに代入する
+                    // (int[]){11,22,33}
+                    // のようになっていたら、
+                    // int tmp[] = {11,22,33};
+                    // tmp　　に変換する。正確には
+                    // ({tmpへの代入コードたち, tmp})に変換する
+                    // statement_expressionを使うと良さそう
+                    let tmp = self.add_var("", ty); // int tmp[3]; に対応
+                    let mut nodes = vec![];
+                    self.init_stmt(&tmp, init, vec![], &mut nodes, ty)?;
+                    return Ok(Node::new_stmt_expr(
+                        nodes,
+                        Node::new_var(tmp, self.head),
+                        self.head,
+                    ));
+                }
                 return Ok(Node::new_cast(ty, self.cast()?, self.head));
             } else {
                 self.unshift();
