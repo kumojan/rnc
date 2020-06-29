@@ -52,6 +52,13 @@ Tree *tree = &(Tree){
   0
 };
 
+typedef struct Graph Graph;
+struct Graph {
+  Graph *lhs;
+  char c;
+  Graph *rhs;
+};
+
 extern int ext1;
 extern int *ext2;
 // static global variable
@@ -830,6 +837,19 @@ int main() {
   tree->rhs = &(Tree){6,0,0};
   assert(5, tree->lhs->val, "tree->lhs->val");
   assert(6, tree->rhs->val, "tree->lhs->val");
+  Graph graph = (Graph) {
+    0,
+    'a',
+    &(Graph){
+      &(Graph){ 0, 'c', 0 },
+      'b',
+      &(Graph){ 0, 'd', 0 }
+    }
+  };
+  assert('a' ,graph.c, "graph.c");
+  assert('b' ,graph.rhs->c, "graph.rhs->c");
+  assert('c' ,graph.rhs->lhs->c, "graph.rhs->lhs->c");
+  assert('d' ,graph.rhs->rhs->c, "graph.rhs->rhs->c");
 
   printf("OK\n");
   return 0;

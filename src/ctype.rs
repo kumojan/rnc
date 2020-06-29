@@ -40,7 +40,7 @@ impl fmt::Debug for TypeRef {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub struct Member2 {
+pub struct Member {
     pub name: String,
     pub ty: TypeRef,
     pub offset: usize,
@@ -57,7 +57,7 @@ pub enum TypeKind {
     TyChar,
     TyPtr(TypeRef),
     TyArray(Option<usize>, TypeRef),
-    TyStruct { mems: Vec<Member2>, is_union: bool },
+    TyStruct { mems: Vec<Member>, is_union: bool },
     TyEnum(Vec<EnumMem>),
     TyFunc { args: Vec<TypeRef>, ret: TypeRef },
     Placeholder, // 不完全型
@@ -221,7 +221,7 @@ impl TypeList {
     }
     pub fn new_struct_union(
         &mut self,
-        mut mems: Vec<Member2>,
+        mut mems: Vec<Member>,
         is_union: bool,
         replace_with: Option<TypeRef>,
     ) -> TypeRef {
@@ -292,7 +292,7 @@ impl TypeList {
         };
         Ok(self.get(base))
     }
-    pub fn get_struct_mem(&self, ty: TypeRef, name: &str) -> Option<&Member2> {
+    pub fn get_struct_mem(&self, ty: TypeRef, name: &str) -> Option<&Member> {
         match &self.get(ty).kind {
             TypeKind::TyStruct { mems, .. } => mems.iter().filter(|m| m.name == name).next(),
             _ => None,

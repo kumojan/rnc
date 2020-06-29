@@ -236,7 +236,7 @@ pub enum NodeKind {
     Comma(Box<Node>, Box<Node>),
     Member {
         obj: Box<Node>,
-        mem: Member2,
+        mem: Member,
     },
     Conditional {
         condi: Box<Node>,
@@ -535,7 +535,7 @@ impl Node {
             tok_no,
         }
     }
-    pub(super) fn new_member_access(obj: Node, member: &Member2, tok_no: usize) -> Self {
+    pub(super) fn new_member_access(obj: Node, member: &Member, tok_no: usize) -> Self {
         Self {
             ty: member.ty,
             kind: NodeKind::Member {

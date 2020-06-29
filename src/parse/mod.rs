@@ -117,9 +117,9 @@ impl VarScope {
     }
 }
 
-enum Init {
-    Index(usize),   // 配列のインデックス
-    Member(String), // 構造体のメンバ
+enum Init<'a> {
+    Index(usize),    // 配列のインデックス
+    Member(&'a str), // 構造体のメンバ
 }
 
 ///
@@ -349,13 +349,13 @@ impl<'a> Parser<'a> {
             _ => Err(self.raise_err("invalid type!"))?,
         })
     }
-    fn struct_list(&mut self) -> Result<Vec<Member2>, ParseError> {
+    fn struct_list(&mut self) -> Result<Vec<Member>, ParseError> {
         let mut mems = Vec::new();
         loop {
             let ty = self.typespec()?;
             loop {
                 let (name, ty) = self.declarator(ty.clone())?; // int *x[4]; のような型が確定する
-                mems.push(Member2 {
+                mems.push(Member {
                     ty,
                     name,
                     offset: 0,
@@ -854,7 +854,7 @@ impl<'a> Parser<'a> {
                     }
                     let var = self.add_var(&name, ty);
                     let mut nodes = vec![];
-                    self.init_stmt(&var, init, vec![], &mut nodes, var.ty)?;
+                    self.init_stmt(&var, init, &mut vec![], &mut nodes, var.ty)?;
                     stmts.extend(nodes);
                 } else {
                     self.add_var(&name, ty);
@@ -897,15 +897,18 @@ impl<'a> Parser<'a> {
             Ok(Initializer::new_leaf(self.assign()?, pos))
         }
     }
-    /// x[1][2] = a; というような代入文を生成する。
+    /// x[1].m[2] = a; というような代入文を生成する。
+    /// vには[1, "m", 2]というのが入っていく
+    /// 代入先が配列か構造体以外に到達したら、init_leafにvを渡して初期化式を生成し
+    /// nodesに渡す。
     fn init_stmt(
-        &self,
+        &'a self,
         var: &Rc<Var>,
         i: Initializer,
-        mut v: Vec<Init>, // 配列や構造体のどの要素を初期化するか記録している
+        v: &mut Vec<Init<'a>>, // 配列や構造体のどの要素を初期化するか記録している
         nodes: &mut Vec<Node>,
         ty: TypeRef,
-    ) -> Result<Vec<Init>, ParseError> {
+    ) -> Result<(), ParseError> {
         let Initializer { kind, tok_no } = i;
         // 配列または構造体に代入している時は分ける
         // TODO: union
@@ -916,7 +919,7 @@ impl<'a> Parser<'a> {
                     for d in 0..*len {
                         v.push(Init::Index(d));
                         let i = list.next().unwrap_or(Initializer::new_zero(tok_no));
-                        v = self.init_stmt(var, i, v, nodes, *base)?;
+                        self.init_stmt(var, i, v, nodes, *base)?;
                     }
                     if list.next().is_some() {
                         Err(self.raise_err("initializer too long"))?;
@@ -925,7 +928,7 @@ impl<'a> Parser<'a> {
                 InitKind::Zero => {
                     for d in 0..*len {
                         v.push(Init::Index(d));
-                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, *base)?;
+                        self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, *base)?;
                     }
                 }
                 _ => Err(self.raise_err("invalid initializer for an array!"))?,
@@ -938,9 +941,9 @@ impl<'a> Parser<'a> {
                 InitKind::List(list) => {
                     let mut list = list.into_iter(); // 先頭から取り出していく
                     for m in mems {
-                        v.push(Init::Member(m.name.clone()));
+                        v.push(Init::Member(&m.name));
                         let i = list.next().unwrap_or(Initializer::new_zero(tok_no));
-                        v = self.init_stmt(var, i, v, nodes, m.ty)?;
+                        self.init_stmt(var, i, v, nodes, m.ty)?;
                     }
                     if list.next().is_some() {
                         Err(self.raise_err("initializer too long"))?;
@@ -948,12 +951,12 @@ impl<'a> Parser<'a> {
                 }
                 InitKind::Zero => {
                     for m in mems {
-                        v.push(Init::Member(m.name.clone()));
-                        v = self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, m.ty)?;
+                        v.push(Init::Member(&m.name));
+                        self.init_stmt(var, Initializer::new_zero(tok_no), v, nodes, m.ty)?;
                     }
                 }
                 InitKind::Leaf(val) => {
-                    self.init_leaf(var.clone(), *val, nodes, &v, tok_no)?;
+                    nodes.push(self.init_leaf(var.clone(), *val, &v, tok_no)?);
                 }
             },
             ty => {
@@ -968,20 +971,20 @@ impl<'a> Parser<'a> {
                     }
                     InitKind::List(..) => Err(self.raise_err("too much dimension"))?, // 配列でも構造体でもないものに、配列風の初期化をしようとしている
                 };
-                self.init_leaf(var.clone(), val, nodes, &v, tok_no)?;
+                nodes.push(self.init_leaf(var.clone(), val, &v, tok_no)?);
             }
         }
         v.pop(); // 自分の階層のインデックスを捨てる
-        Ok(v)
+        Ok(())
     }
     fn init_leaf(
         &self,
         var: Rc<Var>,
         val: Node,
-        nodes: &mut Vec<Node>,
+        // nodes: &mut Vec<Node>,
         v: &Vec<Init>,
         tok_no: usize,
-    ) -> Result<(), ParseError> {
+    ) -> Result<Node, ParseError> {
         let mut node = Node::new_var(var.clone(), tok_no);
         for d in v {
             node = match d {
@@ -994,9 +997,10 @@ impl<'a> Parser<'a> {
                 Init::Member(name) => self.struct_ref(node, name)?,
             };
         }
-        node = Node::new_assign(node, val, tok_no);
-        nodes.push(Node::new_expr_stmt(node, tok_no));
-        Ok(())
+        Ok(Node::new_expr_stmt(
+            Node::new_assign(node, val, tok_no),
+            tok_no,
+        ))
     }
     fn compound_stmt(&mut self, enter_scope: bool) -> Result<Vec<Node>, ParseError> {
         self.expect("{")?;
@@ -1411,7 +1415,7 @@ impl<'a> Parser<'a> {
                         // ローカル変数の場合
                         let tmp = self.add_var("", ty); // int tmp[3]; に対応
                         let mut nodes = vec![];
-                        self.init_stmt(&tmp, init, vec![], &mut nodes, ty)?;
+                        self.init_stmt(&tmp, init, &mut vec![], &mut nodes, ty)?;
                         // 初期化文たちをコンマに入れるために、ダミーのnode_num(0)を挿入
                         let stmt_expr =
                             Node::new_stmt_expr(nodes, Node::new_num(0, self.head), self.head);
