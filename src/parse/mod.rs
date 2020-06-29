@@ -219,9 +219,9 @@ impl<'a> Parser<'a> {
             _ => false,
         }
     }
-    fn peek_reserved(&self) -> Option<String> {
+    fn peek_reserved(&self) -> Option<&str> {
         match self.head_kind() {
-            TokenKind::TkReserved(s) => Some(s.clone()),
+            TokenKind::TkReserved(s) => Some(s),
             _ => None,
         }
     }
@@ -231,16 +231,13 @@ impl<'a> Parser<'a> {
             _ => None,
         }
     }
-    fn peek_base_type(&self) -> Option<String> {
-        self.peek_reserved()
-            .as_deref()
-            .filter(|s| {
-                [
-                    "void", "char", "short", "int", "long", "_Bool", "struct", "union", "enum",
-                ]
-                .contains(s)
-            })
-            .map(str::to_owned)
+    fn peek_base_type(&self) -> Option<&str> {
+        self.peek_reserved().filter(|s| {
+            [
+                "void", "char", "short", "int", "long", "_Bool", "struct", "union", "enum",
+            ]
+            .contains(s)
+        })
     }
     /// 型名や"struct", "union"を見たときにtrue
     fn peek_type(&self) -> bool {
@@ -311,7 +308,7 @@ impl<'a> Parser<'a> {
             .ok_or(self.raise_err("expected identifier"))
     }
     fn typespec(&mut self) -> Result<TypeRef, ParseError> {
-        match self.peek_reserved().as_deref() {
+        match self.peek_reserved() {
             Some("struct") => return self.skip().struct_union_decl(false),
             Some("union") => return self.skip().struct_union_decl(true),
             Some("enum") => return self.skip().enum_decl(),
@@ -328,8 +325,7 @@ impl<'a> Parser<'a> {
         const INT: usize = 1 << 8;
         const LONG: usize = 1 << 10;
         let mut counter = 0;
-        while let Some(ty) = self.peek_base_type().as_deref() {
-            self.skip();
+        while let Some(ty) = self.peek_base_type() {
             counter += match ty {
                 "void" => VOID,
                 "_Bool" => BOOL,
@@ -339,6 +335,7 @@ impl<'a> Parser<'a> {
                 "char" => CHAR,
                 _ => Err(self.raise_err("invalid type!"))?, // structやunion
             };
+            self.skip();
         }
         Ok(match counter {
             VOID => TypeRef::VOID,
@@ -1204,7 +1201,7 @@ impl<'a> Parser<'a> {
                 to_assign!(Node::new_bin($op, node, node2, self.head, &self.types))
             }};
         }
-        Ok(match self.peek_reserved().as_deref() {
+        Ok(match self.peek_reserved() {
             Some("=") => Node::new_assign(node, self.skip().assign()?, self.head),
             Some("+=") => {
                 to_assign!(
@@ -1322,7 +1319,7 @@ impl<'a> Parser<'a> {
         let mut node = self.relational()?;
         use BinOp::*;
         loop {
-            node = match self.peek_reserved().as_deref() {
+            node = match self.peek_reserved() {
                 Some("==") => {
                     Node::new_bin(_Eq, node, self.skip().relational()?, self.head, &self.types)
                 }
@@ -1338,7 +1335,7 @@ impl<'a> Parser<'a> {
         let mut node = self.shift()?;
         use BinOp::*;
         loop {
-            node = match self.peek_reserved().as_deref() {
+            node = match self.peek_reserved() {
                 Some("<") => Node::new_bin(Lt, node, self.skip().shift()?, self.head, &self.types),
                 Some("<=") => Node::new_bin(Le, node, self.skip().shift()?, self.head, &self.types),
                 Some(">") => Node::new_bin(Lt, self.skip().shift()?, node, self.head, &self.types),
@@ -1352,7 +1349,7 @@ impl<'a> Parser<'a> {
         let mut node = self.add()?;
         use BinOp::*;
         loop {
-            node = match self.peek_reserved().as_deref() {
+            node = match self.peek_reserved() {
                 Some("<<") => Node::new_bin(Shl, node, self.skip().add()?, self.head, &self.types),
                 Some(">>") => Node::new_bin(Shr, node, self.skip().add()?, self.head, &self.types),
                 _ => return Ok(node),
@@ -1363,7 +1360,7 @@ impl<'a> Parser<'a> {
     fn add(&mut self) -> Result<Node, ParseError> {
         let mut node = self.mul()?;
         loop {
-            node = match self.peek_reserved().as_deref() {
+            node = match self.peek_reserved() {
                 Some("+") => Node::new_add(node, self.skip().mul()?, self.head, &self.types)
                     .map_err(|e| self.cast_err(e))?,
                 Some("-") => Node::new_sub(node, self.skip().mul()?, self.head, &self.types)
@@ -1377,7 +1374,7 @@ impl<'a> Parser<'a> {
         let mut node = self.cast()?;
         use BinOp::*;
         loop {
-            node = match self.peek_reserved().as_deref() {
+            node = match self.peek_reserved() {
                 Some("*") => Node::new_bin(Mul, node, self.skip().cast()?, self.head, &self.types),
                 Some("/") => Node::new_bin(Div, node, self.skip().cast()?, self.head, &self.types),
                 Some("%") => Node::new_bin(Mod, node, self.skip().cast()?, self.head, &self.types),
@@ -1437,7 +1434,7 @@ impl<'a> Parser<'a> {
     ///         | ("++" | "--") unary
     ///         | postfix
     fn unary(&mut self) -> Result<Node, ParseError> {
-        match self.peek_reserved().as_deref() {
+        match self.peek_reserved() {
             Some("+") => self.skip().cast(),
             Some("-") => Ok(Node::new_bin(
                 BinOp::Sub,
@@ -1506,28 +1503,29 @@ impl<'a> Parser<'a> {
     fn postfix(&mut self) -> Result<Node, ParseError> {
         let mut node = self.primary()?;
         loop {
-            // x[y] は *(x+y)に同じ
-            if self.consume("[") {
-                node = Node::new_add(node, self.expr()?, self.head, &self.types)
-                    .map_err(|e| self.cast_err(e))?;
-                node =
-                    Node::new_deref(node, self.head, &self.types).map_err(|e| self.cast_err(e))?;
-                self.expect("]")?;
-            } else if self.consume(".") {
-                let name = &self.expect_ident()?;
-                node = self.struct_ref(node, name)?;
-            // x->yは(*x).yに同じ
-            } else if self.consume("->") {
-                let name = &self.expect_ident()?;
-                node =
-                    Node::new_deref(node, self.head, &self.types).map_err(|e| self.cast_err(e))?;
-                node = self.struct_ref(node, name)?;
-            } else if self.consume("++") {
-                node = self.new_inc_dec(node, true);
-            } else if self.consume("--") {
-                node = self.new_inc_dec(node, false);
-            } else {
-                return Ok(node);
+            match self.peek_reserved() {
+                Some("[") => {
+                    // x[y] は *(x+y)に同じ
+                    node = Node::new_add(node, self.skip().expr()?, self.head, &self.types)
+                        .map_err(|e| self.cast_err(e))?;
+                    node = Node::new_deref(node, self.head, &self.types)
+                        .map_err(|e| self.cast_err(e))?;
+                    self.expect("]")?;
+                }
+                Some(".") => {
+                    let name = &self.skip().expect_ident()?;
+                    node = self.struct_ref(node, name)?;
+                }
+                Some("->") => {
+                    // x->yは(*x).yに同じ
+                    let name = &self.skip().expect_ident()?;
+                    node = Node::new_deref(node, self.head, &self.types)
+                        .map_err(|e| self.cast_err(e))?;
+                    node = self.struct_ref(node, name)?;
+                }
+                Some("++") => node = self.skip().new_inc_dec(node, true),
+                Some("--") => node = self.skip().new_inc_dec(node, false),
+                _ => return Ok(node),
             }
         }
     }
