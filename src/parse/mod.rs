@@ -990,7 +990,8 @@ impl<'a> Parser<'a> {
             node = match d {
                 Init::Index(idx) => {
                     let idx = Node::new_num(*idx, tok_no);
-                    let node = Node::new_add(node, idx, tok_no, &self.types);
+                    let node = Node::new_add(node, idx, tok_no, &self.types)
+                        .map_err(|e| self.cast_err(e))?;
                     Node::new_deref(node, self.head, &self.types).map_err(|e| self.cast_err(e))?
                 }
                 Init::Member(name) => self.struct_ref(node, name)?,
@@ -1205,12 +1206,12 @@ impl<'a> Parser<'a> {
         }
         Ok(match self.peek_reserved().as_deref() {
             Some("=") => Node::new_assign(node, self.skip().assign()?, self.head),
-            Some("+=") => to_assign!(Node::new_add(
-                node,
-                self.skip().assign()?,
-                self.head,
-                &self.types
-            )),
+            Some("+=") => {
+                to_assign!(
+                    Node::new_add(node, self.skip().assign()?, self.head, &self.types)
+                        .map_err(|e| self.cast_err(e))?
+                )
+            }
             Some("-=") => {
                 to_assign!(
                     Node::new_sub(node, self.skip().assign()?, self.head, &self.types)
@@ -1363,7 +1364,8 @@ impl<'a> Parser<'a> {
         let mut node = self.mul()?;
         loop {
             node = match self.peek_reserved().as_deref() {
-                Some("+") => Node::new_add(node, self.skip().mul()?, self.head, &self.types),
+                Some("+") => Node::new_add(node, self.skip().mul()?, self.head, &self.types)
+                    .map_err(|e| self.cast_err(e))?,
                 Some("-") => Node::new_sub(node, self.skip().mul()?, self.head, &self.types)
                     .map_err(|e| self.cast_err(e))?,
                 _ => return Ok(node),
@@ -1464,12 +1466,10 @@ impl<'a> Parser<'a> {
                 // ++i => i+=1
                 let cast = self.skip().cast()?;
                 let tok = self.head;
-                Ok(self.to_assign(Node::new_add(
-                    cast,
-                    Node::new_num(1, self.head),
-                    tok,
-                    &self.types,
-                )))
+                Ok(self.to_assign(
+                    Node::new_add(cast, Node::new_num(1, self.head), tok, &self.types)
+                        .map_err(|e| self.cast_err(e))?,
+                ))
             }
             Some("--") => {
                 // --i => i-=1
@@ -1508,7 +1508,8 @@ impl<'a> Parser<'a> {
         loop {
             // x[y] は *(x+y)に同じ
             if self.consume("[") {
-                node = Node::new_add(node, self.expr()?, self.head, &self.types);
+                node = Node::new_add(node, self.expr()?, self.head, &self.types)
+                    .map_err(|e| self.cast_err(e))?;
                 node =
                     Node::new_deref(node, self.head, &self.types).map_err(|e| self.cast_err(e))?;
                 self.expect("]")?;
@@ -1522,9 +1523,9 @@ impl<'a> Parser<'a> {
                     Node::new_deref(node, self.head, &self.types).map_err(|e| self.cast_err(e))?;
                 node = self.struct_ref(node, name)?;
             } else if self.consume("++") {
-                node = self.new_inc_dec(node, "+");
+                node = self.new_inc_dec(node, true);
             } else if self.consume("--") {
-                node = self.new_inc_dec(node, "-");
+                node = self.new_inc_dec(node, false);
             } else {
                 return Ok(node);
             }
@@ -1532,36 +1533,30 @@ impl<'a> Parser<'a> {
     }
     /// A++ は (tmp = &A, *tmp = *tmp + 1, *tmp - 1) になる
     /// ++Aと違って、A+=1としたあと、A-1という単なる値が返ることに注意
-    fn new_inc_dec(&mut self, node: Node, op: &str) -> Node {
+    fn new_inc_dec(&mut self, node: Node, inc: bool) -> Node {
         let tok_no = self.head;
+        let one = || Node::new_num(1, tok_no); // use to inc or dec
         let tmp_ty = self.types.ptr_of(node.ty);
         let tmp = self.add_var("", tmp_ty);
         let tmp_node = || Node::new_var(tmp.clone(), tok_no);
-        let n1 = Node::new_assign(tmp_node(), self.new_addr(node), self.head);
-        let n2: Node;
+        let n1 = Node::new_assign(tmp_node(), self.new_addr(node), tok_no);
         macro_rules! tmp_deref {
             () => {
-                Node::new_deref(tmp_node(), self.head, &self.types).unwrap()
+                Node::new_deref(tmp_node(), tok_no, &self.types).unwrap()
             };
         }
+        let n2: Node;
         let n3: Node;
-        if op == "+" {
-            let node = Node::new_add(tmp_deref!(), Node::new_num(1, tok_no), tok_no, &self.types);
+        if inc {
+            let node = Node::new_add(tmp_deref!(), one(), tok_no, &self.types).unwrap();
             n2 = self.to_assign(node);
-            n3 =
-                Node::new_sub(tmp_deref!(), Node::new_num(1, tok_no), tok_no, &self.types).unwrap();
+            n3 = Node::new_sub(tmp_deref!(), one(), tok_no, &self.types).unwrap();
         } else {
-            let node =
-                Node::new_sub(tmp_deref!(), Node::new_num(1, tok_no), tok_no, &self.types).unwrap();
+            let node = Node::new_sub(tmp_deref!(), one(), tok_no, &self.types).unwrap();
             n2 = self.to_assign(node);
-            n3 = Node::new_add(
-                tmp_deref!(),
-                Node::new_num(1, self.head),
-                self.head,
-                &self.types,
-            );
+            n3 = Node::new_add(tmp_deref!(), one(), tok_no, &self.types).unwrap();
         }
-        Node::new_comma(n1, Node::new_comma(n2, n3, self.head), self.head)
+        Node::new_comma(n1, Node::new_comma(n2, n3, tok_no), tok_no)
     }
     fn primary(&mut self) -> Result<Node, ParseError> {
         if self.consume("(") {

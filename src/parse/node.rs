@@ -590,15 +590,20 @@ impl Node {
             tok_no,
         }
     }
-    pub(super) fn new_add(lhs: Node, rhs: Node, tok_no: usize, types: &TypeList) -> Self {
-        match (
+    pub(super) fn new_add(
+        lhs: Node,
+        rhs: Node,
+        tok_no: usize,
+        types: &TypeList,
+    ) -> Result<Self, (usize, &'static str)> {
+        let node = match (
             types.get(lhs.ty).base.is_some(),
             types.get(rhs.ty).base.is_some(),
         ) {
             // 値 + 値
             (false, false) => Node::new_bin(BinOp::Add, lhs, rhs, tok_no, types),
             // 値+ポインタ => ポインタ+値と見なす
-            (false, true) => Node::new_add(rhs, lhs, tok_no, types),
+            (false, true) => Node::new_add(rhs, lhs, tok_no, types)?,
             // ポインタ + 値 は値だけずれたポインタを返す(型はlhsなのでポインタになる)
             (true, false) => {
                 let ty_size = types.get_base_kind(lhs.ty).unwrap().size;
@@ -616,8 +621,9 @@ impl Node {
                     types,
                 )
             }
-            (true, true) => unimplemented!(), // ポインタ同士の足し算は意味をなさない
-        }
+            (true, true) => return Err((tok_no, "tried to add pointer and pointer")), // ポインタ同士の足し算は意味をなさない
+        };
+        Ok(node)
     }
     pub(super) fn new_sub(
         lhs: Node,
