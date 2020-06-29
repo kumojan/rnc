@@ -247,8 +247,8 @@ impl<'a> Parser<'a> {
                 .map_or(false, |name| {
                     self.var_scopes
                         .iter()
+                        .flatten()
                         .rev()
-                        .flat_map(|scope| scope.iter().rev())
                         .any(|v| v.get_type(&name).is_some())
                 });
     }
@@ -444,10 +444,10 @@ impl<'a> Parser<'a> {
         // panic!("{}", msg);
         ParseError::new(self.tklist[self.head].pos, msg)
     }
-    fn cast_err<S: Into<String>>(&self, e: (usize, S)) -> ParseError {
+    fn cast_err<S: Into<String>>(&self, (tok_no, msg): (usize, S)) -> ParseError {
         println!("{:?}", self.types);
         println!("{:?}", self.locals);
-        ParseError::new(self.tklist[e.0].pos, e.1)
+        ParseError::new(self.tklist[tok_no].pos, msg)
     }
     fn head_kind(&self) -> &TokenKind {
         &self.tklist[self.head].kind
@@ -463,18 +463,18 @@ impl<'a> Parser<'a> {
         self.var_scopes.pop();
     }
     fn find_var(&self, name: &str) -> Option<Rc<Var>> {
-        self.var_scopes
+        self.var_scopes // 後ろから順に走査する
             .iter()
+            .flatten()
             .rev()
-            .flat_map(|scope| scope.iter().rev()) // 後ろから順に走査する
             .flat_map(|v| v.get_var(name))
             .next()
     }
     fn find_enum(&self, name: &str) -> Option<i64> {
         self.var_scopes
             .iter()
+            .flatten()
             .rev()
-            .flat_map(|scope| scope.iter().rev()) // 後ろから順に走査する
             .flat_map(|v| v.get_enum(name))
             .next()
     }
@@ -484,8 +484,8 @@ impl<'a> Parser<'a> {
     fn find_tag(&self, name: &str) -> Option<&Tag> {
         self.tag_scopes
             .iter()
+            .flatten()
             .rev()
-            .flat_map(|scope| scope.iter().rev())
             .filter(|tag| tag.name == name)
             .next()
     }
@@ -547,8 +547,8 @@ impl<'a> Parser<'a> {
         self.peek_ident().map_or(None, |name| {
             self.var_scopes
                 .iter()
+                .flatten()
                 .rev()
-                .flat_map(|scope| scope.iter().rev()) // 後ろから順に走査する
                 .flat_map(|v| v.get_type(&name))
                 .next()
         })
@@ -574,15 +574,9 @@ impl<'a> Parser<'a> {
         self.var_scope().push(VarScope::Enum(name, num));
     }
     fn check_global_name(&self, name: &str) -> Result<(), ParseError> {
-        if self
-            .globals
-            .iter()
-            .find(|v| !v.is_local && v.name == name)
-            .is_some()
-        {
-            Err(self.raise_err("global var or func redefined!"))
-        } else {
-            Ok(())
+        match self.globals.iter().any(|v| !v.is_local && v.name == name) {
+            true => Err(self.raise_err("global var or func redefined!")),
+            false => Ok(()),
         }
     }
     /// グローバル変数とstaticローカル変数
@@ -981,7 +975,6 @@ impl<'a> Parser<'a> {
         &self,
         var: Rc<Var>,
         val: Node,
-        // nodes: &mut Vec<Node>,
         v: &Vec<Init>,
         tok_no: usize,
     ) -> Result<Node, ParseError> {
